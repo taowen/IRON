@@ -21,8 +21,9 @@ this tree.
 | Full-ELF scratch layout changes correctness | 10 |
 | Operator-specific numeric mismatch | 12 |
 | Persistent phase ordering or timeout | 17 |
-| Structured attention-score mismatch | 18 |
+| Structured attention-score mismatch | 18, 20 |
 | Persistent artifact should fail before runtime | 19 |
+| PV/context compile or numeric failure | 14, 21, 22 |
 
 ## 1. Classify The Failure Boundary First
 
@@ -328,6 +329,22 @@ This means the ObjectFIFO object shape is too large for the tile, even before
 math kernel scratch is considered. For attention, stream K/V by sequence blocks
 instead of materializing a full [seq, head_dim] object in L1.
 
+The PV/context bring-up hit the same class with smaller objects but too much
+buffering on one tile:
+
+```text
+tile_3_3:
+  qwen3_rc_v_context_debug_0_buff_0  16384 bytes
+  qwen3_rc_v_context_block_0_buff_0  16384 bytes
+  qwen3_rc_v_context_block_0_buff_1  16384 bytes
+  qwen3_rc_v_cache_0_cons_buff_0     16384 bytes
+  qwen3_rc_v_cache_0_cons_buff_1     16384 bytes
+```
+
+The fix was not to change the PV math. The graph kept 64-token V blocks but
+made the V-cache and V-context block FIFOs single-buffered so the merge tile
+streams blocks instead of hoarding them in L1.
+
 ## 15. Inspect DMA Task Count, Not Just TAP Correctness
 
 Use when BD IDs are exhausted.
@@ -419,3 +436,194 @@ iron/applications/qwen3_0_6b/qwen3_preflight.py
 
 The persistent CLI now prints a `preflight: ok ...` summary immediately after
 compile when these checks pass.
+
+## 20. Inspect Repeated ObjectFIFO Acquire Lowering
+
+Use when a Worker acquires more than one object from the same FIFO before any
+release and the data looks overwritten or shifted.
+
+Command used:
+
+```bash
+sed -n '145,260p' \
+  build_qwen3_persistent/*.mlir.prj/main_core_2_4.peanohack.ll
+```
+
+This diagnosed the score worker failure:
+
+```text
+qk_pair_errors: 0
+k_cache_stream_prefix_errors: 0
+attn_scores_errors: 413
+```
+
+The generated LLVM showed a lock acquire for the first score output, but not for
+the second output:
+
+```text
+call void @llvm.aie2p.acquire(i32 48, i32 -1)
+%15 = phi ptr ... @qwen3_rc_attn_scores_0_buff_0 ...
+%25 = phi ptr ... @qwen3_rc_attn_scores_0_buff_0 ...
+```
+
+Rule:
+
+```text
+Do not assume acquire(1), acquire(1) means two FIFO objects. ObjectFIFO acquire
+is stateful and only acquires additional objects if the requested total is
+larger than what the process already holds.
+```
+
+Accepted shapes for two live output tokens:
+
+```text
+one acquire(2) and two indexed subviews
+two separate ObjectFIFOs
+one packed object whose layout explicitly contains both logical outputs
+```
+
+Recheck after changing the graph:
+
+```text
+Generated LLVM must show either an acquire of size 2 or separate lock acquires
+for the two output FIFOs before the two score kernel calls.
+```
+
+Observed fixed MLIR:
+
+```text
+aie.objectfifo.acquire @qwen3_rc_attn_scores_0(Produce, 2)
+aie.objectfifo.subview.access %2[0]
+aie.objectfifo.subview.access %2[1]
+aie.objectfifo.release @qwen3_rc_attn_scores_0(Produce, 2)
+```
+
+Observed verification:
+
+```text
+attn_scores_errors: 0
+attn_weights_errors: 0
+preflight: ok ... non_advancing_acquires=0
+```
+
+## 21. Prove PV Inputs Before Changing The Context Kernel
+
+Use when `attn_context` is wrong.
+
+The accepted PV/context bring-up first checked every input boundary:
+
+```text
+attn_weights_errors: 0
+v_context_stream_prefix_errors: 0
+v_context_stream_current_errors: 0
+values_cache_prefix_errors: 0
+values_cache_current_errors: 0
+```
+
+Only after those passed was the context external kernel the first unproven
+boundary. This avoided guessing about V-cache layout, GQA head mapping, or
+softmax output order.
+
+## 22. Match The Accumulation Boundary
+
+Use when all input streams pass but a reduction kernel has a small number of
+large, cancellation-sensitive errors.
+
+The first context kernel updated bf16 `context[dim]` on every sequence row:
+
+```text
+context[dim] = bf16(float(context[dim]) + float(weight) * float(v))
+```
+
+The symptom was only six `attn_context` mismatches, but with large absolute
+errors on elements whose expected values were near zero. A reference using the
+same NPU weights and V stream showed the inputs were correct.
+
+The accepted kernel accumulates a 64-row block in local float and writes bf16
+once per block:
+
+```text
+accum[dim] = row_base == 0 ? 0 : float(context[dim])
+for row in cache_block:
+  accum[dim] += float(weight[row]) * float(v[row, dim])
+context[dim] = bf16(accum[dim])
+```
+
+Recheck:
+
+```text
+attn_context_errors: 0
+attn_context_max_abs: 0.000000
+```
+
+## 23. Check Producer Endpoints Before Reading Placer Errors As Resource Errors
+
+Use when `resolve_program()` reports:
+
+```text
+Prod endpoint not set for ObjectFifo(...)
+```
+
+This is a graph construction error, not a compute kernel issue. For the
+O-projection checkpoint, `qwen3_rc_o_weight_0` had a consumer Worker but no
+producer because the `Runtime.fill()` was added to the wrong Program variant.
+
+Diagnosis:
+
+```bash
+rg -n "qwen3_rc_o_weight|rt.fill\\(" iron/applications/qwen3_0_6b/qwen3_persistent_design.py
+```
+
+Required invariant:
+
+```text
+Every worker input ObjectFIFO is produced by exactly one source in that same
+design variant: Runtime.fill, another Worker, or an ObjectFIFO link.
+```
+
+## 24. Count Workers Against The Actual Placer Budget
+
+Use when adding a small downstream phase makes `SequentialPlacer` fail with:
+
+```text
+Failed to find a tile matching column ...
+```
+
+The context checkpoint used 15 Workers. Adding three more Workers for
+flatten, O projection, and residual exceeded the current 16 compute-tile
+placement budget. The fix was structural:
+
+```text
+context Worker also packs attn_context_flat
+drop K-cache debug copy Worker in the deeper checkpoint
+keep O projection Worker and residual Worker
+```
+
+Do not respond by changing FIFO depths or kernel math until the Worker count
+and host-debug workers are accounted for.
+
+## 25. Optional Debug Streams Need One Boolean
+
+Use when a disabled debug stream produces a TAP or DMA error:
+
+```text
+All sizes must be >= 1, but got [1, 1, 1, 0]
+```
+
+The safe pattern is to derive one boolean, then use it consistently:
+
+```python
+include_k_cache_debug = include_scores_softmax and not include_o_proj
+```
+
+Apply that same flag to:
+
+```text
+debug size
+ObjectFIFO creation
+Worker creation
+Runtime.fill
+Runtime.drain
+TensorAccessPattern creation
+host verifier slices
+```

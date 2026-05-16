@@ -58,8 +58,18 @@ def verification_tolerance(stage: str, name: str) -> tuple[float, float]:
     rope_stages = {
         "input-rmsnorm-qkv-rope-cache",
         "input-rmsnorm-qkv-rope-cache-scores-softmax",
+        "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
+        "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
     }
     if stage in rope_stages and name in {"queries", "keys"}:
+        return 0.05, 0.5
+    if stage in {
+        "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
+        "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
+    } and name in {
+        "attn_context",
+        "attn_context_flat",
+    }:
         return 0.05, 0.5
     return 0.04, 1e-6
 
@@ -471,16 +481,41 @@ class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmax(
         return "qwen3_persistent_softmax.o"
 
     @property
+    def _passthrough_kernel_object(self):
+        return "qwen3_persistent_passThrough_bf16.o"
+
+    @property
     def score_size(self):
         return self.q_heads * self.max_seq_len
 
     @property
+    def qk_pair_debug_size(self):
+        return self.kv_heads * 3 * self.head_dim
+
+    @property
+    def k_cache_debug_size(self):
+        return self.kv_heads * self.max_seq_len * self.head_dim
+
+    @property
     def packed_outputs_size(self):
-        return super().packed_outputs_size + 2 * self.score_size
+        return (
+            super().packed_outputs_size
+            + self.qk_pair_debug_size
+            + self.k_cache_debug_size
+            + 2 * self.score_size
+        )
+
+    @property
+    def qk_pair_output_base(self):
+        return super().packed_outputs_size
+
+    @property
+    def k_cache_stream_output_base(self):
+        return self.qk_pair_output_base + self.qk_pair_debug_size
 
     @property
     def attn_scores_output_base(self):
-        return super().packed_outputs_size
+        return self.k_cache_stream_output_base + self.k_cache_debug_size
 
     @property
     def attn_weights_output_base(self):
@@ -510,6 +545,7 @@ class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmax(
                     "gemv_kernel_object": self._gemv_kernel_object,
                     "rope_kernel_object": self._rope_kernel_object,
                     "attention_kernel_object": self._attention_kernel_object,
+                    "passthrough_kernel_object": self._passthrough_kernel_object,
                     "softmax_kernel_object": self._softmax_kernel_object,
                 },
             ),
@@ -549,6 +585,214 @@ class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmax(
                             / "aie_kernels"
                             / arch_dir
                             / "softmax.cc"
+                        )
+                    ],
+                ),
+                KernelObjectArtifact(
+                    self._passthrough_kernel_object,
+                    dependencies=[
+                        SourceArtifact(
+                            self.context.base_dir
+                            / "aie_kernels"
+                            / "generic"
+                            / "passThrough.cc"
+                        )
+                    ],
+                    extra_flags=["-DBIT_WIDTH=16"],
+                ),
+            ]
+        )
+        return artifacts
+
+
+@dataclass
+class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContext(
+    Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmax
+):
+    """Single-token persistent Qwen3 stage through attention context."""
+
+    @property
+    def v_cache_debug_size(self):
+        return self.kv_heads * self.max_seq_len * self.head_dim
+
+    @property
+    def context_size(self):
+        return self.q_size
+
+    @property
+    def packed_outputs_size(self):
+        return super().packed_outputs_size + self.v_cache_debug_size + self.context_size
+
+    @property
+    def v_context_stream_output_base(self):
+        return self.attn_weights_output_base + self.score_size
+
+    @property
+    def attn_context_output_base(self):
+        return self.v_context_stream_output_base + self.v_cache_debug_size
+
+    def get_mlir_artifact(self):
+        return PythonGeneratedMLIRArtifact(
+            f"{self.name}.mlir",
+            DesignGenerator(
+                self.operator_dir / "qwen3_persistent_design.py",
+                "qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax_context",
+                (
+                    aie_utils.get_current_device(),
+                    self.hidden_size,
+                    self.q_size,
+                    self.kv_size,
+                    self.head_dim,
+                    self.max_seq_len,
+                    self.position,
+                    self.num_aie_columns,
+                    self.tile_size_input,
+                    self.tile_size_output,
+                    0,
+                ),
+                {
+                    "rms_kernel_object": self._rms_kernel_object,
+                    "gemv_kernel_object": self._gemv_kernel_object,
+                    "rope_kernel_object": self._rope_kernel_object,
+                    "attention_kernel_object": self._attention_kernel_object,
+                    "passthrough_kernel_object": self._passthrough_kernel_object,
+                    "softmax_kernel_object": self._softmax_kernel_object,
+                },
+            ),
+        )
+
+
+@dataclass
+class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj(
+    Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContext
+):
+    """Single-token persistent Qwen3 stage through attention O projection and residual add."""
+
+    @property
+    def k_cache_debug_size(self):
+        return 0
+
+    @property
+    def context_flat_size(self):
+        return self.q_size
+
+    @property
+    def o_proj_size(self):
+        return self.hidden_size
+
+    @property
+    def residual_size(self):
+        return self.hidden_size
+
+    @property
+    def _o_gemv_kernel_object(self):
+        return (
+            f"qwen3_persistent_gemv_{self.q_size}k_{self.kernel_vector_size}vs_o_proj.o"
+        )
+
+    @property
+    def _o_gemv_vectorized_fn(self):
+        return "qwen3_o_proj_matvec_vectorized_bf16_bf16"
+
+    @property
+    def _o_gemv_scalar_fn(self):
+        return "qwen3_o_proj_matvec_scalar_bf16_bf16"
+
+    @property
+    def _add_kernel_object(self):
+        return "qwen3_persistent_add.o"
+
+    @property
+    def o_weight_base(self):
+        return super().packed_weights_size
+
+    @property
+    def packed_weights_size(self):
+        return super().packed_weights_size + self.hidden_size * self.q_size
+
+    @property
+    def packed_outputs_size(self):
+        return (
+            super().packed_outputs_size
+            + self.context_flat_size
+            + self.o_proj_size
+            + self.residual_size
+        )
+
+    @property
+    def attn_context_flat_output_base(self):
+        return super().packed_outputs_size
+
+    @property
+    def attn_o_proj_output_base(self):
+        return self.attn_context_flat_output_base + self.context_flat_size
+
+    @property
+    def attn_residual_output_base(self):
+        return self.attn_o_proj_output_base + self.o_proj_size
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.q_size % self.kernel_vector_size != 0:
+            raise ValueError("q_size must be a multiple of kernel_vector_size")
+        if self._o_gemv_kernel_object == self._gemv_kernel_object:
+            raise ValueError("O projection GEMV must use a distinct kernel object")
+
+    def get_mlir_artifact(self):
+        return PythonGeneratedMLIRArtifact(
+            f"{self.name}.mlir",
+            DesignGenerator(
+                self.operator_dir / "qwen3_persistent_design.py",
+                "qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax_context_o_proj",
+                (
+                    aie_utils.get_current_device(),
+                    self.hidden_size,
+                    self.q_size,
+                    self.kv_size,
+                    self.head_dim,
+                    self.max_seq_len,
+                    self.position,
+                    self.num_aie_columns,
+                    self.tile_size_input,
+                    self.tile_size_output,
+                    0,
+                ),
+                {
+                    "rms_kernel_object": self._rms_kernel_object,
+                    "gemv_kernel_object": self._gemv_kernel_object,
+                    "rope_kernel_object": self._rope_kernel_object,
+                    "attention_kernel_object": self._attention_kernel_object,
+                    "passthrough_kernel_object": self._passthrough_kernel_object,
+                    "softmax_kernel_object": self._softmax_kernel_object,
+                    "o_gemv_kernel_object": self._o_gemv_kernel_object,
+                    "add_kernel_object": self._add_kernel_object,
+                },
+            ),
+        )
+
+    def get_kernel_artifacts(self):
+        artifacts = super().get_kernel_artifacts()
+        artifacts.extend(
+            [
+                KernelObjectArtifact(
+                    self._o_gemv_kernel_object,
+                    dependencies=[
+                        SourceArtifact(
+                            self.context.base_dir / "aie_kernels" / "generic" / "mv.cc"
+                        )
+                    ],
+                    extra_flags=[
+                        f"-DDIM_K={self.q_size}",
+                        f"-DVEC_SIZE={self.kernel_vector_size}",
+                        f"-DMATVEC_SCALAR_FN={self._o_gemv_scalar_fn}",
+                        f"-DMATVEC_VECTORIZED_FN={self._o_gemv_vectorized_fn}",
+                    ],
+                ),
+                KernelObjectArtifact(
+                    self._add_kernel_object,
+                    dependencies=[
+                        SourceArtifact(
+                            self.context.base_dir / "aie_kernels" / "generic" / "add.cc"
                         )
                     ],
                 ),
@@ -648,6 +892,7 @@ def build_reference_qkv_rope_cache(
             "W_q": model.w(f"{attn}.q_proj.weight").contiguous(),
             "W_k": model.w(f"{attn}.k_proj.weight").contiguous(),
             "W_v": model.w(f"{attn}.v_proj.weight").contiguous(),
+            "W_o": model.w(f"{attn}.o_proj.weight").contiguous(),
             "W_q_norm": model.w(f"{attn}.q_norm.weight").flatten().contiguous(),
             "W_k_norm": model.w(f"{attn}.k_norm.weight").flatten().contiguous(),
             "rope_angles": rope_lut_for_position(
@@ -666,8 +911,113 @@ def build_reference_qkv_rope_cache(
             "keys_norm": references["keys_norm"].flatten().contiguous(),
             "queries": references["queries"].flatten().contiguous(),
             "keys": references["keys"].flatten().contiguous(),
+            "attn_context": references["attn_context"].flatten().contiguous(),
+            "attn_out": references["attn_out"].flatten().contiguous(),
+            "attn_residual": references["attn_residual"].flatten().contiguous(),
         },
     )
+
+
+def build_qk_pair_reference(
+    queries: torch.Tensor,
+    current_keys: torch.Tensor,
+    q_heads: int,
+    kv_heads: int,
+    head_dim: int,
+) -> torch.Tensor:
+    q_by_head = queries.view(q_heads, head_dim)
+    k_by_head = current_keys.view(kv_heads, head_dim)
+    q_per_kv = q_heads // kv_heads
+    if q_per_kv != 2:
+        raise ValueError(f"expected q_per_kv=2 for qk_pair debug, got {q_per_kv}")
+    pairs = torch.empty((kv_heads, 3, head_dim), dtype=queries.dtype)
+    for kv_head in range(kv_heads):
+        pairs[kv_head, 0, :] = q_by_head[kv_head * q_per_kv]
+        pairs[kv_head, 1, :] = q_by_head[kv_head * q_per_kv + 1]
+        pairs[kv_head, 2, :] = k_by_head[kv_head]
+    return pairs.flatten().contiguous()
+
+
+def print_structured_attention_error(
+    name: str,
+    errors: list[int],
+    output: torch.Tensor,
+    expected: torch.Tensor,
+    op,
+) -> None:
+    if not errors:
+        return
+    first = int(errors[0])
+    out_flat = output.flatten().to(torch.float32)
+    exp_flat = expected.flatten().to(torch.float32)
+    if name == "qk_pair":
+        slot_names = ("q0", "q1", "current_k")
+        elems_per_pair = 3 * op.head_dim
+        kv_head = first // elems_per_pair
+        rem = first % elems_per_pair
+        slot = rem // op.head_dim
+        dim = rem % op.head_dim
+        print(
+            "qk_pair_first_error: "
+            f"kv_head={kv_head} slot={slot_names[slot]} dim={dim} "
+            f"expected={float(exp_flat[first]):.6f} got={float(out_flat[first]):.6f}"
+        )
+    elif name in {"attn_scores", "attn_weights"}:
+        q_head = first // op.max_seq_len
+        pos = first % op.max_seq_len
+        region = "valid" if pos <= op.position else "future"
+        heads = sorted({int(idx) // op.max_seq_len for idx in errors})
+        head_counts = {
+            head: sum(1 for idx in errors if int(idx) // op.max_seq_len == head)
+            for head in heads
+        }
+        counts = ", ".join(f"h{head}:{count}" for head, count in head_counts.items())
+        print(
+            f"{name}_first_error: "
+            f"q_head={q_head} pos={pos} region={region} "
+            f"expected={float(exp_flat[first]):.6f} got={float(out_flat[first]):.6f}"
+        )
+        print(f"{name}_error_heads: {counts}")
+        if name == "attn_scores":
+            got = out_flat[first]
+            matches = (exp_flat == got).nonzero(as_tuple=False).flatten().tolist()
+            formatted = []
+            for idx in matches[:8]:
+                match_q = int(idx) // op.max_seq_len
+                match_pos = int(idx) % op.max_seq_len
+                formatted.append(f"h{match_q}:p{match_pos}")
+            if formatted:
+                print(
+                    f"attn_scores_first_got_matches_expected_at: {', '.join(formatted)}"
+                )
+            else:
+                print("attn_scores_first_got_matches_expected_at: none")
+    elif name in {"attn_context", "attn_context_flat"}:
+        q_head = first // op.head_dim
+        dim = first % op.head_dim
+        print(
+            f"{name}_first_error: "
+            f"q_head={q_head} dim={dim} "
+            f"expected={float(exp_flat[first]):.6f} got={float(out_flat[first]):.6f}"
+        )
+        got = out_flat[first]
+        matches = (exp_flat == got).nonzero(as_tuple=False).flatten().tolist()
+        formatted = []
+        for idx in matches[:8]:
+            match_q = int(idx) // op.head_dim
+            match_dim = int(idx) % op.head_dim
+            formatted.append(f"h{match_q}:d{match_dim}")
+        if formatted:
+            print(f"{name}_first_got_matches_expected_at: {', '.join(formatted)}")
+        else:
+            print(f"{name}_first_got_matches_expected_at: none")
+    elif name in {"attn_o_proj", "attn_residual"}:
+        dim = first % op.hidden_size
+        print(
+            f"{name}_first_error: "
+            f"dim={dim} expected={float(exp_flat[first]):.6f} "
+            f"got={float(out_flat[first]):.6f}"
+        )
 
 
 def parse_args():
@@ -691,6 +1041,8 @@ def parse_args():
             "input-rmsnorm-qkv",
             "input-rmsnorm-qkv-rope-cache",
             "input-rmsnorm-qkv-rope-cache-scores-softmax",
+            "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
+            "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
         ],
         default="input-rmsnorm",
         help="Persistent bring-up stage to compile/run",
@@ -751,8 +1103,30 @@ def main():
             epsilon=model.config.rms_norm_eps,
             context=context,
         )
-    else:
+    elif args.stage == "input-rmsnorm-qkv-rope-cache-scores-softmax":
         op = Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmax(
+            hidden_size=model.config.hidden_size,
+            q_size=model.config.num_attention_heads * model.config.head_dim,
+            kv_size=model.config.num_key_value_heads * model.config.head_dim,
+            head_dim=model.config.head_dim,
+            max_seq_len=args.max_seq_len,
+            position=input_ids.shape[1],
+            epsilon=model.config.rms_norm_eps,
+            context=context,
+        )
+    elif args.stage == "input-rmsnorm-qkv-rope-cache-scores-softmax-context":
+        op = Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContext(
+            hidden_size=model.config.hidden_size,
+            q_size=model.config.num_attention_heads * model.config.head_dim,
+            kv_size=model.config.num_key_value_heads * model.config.head_dim,
+            head_dim=model.config.head_dim,
+            max_seq_len=args.max_seq_len,
+            position=input_ids.shape[1],
+            epsilon=model.config.rms_norm_eps,
+            context=context,
+        )
+    else:
+        op = Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj(
             hidden_size=model.config.hidden_size,
             q_size=model.config.num_attention_heads * model.config.head_dim,
             kv_size=model.config.num_key_value_heads * model.config.head_dim,
@@ -782,7 +1156,8 @@ def main():
         f"max_fifo_buffered_bytes={preflight.max_fifo_buffered_bytes} "
         f"max_dma_tasks_per_fifo={preflight.max_dma_tasks_per_fifo} "
         f"max_tile_inputs={preflight.max_compute_tile_inputs} "
-        f"max_tile_outputs={preflight.max_compute_tile_outputs}"
+        f"max_tile_outputs={preflight.max_compute_tile_outputs} "
+        f"non_advancing_acquires={preflight.non_advancing_acquires}"
     )
     if args.dump_proof:
         for artifact in op.artifacts:
@@ -829,8 +1204,9 @@ def main():
         else:
             print(
                 "dispatch_shape: hidden[1024] + packed QKV/norm weights + "
-                "rope_angles[128] + K cache -> x_norm, Q/K/V raw, Q/K norm, "
-                "RoPE Q, attention scores, attention weights, KV cache"
+                "rope_angles[128] + K/V cache -> x_norm, Q/K/V raw, Q/K norm, "
+                "RoPE Q, qk_pair, attention scores, attention weights, "
+                "optional attention context, optional O projection/residual, KV cache"
             )
             print(
                 "runtime_bos: hidden[1024], "
@@ -844,7 +1220,9 @@ def main():
             print(
                 "worker_graph: hidden_fifo -> rmsnorm_worker -> weight_worker -> "
                 "xnorm broadcast -> Q/K/V matvec -> Q/K norm -> Q/K RoPE -> "
-                "score worker -> softmax worker, with KV cache drains"
+                "qk_pair debug drain -> score worker -> softmax worker -> "
+                "optional V merge/context worker -> optional O projection/residual, "
+                "with KV cache drains"
             )
     if args.compile_only:
         return
@@ -892,16 +1270,17 @@ def main():
             )
         full_expected_buffers = expected_buffers
         hidden_buf = XRTTensor.from_torch(inputs["hidden"])
-        packed_weights = torch.cat(
-            [
-                inputs["input_norm_weight"].flatten(),
-                inputs["W_q"].flatten(),
-                inputs["W_k"].flatten(),
-                inputs["W_v"].flatten(),
-                inputs["W_q_norm"].flatten(),
-                inputs["W_k_norm"].flatten(),
-            ]
-        ).contiguous()
+        packed_weight_parts = [
+            inputs["input_norm_weight"].flatten(),
+            inputs["W_q"].flatten(),
+            inputs["W_k"].flatten(),
+            inputs["W_v"].flatten(),
+            inputs["W_q_norm"].flatten(),
+            inputs["W_k_norm"].flatten(),
+        ]
+        if args.stage == "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj":
+            packed_weight_parts.append(inputs["W_o"].flatten())
+        packed_weights = torch.cat(packed_weight_parts).contiguous()
         weights_buf = XRTTensor.from_torch(packed_weights)
         rope_angles_buf = XRTTensor.from_torch(inputs["rope_angles"])
         packed_outputs_buf = XRTTensor(
@@ -966,13 +1345,21 @@ def main():
             packed_cache_buf.device = "npu"
             packed_outputs = packed_outputs_buf.to_torch()
             packed_cache = packed_cache_buf.to_torch()
-            has_scores_softmax = (
-                args.stage == "input-rmsnorm-qkv-rope-cache-scores-softmax"
+            has_scores_softmax = args.stage in {
+                "input-rmsnorm-qkv-rope-cache-scores-softmax",
+                "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
+                "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
+            }
+            has_context = args.stage in {
+                "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
+                "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
+            }
+            has_o_proj = (
+                args.stage
+                == "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj"
             )
             q_rope_end = (
-                op.attn_scores_output_base
-                if has_scores_softmax
-                else op.packed_outputs_size
+                op.qk_pair_output_base if has_scores_softmax else op.packed_outputs_size
             )
             keys_cache = packed_cache[: op.cache_half_size].view(
                 op.kv_heads, args.max_seq_len, op.head_dim
@@ -1005,12 +1392,54 @@ def main():
                 "values_cache_prefix": values_cache[:, : op.position, :].flatten(),
             }
             if has_scores_softmax:
+                actual_buffers["qk_pair"] = packed_outputs[
+                    op.qk_pair_output_base : op.k_cache_stream_output_base
+                ]
+                if op.k_cache_debug_size:
+                    k_cache_stream = packed_outputs[
+                        op.k_cache_stream_output_base : op.attn_scores_output_base
+                    ].view(op.kv_heads, op.max_seq_len, op.head_dim)
+                    actual_buffers["k_cache_stream_prefix"] = k_cache_stream[
+                        :, : op.position, :
+                    ].flatten()
                 actual_buffers["attn_scores"] = packed_outputs[
                     op.attn_scores_output_base : op.attn_weights_output_base
                 ]
+                attn_weight_end = (
+                    op.v_context_stream_output_base
+                    if has_context
+                    else op.packed_outputs_size
+                )
                 actual_buffers["attn_weights"] = packed_outputs[
-                    op.attn_weights_output_base :
+                    op.attn_weights_output_base : attn_weight_end
                 ]
+                if has_context:
+                    v_context_stream = packed_outputs[
+                        op.v_context_stream_output_base : op.attn_context_output_base
+                    ].view(op.kv_heads, op.max_seq_len, op.head_dim)
+                    actual_buffers["v_context_stream_prefix"] = v_context_stream[
+                        :, : op.position, :
+                    ].flatten()
+                    actual_buffers["v_context_stream_current"] = v_context_stream[
+                        :, op.position, :
+                    ].flatten()
+                    actual_buffers["attn_context"] = packed_outputs[
+                        op.attn_context_output_base : (
+                            op.attn_context_flat_output_base
+                            if has_o_proj
+                            else op.packed_outputs_size
+                        )
+                    ]
+                    if has_o_proj:
+                        actual_buffers["attn_context_flat"] = packed_outputs[
+                            op.attn_context_flat_output_base : op.attn_o_proj_output_base
+                        ]
+                        actual_buffers["attn_o_proj"] = packed_outputs[
+                            op.attn_o_proj_output_base : op.attn_residual_output_base
+                        ]
+                        actual_buffers["attn_residual"] = packed_outputs[
+                            op.attn_residual_output_base :
+                        ]
             q_raw_local = F.linear(
                 actual_buffers["x_norm"].view(1, 1, -1), inputs["W_q"]
             ).flatten()
@@ -1038,7 +1467,15 @@ def main():
                 model.config.rope_theta,
             )
             score_expected_buffers = {}
+            context_alt_expected_buffers = {}
             if has_scores_softmax:
+                qk_pair = build_qk_pair_reference(
+                    actual_buffers["queries"],
+                    actual_buffers["keys"],
+                    op.q_heads,
+                    op.kv_heads,
+                    op.head_dim,
+                )
                 q_for_score = actual_buffers["queries"].view(
                     1, op.q_heads, 1, op.head_dim
                 )
@@ -1050,7 +1487,6 @@ def main():
                     q_for_score.to(torch.float32),
                     k_ctx.to(torch.float32).transpose(-2, -1),
                 ) / math.sqrt(op.head_dim)
-                weights = torch.softmax(scores, dim=-1).to(dtype=packed_outputs.dtype)
                 padded_scores = torch.zeros(
                     (op.q_heads, op.max_seq_len),
                     dtype=packed_outputs.dtype,
@@ -1059,13 +1495,90 @@ def main():
                 padded_scores[:, : op.position + 1] = scores.view(
                     op.q_heads, op.position + 1
                 ).to(dtype=packed_outputs.dtype)
+                weights = torch.softmax(
+                    padded_scores[:, : op.position + 1].to(torch.float32),
+                    dim=-1,
+                ).to(dtype=packed_outputs.dtype)
                 padded_weights[:, : op.position + 1] = weights.view(
                     op.q_heads, op.position + 1
                 )
+                context_expected_buffers = {}
+                if has_context:
+                    v_context = inputs["initial_values_cache"].clone()
+                    v_context[:, op.position, :] = actual_buffers["values"].view(
+                        op.kv_heads, op.head_dim
+                    )
+                    context = torch.zeros(
+                        (op.q_heads, op.head_dim), dtype=packed_outputs.dtype
+                    )
+                    context_float = torch.zeros(
+                        (op.q_heads, op.head_dim), dtype=torch.float32
+                    )
+                    weights_by_head = actual_buffers["attn_weights"].view(
+                        op.q_heads, op.max_seq_len
+                    )
+                    q_per_kv = op.q_heads // op.kv_heads
+                    for q_head in range(op.q_heads):
+                        kv_head = q_head // q_per_kv
+                        for block_start in range(0, op.max_seq_len, 64):
+                            block_end = min(block_start + 64, op.position + 1)
+                            if block_start >= block_end:
+                                continue
+                            block_accum = context[q_head].to(torch.float32)
+                            for seq_pos in range(block_start, block_end):
+                                term = weights_by_head[q_head, seq_pos].to(
+                                    torch.float32
+                                ) * v_context[kv_head, seq_pos, :].to(torch.float32)
+                                block_accum += term
+                                context_float[q_head] += term
+                            context[q_head] = block_accum.to(dtype=packed_outputs.dtype)
+                    context_alt_expected_buffers = {
+                        "attn_context_float_accum": context_float.to(
+                            dtype=packed_outputs.dtype
+                        )
+                        .flatten()
+                        .contiguous()
+                    }
+                    context_expected_buffers = {
+                        "v_context_stream_prefix": inputs["initial_values_cache"][
+                            :, : op.position, :
+                        ]
+                        .flatten()
+                        .contiguous(),
+                        "v_context_stream_current": actual_buffers[
+                            "values"
+                        ].contiguous(),
+                        "attn_context": context.flatten().contiguous(),
+                    }
+                    if has_o_proj:
+                        o_proj_local = F.linear(
+                            actual_buffers["attn_context_flat"].view(1, 1, -1),
+                            inputs["W_o"],
+                        ).flatten()
+                        residual_local = (
+                            inputs["hidden"] + actual_buffers["attn_o_proj"]
+                        )
+                        context_expected_buffers.update(
+                            {
+                                "attn_context_flat": actual_buffers[
+                                    "attn_context"
+                                ].contiguous(),
+                                "attn_o_proj": o_proj_local.contiguous(),
+                                "attn_residual": residual_local.contiguous(),
+                            }
+                        )
                 score_expected_buffers = {
+                    "qk_pair": qk_pair,
                     "attn_scores": padded_scores.flatten().contiguous(),
                     "attn_weights": padded_weights.flatten().contiguous(),
+                    **context_expected_buffers,
                 }
+                if op.k_cache_debug_size:
+                    score_expected_buffers["k_cache_stream_prefix"] = (
+                        inputs["initial_keys_cache"][:, : op.position, :]
+                        .flatten()
+                        .contiguous()
+                    )
             local_expected_buffers = {
                 **full_expected_buffers,
                 "queries_raw": q_raw_local.contiguous(),
@@ -1100,23 +1613,44 @@ def main():
             diff = (output.to(torch.float32) - expected.to(torch.float32)).abs()
             print(f"{name}_max_abs: {float(diff.max()):.6f}")
             print(f"{name}_mean_abs: {float(diff.mean()):.6f}")
+            full_ref_name = {
+                "attn_o_proj": "attn_out",
+            }.get(name, name)
             if (
                 args.stage
                 in {
                     "input-rmsnorm-qkv",
                     "input-rmsnorm-qkv-rope-cache",
                     "input-rmsnorm-qkv-rope-cache-scores-softmax",
+                    "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
+                    "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
                 }
-                and name in full_expected_buffers
+                and full_ref_name in full_expected_buffers
                 and name != "x_norm"
             ):
-                full_ref = full_expected_buffers[name]
+                full_ref = full_expected_buffers[full_ref_name]
                 full_diff = (
                     output.to(torch.float32) - full_ref.to(torch.float32)
                 ).abs()
                 print(f"{name}_full_ref_max_abs: {float(full_diff.max()):.6f}")
                 print(f"{name}_full_ref_mean_abs: {float(full_diff.mean()):.6f}")
             print(f"{name}_errors: {len(errors)}")
+            if name == "attn_context" and errors:
+                for alt_name, alt_expected in context_alt_expected_buffers.items():
+                    alt_diff = (
+                        output.to(torch.float32) - alt_expected.to(torch.float32)
+                    ).abs()
+                    alt_errors = verify_buffer(
+                        output,
+                        alt_name,
+                        alt_expected,
+                        rel_tol=rel_tol,
+                        abs_tol=abs_tol,
+                    )
+                    print(f"{alt_name}_max_abs: {float(alt_diff.max()):.6f}")
+                    print(f"{alt_name}_mean_abs: {float(alt_diff.mean()):.6f}")
+                    print(f"{alt_name}_errors: {len(alt_errors)}")
+            print_structured_attention_error(name, errors, output, expected, op)
             failed = failed or bool(errors)
 
     if args.verify and failed:

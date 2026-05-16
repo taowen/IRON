@@ -179,8 +179,8 @@ V are validated through the current-position KV cache write to avoid draining
 the same ObjectFIFO twice. On the current NPU2 environment, repeat verification
 passes with cache current-position and prefix-preservation errors at zero.
 
-The next in-progress stage adds attention score computation and softmax while
-keeping the same five runtime BOs:
+The fourth stage adds attention score computation and softmax while keeping the
+same five runtime BOs:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
@@ -192,14 +192,64 @@ python iron/applications/qwen3_0_6b/qwen3_persistent.py \
   --dump-proof
 ```
 
-This checkpoint currently compiles and runs, but it is not accepted yet:
-`attn_scores` and `attn_weights` still fail numeric verification. The current
-diagnosis is in `how-to-debug/qwen3-megakernel/`: upstream Q/K/V, RoPE, and KV
-cache checks pass, so the remaining bug is in qk-pair/score token layout or the
-score-to-softmax boundary.
+This checkpoint is now accepted on the current NPU2 environment: upstream
+Q/K/V, RoPE, qk-pair packing, K-cache stream debug, attention scores, and
+attention weights all pass local-reference verification. The root cause of the
+previous score failure is recorded in `how-to-debug/qwen3-megakernel/`: the
+score Worker used two `acquire(1)` calls on the same output FIFO before
+release, so both logical outputs could alias one FIFO object. The fixed graph
+uses `acquire(2)` with indexed subviews, and preflight now rejects this
+non-advancing acquire pattern.
 
-PV/context, output projection, MLP, placement scaling, runtime position
-patching, and multi-token decode are still future persistent stages.
+The next checkpoint adds the accurate-version PV/context half of attention:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+  --model Qwen/Qwen3-0.6B \
+  --stage input-rmsnorm-qkv-rope-cache-scores-softmax-context \
+  --verify \
+  --verify-repeat 1 \
+  --dump-proof
+```
+
+This stage streams historical V-cache blocks, merges the current token V in a
+separate Worker, and computes `attn_context = softmax(scores) @ V` without
+adding runtime BOs. It was accepted on the current NPU2 environment with
+`attn_context_errors: 0`. During bring-up, a V merge tile initially exceeded L1
+because three 64x128 bf16 block FIFOs were buffered on the same tile; the
+accepted graph uses single-buffer V-cache/context block FIFOs. A second issue
+was isolated to the context external kernel: per-row bf16 read/modify/write
+accumulation produced a few large cancellation-sensitive errors, while all
+input streams were correct. The fixed kernel accumulates each block in local
+float and writes bf16 once per block.
+
+The next checkpoint adds attention output projection and residual add:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+  --model Qwen/Qwen3-0.6B \
+  --stage input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj \
+  --verify \
+  --verify-repeat 1 \
+  --dump-proof
+```
+
+This stage compiles a second GEMV object for `DIM_K=2048` under a distinct
+`qwen3_o_proj_*` symbol, because the QKV GEMV object is compiled for
+`DIM_K=1024`. It was accepted on the current NPU2 environment with
+`attn_context_errors: 0`, `attn_context_flat_errors: 0`,
+`attn_o_proj_errors: 0`, and `attn_residual_errors: 0`.
+
+During bring-up, three real graph/resource issues were found before changing
+kernel math: an O-projection weight FIFO had no producer in the active Program
+variant, the naive three-worker extension exceeded the current 16 Worker
+SequentialPlacer budget, and disabling an older debug stream left behind a
+zero-length TAP. These are recorded in `how-to-debug/qwen3-megakernel/`.
+
+MLP, placement scaling, runtime position patching, and multi-token decode are
+still future persistent stages.
 
 ## Weight Format Decision
 

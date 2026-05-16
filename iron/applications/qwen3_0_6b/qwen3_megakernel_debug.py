@@ -29,6 +29,7 @@ DEFAULT_DEBUG_OUTPUTS = (
     "attn_weights",
     "attn_context",
     "attn_out",
+    "attn_residual",
     "ffn_out",
     "x",
     "logits",
@@ -53,6 +54,7 @@ DEBUG_STAGE_OUTPUTS = {
         "attn_weights",
         "attn_context",
         "attn_out",
+        "attn_residual",
     ),
     "all": DEFAULT_DEBUG_OUTPUTS,
 }
@@ -110,6 +112,7 @@ def one_layer_reference_tensors(
     attn_out = F.linear(context_flat, model.w(f"{attn}.o_proj.weight"))
 
     x = residual + attn_out
+    attn_residual = x
     residual = x
     mlp_x_norm = rms_norm(
         x,
@@ -143,6 +146,7 @@ def one_layer_reference_tensors(
         "attn_weights": padded_weights,
         "attn_context": context.squeeze(0).squeeze(1),
         "attn_out": attn_out.flatten(),
+        "attn_residual": attn_residual.flatten(),
         "ffn_gate": gate.flatten(),
         "ffn_up": up.flatten(),
         "ffn_hidden": ffn_hidden.flatten(),

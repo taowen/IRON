@@ -19,6 +19,14 @@
 #define VEC_SIZE 64
 #endif
 
+#ifndef MATVEC_SCALAR_FN
+#define MATVEC_SCALAR_FN matvec_scalar_bf16_bf16
+#endif
+
+#ifndef MATVEC_VECTORIZED_FN
+#define MATVEC_VECTORIZED_FN matvec_vectorized_bf16_bf16
+#endif
+
 void matvec_scalar(uint32_t m,
                    uint32_t k,
                    const bfloat16 *__restrict a,
@@ -70,21 +78,21 @@ extern "C" {
  * This is simpler than to do pointer arithmetic in the calling MLIR code, but that's all this is for -- an offset into
  * `c`.  */
 
-void matvec_scalar_bf16_bf16(uint32_t m,
-                             uint32_t row_offset,
-                             const bfloat16 *__restrict a_in,
-                             const bfloat16 *__restrict b_in,
-                             bfloat16 *__restrict c_out)
+void MATVEC_SCALAR_FN(uint32_t m,
+                      uint32_t row_offset,
+                      const bfloat16 *__restrict a_in,
+                      const bfloat16 *__restrict b_in,
+                      bfloat16 *__restrict c_out)
 {
     c_out += row_offset;
     matvec_scalar(m, DIM_K, a_in, b_in, c_out);
 }
 
-void matvec_vectorized_bf16_bf16(uint32_t m,
-                                 uint32_t row_offset,
-                                 const bfloat16 *__restrict a_in,
-                                 const bfloat16 *__restrict b_in,
-                                 bfloat16 *__restrict c_out)
+void MATVEC_VECTORIZED_FN(uint32_t m,
+                          uint32_t row_offset,
+                          const bfloat16 *__restrict a_in,
+                          const bfloat16 *__restrict b_in,
+                          bfloat16 *__restrict c_out)
 {
     c_out += row_offset;
     matvec_vectorized<VEC_SIZE, DIM_K>(m, a_in, b_in, c_out);

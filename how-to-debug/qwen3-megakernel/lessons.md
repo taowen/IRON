@@ -16,10 +16,11 @@ The useful checkpoints so far are:
 input-rmsnorm
 input-rmsnorm-qkv
 input-rmsnorm-qkv-rope-cache
+input-rmsnorm-qkv-rope-cache-scores-softmax
 ```
 
-The score/softmax checkpoint is not accepted yet. The next change should prove
-whether `qk_pair` is correct by drain or checksum before changing score math.
+The score/softmax checkpoint was accepted only after proving that `qk_pair` and
+the K-cache stream were correct, then fixing the score output FIFO slots.
 
 ## 2. Graph And Resource Bugs Dominate Earlier Than Math Bugs
 
@@ -32,6 +33,7 @@ too many DMA tasks / exhausted BD IDs
 runtime BO metadata mismatch
 one FIFO endpoint consumed as if it were two consumers
 phase ordering assumed from Runtime.start()
+repeated acquire(1) on the same FIFO did not allocate two live output objects
 ```
 
 The practical consequence is that a persistent stage needs preflight graph
@@ -100,10 +102,113 @@ ObjectFIFO producer/consumer endpoint count from generated MLIR
 tile input/output FIFO count before aiecc [implemented]
 ObjectFIFO object bytes * depth vs L1 budget [implemented]
 DMA task count per FIFO and BD dimension legality [partly implemented]
+non-advancing ObjectFIFO acquire before release [implemented]
 runtime patch-site count and uniqueness
 local-reference verifier per accepted checkpoint
 ```
 
-The current score/softmax work should get the `qk_pair` debug drain/checksum
-first, then the FIFO/resource preflight checks should be factored out so future
-megakernel stages fail earlier than `aiecc` or final-token verification.
+The next persistent stages should keep expanding FIFO/resource preflight checks
+so failures show up before `aiecc` or final-token verification.
+
+## 9. ObjectFIFO Acquire Is A Held-Set Request
+
+The score worker failure proved that this pattern is wrong:
+
+```python
+score0 = score_fifo.acquire(1)
+score1 = score_fifo.acquire(1)
+```
+
+The second call does not mean "give me the next object" if the process already
+holds one object. Generated LLVM showed both pointers could name the same
+buffer, and the second score kernel overwrote the first GQA head's output.
+
+Use one of these forms instead:
+
+```text
+score_pair = score_fifo.acquire(2), then index both subviews
+separate FIFO handles for q_select 0 and q_select 1
+a packed object with both logical score rows inside one FIFO token
+```
+
+This is now implemented in preflight as the non-advancing acquire check.
+
+## 10. Local Softmax Reference Must Match The FIFO Boundary
+
+After score output was fixed, `attn_scores_errors` went to zero but six
+`attn_weights` elements still failed. The root was the verifier: it compared
+the NPU softmax output against `softmax(float32_matmul_scores)`, while the NPU
+softmax Worker consumes the bf16 `attn_scores` FIFO.
+
+The accepted local reference is:
+
+```text
+scores = matmul(Q, K^T) / sqrt(head_dim)
+padded_scores = scores cast to bf16 at the FIFO boundary
+attn_weights_ref = softmax(padded_scores[:valid].to(float32)).to(bf16)
+```
+
+This keeps the reference at the same boundary as the Worker input instead of
+mixing in extra precision that the NPU path no longer has.
+
+## 11. PV Needs A Merge Stage, Not A Three-Input Context Worker
+
+The context calculation needs softmax weights, historical V-cache blocks, and
+the current token V. Putting all three into one Worker would recreate the same
+input-channel/resource class that broke the score stage.
+
+The accepted context checkpoint uses two Workers:
+
+```text
+V merge Worker: current V + V-cache block -> merged V block
+context Worker: weights + merged V block -> attention context
+```
+
+The merge Worker also exposed a real L1 lesson: a legal 64x128 bf16 object can
+still fail if several depth-2 block FIFOs land on one tile. For block streams,
+depth=1 is a valid correctness-first bring-up choice.
+
+## 12. Reduction Kernels Should Accumulate At The Intended Precision Boundary
+
+The first context kernel updated bf16 output memory on every row. All input
+streams passed, but six context elements had large errors because the reduction
+boundary was wrong.
+
+The accepted kernel accumulates each block in local float and writes bf16 once
+per block. The host verifier now follows that block-level boundary for the
+local context reference.
+
+## 13. A Deeper Checkpoint May Need To Drop Older Debug Copies
+
+The O-projection checkpoint proved that debug visibility has a tile cost. The
+accepted context checkpoint used 15 Workers, so adding three more Workers for
+context flatten, O projection, and residual could not fit under the current
+SequentialPlacer budget.
+
+The accepted pattern was:
+
+```text
+keep the new boundary drains: attn_context_flat, attn_o_proj, attn_residual
+drop an older debug-only K-cache copy Worker in this deeper checkpoint
+fuse context flatten into the existing context Worker
+```
+
+Earlier checkpoints still cover K-cache stream layout. Deeper checkpoints
+should spend Workers on the next unproven boundary.
+
+## 14. DIM_K-Specific GEMV Objects Need Distinct Symbols
+
+QKV projection uses a GEMV object compiled with `DIM_K=1024`. Attention
+O projection uses `DIM_K=2048`. They cannot safely share the same external
+symbol name even if the Python `Kernel(...)` declarations look reasonable.
+
+The accepted implementation compiles the O projection object with renamed
+symbols:
+
+```text
+qwen3_o_proj_matvec_vectorized_bf16_bf16
+qwen3_o_proj_matvec_scalar_bf16_bf16
+```
+
+Preflight now rejects a `memref<4x2048xbf16>` O-projection declaration that
+still uses the generic `matvec_vectorized_bf16_bf16` symbol.

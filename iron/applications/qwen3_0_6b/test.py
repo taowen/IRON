@@ -140,6 +140,51 @@ module {{
         run_persistent_artifact_preflight(mlir_path=mlir_path, arg_specs=1)
 
 
+def test_qwen3_preflight_catches_non_advancing_acquire(tmp_path):
+    mlir_path = tmp_path / "bad_acquire.mlir"
+    mlir_path.write_text("""
+module {
+  aie.device(npu2) {
+    %tile_0_2 = aie.tile(0, 2)
+    %shim_noc_tile_0_0 = aie.tile(0, 0)
+    aie.objectfifo @scores(%tile_0_2, {%shim_noc_tile_0_0}, 2 : i32) : !aie.objectfifo<memref<256xbf16>>
+    aie.runtime_sequence(%arg0: memref<256xbf16>) {
+      aie.end
+    }
+    %core_0_2 = aie.core(%tile_0_2) {
+      %0 = aie.objectfifo.acquire @scores(Produce, 1) : !aie.objectfifosubview<memref<256xbf16>>
+      %1 = aie.objectfifo.subview.access %0[0] : !aie.objectfifosubview<memref<256xbf16>> -> memref<256xbf16>
+      %2 = aie.objectfifo.acquire @scores(Produce, 1) : !aie.objectfifosubview<memref<256xbf16>>
+      %3 = aie.objectfifo.subview.access %2[0] : !aie.objectfifosubview<memref<256xbf16>> -> memref<256xbf16>
+      aie.objectfifo.release @scores(Produce, 1)
+      aie.objectfifo.release @scores(Produce, 1)
+      aie.end
+    }
+  }
+}
+""")
+
+    with pytest.raises(Qwen3PreflightError, match="does not advance"):
+        run_persistent_artifact_preflight(mlir_path=mlir_path, arg_specs=1)
+
+
+def test_qwen3_preflight_catches_o_proj_gemv_symbol_reuse(tmp_path):
+    mlir_path = tmp_path / "bad_o_proj_gemv.mlir"
+    mlir_path.write_text("""
+module {
+  aie.device(npu2) {
+    func.func private @matvec_vectorized_bf16_bf16(i32, i32, memref<4x2048xbf16>, memref<2048xbf16>, memref<128xbf16>) attributes {link_with = "qwen3_persistent_gemv_2048k_64vs_o_proj.o"}
+    aie.runtime_sequence(%arg0: memref<128xbf16>) {
+      aie.end
+    }
+  }
+}
+""")
+
+    with pytest.raises(Qwen3PreflightError, match="DIM_K=2048"):
+        run_persistent_artifact_preflight(mlir_path=mlir_path, arg_specs=1)
+
+
 @pytest.mark.extensive
 def test_qwen3_megakernel_lint():
     model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
@@ -256,10 +301,6 @@ def test_qwen3_persistent_input_rmsnorm_qkv_rope_cache():
 
 
 @pytest.mark.extensive
-@pytest.mark.xfail(
-    reason="score/softmax persistent checkpoint compiles and runs but numeric verification is not accepted yet",
-    strict=True,
-)
 def test_qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax():
     model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
     if model is None:
@@ -275,6 +316,52 @@ def test_qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax():
         model,
         "--stage",
         "input-rmsnorm-qkv-rope-cache-scores-softmax",
+        "--verify",
+        "--verify-repeat",
+        "1",
+    ]
+    subprocess.run(command, check=True)
+
+
+@pytest.mark.extensive
+def test_qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax_context():
+    model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
+    if model is None:
+        pytest.skip(
+            "Set IRON_QWEN3_0_6B_MODEL to run the Qwen3-0.6B persistent attention-context bring-up test"
+        )
+
+    test_dir = Path(__file__).parent
+    command = [
+        sys.executable,
+        str(test_dir / "qwen3_persistent.py"),
+        "--model",
+        model,
+        "--stage",
+        "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
+        "--verify",
+        "--verify-repeat",
+        "1",
+    ]
+    subprocess.run(command, check=True)
+
+
+@pytest.mark.extensive
+def test_qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax_context_o_proj():
+    model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
+    if model is None:
+        pytest.skip(
+            "Set IRON_QWEN3_0_6B_MODEL to run the Qwen3-0.6B persistent attention O projection bring-up test"
+        )
+
+    test_dir = Path(__file__).parent
+    command = [
+        sys.executable,
+        str(test_dir / "qwen3_persistent.py"),
+        "--model",
+        model,
+        "--stage",
+        "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
         "--verify",
         "--verify-repeat",
         "1",

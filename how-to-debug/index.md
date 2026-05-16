@@ -37,8 +37,7 @@ qwen3_persistent.py   hand-authored IRON Program/Worker/ObjectFifo bring-up
 ```
 
 The persistent path has accepted checkpoints through
-`input-rmsnorm-qkv-rope-cache`. The score/softmax checkpoint compiles and runs
-but is not accepted yet.
+`input-rmsnorm-qkv-rope-cache-scores-softmax-context`.
 
 ## SageAttention Notes
 

@@ -43,6 +43,7 @@ class PersistentPreflightResult:
     max_dma_tasks_per_fifo: int
     max_compute_tile_inputs: int
     max_compute_tile_outputs: int
+    non_advancing_acquires: int
 
 
 _RUNTIME_SEQUENCE_RE = re.compile(
@@ -57,6 +58,19 @@ _OBJECTFIFO_RE = re.compile(
 )
 _DMA_TASK_RE = re.compile(r"dma_configure_task_for @(?P<fifo>[A-Za-z0-9_.$-]+)")
 _TILE_RE = re.compile(r"%tile_(?P<col>\d+)_(?P<row>\d+)")
+_OBJECTFIFO_ACQUIRE_RE = re.compile(
+    r"aie\.objectfifo\.acquire @(?P<fifo>[A-Za-z0-9_.$-]+)"
+    r"\((?P<port>Produce|Consume), (?P<size>\d+)\)"
+)
+_OBJECTFIFO_RELEASE_RE = re.compile(
+    r"aie\.objectfifo\.release @(?P<fifo>[A-Za-z0-9_.$-]+)"
+    r"\((?P<port>Produce|Consume), (?P<size>\d+)\)"
+)
+_KERNEL_DECL_RE = re.compile(
+    r"func\.func private @(?P<name>[A-Za-z0-9_.$-]+)"
+    r"\((?P<args>.*?)\) attributes \{link_with = \"(?P<link>[^\"]+)\"\}",
+    re.MULTILINE | re.DOTALL,
+)
 
 
 def count_runtime_sequence_memrefs(mlir_text: str) -> int:
@@ -139,6 +153,76 @@ def count_dma_tasks_by_fifo(mlir_text: str) -> dict[str, int]:
         fifo = match.group("fifo")
         counts[fifo] = counts.get(fifo, 0) + 1
     return counts
+
+
+def find_non_advancing_acquires(mlir_text: str) -> list[str]:
+    """Find ObjectFIFO acquires that cannot advance to a new FIFO object.
+
+    `aie.objectfifo.acquire` requests access to a held set of `size` objects. If
+    the process already holds that many objects from the same FIFO/port, the
+    acquire does not take another lock and a returned subview can alias an
+    already-held object.
+    """
+
+    held: dict[tuple[str, str], int] = {}
+    issues: list[str] = []
+    for lineno, line in enumerate(mlir_text.splitlines(), start=1):
+        acquire = _OBJECTFIFO_ACQUIRE_RE.search(line)
+        if acquire:
+            key = (acquire.group("fifo"), acquire.group("port"))
+            size = int(acquire.group("size"))
+            already_held = held.get(key, 0)
+            if already_held >= size:
+                issues.append(
+                    f"line {lineno}: acquire @{key[0]}({key[1]}, {size}) "
+                    f"while {already_held} object(s) are already held"
+                )
+            held[key] = max(already_held, size)
+            continue
+
+        release = _OBJECTFIFO_RELEASE_RE.search(line)
+        if release:
+            key = (release.group("fifo"), release.group("port"))
+            size = int(release.group("size"))
+            held[key] = max(0, held.get(key, 0) - size)
+    return issues
+
+
+def find_gemv_symbol_abi_issues(mlir_text: str) -> list[str]:
+    """Find GEMV declarations that hide distinct DIM_K ABIs behind one symbol."""
+
+    issues: list[str] = []
+    declarations: dict[str, set[tuple[str, str]]] = {}
+    for match in _KERNEL_DECL_RE.finditer(mlir_text):
+        name = match.group("name")
+        args = " ".join(match.group("args").split())
+        link = match.group("link")
+        declarations.setdefault(name, set()).add((args, link))
+
+    for name, variants in declarations.items():
+        if len(variants) > 1:
+            rendered = ", ".join(f"{link}: ({args})" for args, link in sorted(variants))
+            issues.append(f"kernel @{name} has multiple ABI/link variants: {rendered}")
+
+    for args, link in declarations.get("matvec_vectorized_bf16_bf16", set()):
+        if "memref<4x2048xbf16>" in args:
+            issues.append(
+                "O projection GEMV uses the generic @matvec_vectorized_bf16_bf16 "
+                f"symbol via {link}; use a distinct qwen3_o_proj_* symbol for "
+                "the DIM_K=2048 object."
+            )
+
+    for args, link in declarations.get(
+        "qwen3_o_proj_matvec_vectorized_bf16_bf16", set()
+    ):
+        if "memref<4x2048xbf16>" not in args or "memref<2048xbf16>" not in args:
+            issues.append(
+                "O projection GEMV ABI mismatch: "
+                f"@qwen3_o_proj_matvec_vectorized_bf16_bf16 from {link} has "
+                f"arguments ({args}); expected DIM_K=2048 matrix/vector memrefs."
+            )
+
+    return issues
 
 
 def compute_tile_endpoint_counts(
@@ -256,6 +340,22 @@ def run_persistent_artifact_preflight(
             "Prefer one legal multidimensional TAP or reuse data on tile."
         )
 
+    non_advancing_acquires = find_non_advancing_acquires(mlir_text)
+    if non_advancing_acquires:
+        first = non_advancing_acquires[0]
+        raise Qwen3PreflightError(
+            "ObjectFIFO acquire does not advance to a new object: "
+            f"{first}. Use acquire(2) with indexed subviews, separate FIFOs, "
+            "or a packed FIFO object before using the returned values as "
+            "independent buffers."
+        )
+
+    gemv_symbol_issues = find_gemv_symbol_abi_issues(mlir_text)
+    if gemv_symbol_issues:
+        raise Qwen3PreflightError(
+            "External kernel GEMV ABI mismatch: " + gemv_symbol_issues[0]
+        )
+
     return PersistentPreflightResult(
         runtime_memrefs=runtime_memrefs,
         arg_specs=arg_specs,
@@ -267,4 +367,5 @@ def run_persistent_artifact_preflight(
         max_dma_tasks_per_fifo=max(dma_counts.values(), default=0),
         max_compute_tile_inputs=max(tile_inputs.values(), default=0),
         max_compute_tile_outputs=max(tile_outputs.values(), default=0),
+        non_advancing_acquires=0,
     )
