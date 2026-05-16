@@ -19,6 +19,7 @@ def my_weighted_rms_norm(
     weight_length,
     trace_size,
     func_prefix="",
+    kernel_object="rms_norm.o",
 ):
     per_tile_elements = weight_length
     total_cores = num_columns * num_channels
@@ -63,7 +64,7 @@ def my_weighted_rms_norm(
     # AIE Core Function declaration
     rms_norm_kernel = Kernel(
         f"{func_prefix}rms_norm_bf16_vector",
-        f"{func_prefix}rms_norm.o",
+        f"{func_prefix}{kernel_object}",
         [tile_ty, tile_ty, np.int32],
     )
     eltwise_mul_kernel = Kernel(

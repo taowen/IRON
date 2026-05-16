@@ -3,6 +3,9 @@
 
 tiktoken
 safetensors
+transformers
+huggingface_hub
+tokenizers
 blobfile
 packaging
 torchtune==0.6.1

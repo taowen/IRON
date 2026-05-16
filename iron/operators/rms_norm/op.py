@@ -26,6 +26,7 @@ class RMSNorm(MLIROperator):
     num_channels: int
     tile_size: int
     weighted: bool = False
+    epsilon: float = 1e-5
     context: object = field(default=None, repr=False)
 
     _name_aliases: ClassVar[Dict[str, str]] = {
@@ -34,9 +35,10 @@ class RMSNorm(MLIROperator):
     }
 
     def __post_init__(self):
-        # Note: epsilon is hardcoded to 1e-5 in the AIE kernel and cannot be changed at runtime.
         dev = aie_utils.get_current_device()
         shim_dma_limit = get_shim_dma_limit(dev)
+        if self.epsilon <= 0:
+            raise ValueError(f"epsilon must be positive, got {self.epsilon}")
 
         # The weighted design uses one weight ObjectFifo per channel shared across all
         # columns, so its ShimDMA budget is:
@@ -67,6 +69,14 @@ class RMSNorm(MLIROperator):
             )
         MLIROperator.__init__(self, context=self.context)
 
+    @property
+    def _epsilon_tag(self):
+        return f"eps_{self.epsilon:.0e}".replace("-", "m")
+
+    @property
+    def _kernel_object(self):
+        return f"rms_norm_{self._epsilon_tag}.o"
+
     def get_mlir_artifact(self):
         if self.weighted:
             source_path = self.operator_dir / "design_weighted.py"
@@ -88,6 +98,7 @@ class RMSNorm(MLIROperator):
                     self.tile_size,
                     0,  # trace_size
                 ),
+                {"kernel_object": self._kernel_object},
             ),
         )
 
@@ -95,12 +106,13 @@ class RMSNorm(MLIROperator):
         arch_dir = get_kernel_dir()
         artifacts = [
             KernelObjectArtifact(
-                "rms_norm.o",
+                self._kernel_object,
                 dependencies=[
                     SourceArtifact(
                         self.context.base_dir / "aie_kernels" / arch_dir / "rms_norm.cc"
                     )
                 ],
+                extra_flags=[f"-DRMS_NORM_EPSILON={self.epsilon}f"],
             ),
         ]
         if self.weighted:

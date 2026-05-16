@@ -6,11 +6,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifndef RMS_NORM_EPSILON
+#define RMS_NORM_EPSILON 1e-5f
+#endif
+
 template <typename T, int N>
 void rms_norm_general(const T *restrict input, const T *restrict input2, T *restrict output, int32_t cols)
 {
     event0();
-    constexpr float epsilon = 1e-5f;
+    constexpr float epsilon = RMS_NORM_EPSILON;
     ::aie::vector<float, N> add_res = ::aie::zeros<float, N>();
 
     int vector_chunks = cols / N;
