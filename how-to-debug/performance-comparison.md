@@ -1,0 +1,126 @@
+<!--
+SPDX-FileCopyrightText: Copyright (C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Performance Comparison Failures
+
+Used during SageAttention bring-up.
+
+## Case 1: Scalar Dequant Erases QK Speedup
+
+### Symptom
+
+The first runnable SageAttention path was correct enough to compare, but it was
+slower than bf16 MHA:
+
+```text
+SageAttention Latency (us): 3045.2
+MHA Latency (us): 446.2
+Speedup: 0.147x
+```
+
+### Cause
+
+The QK stage used `int8 x int8 -> int32`, then converted every int32 score to
+bf16 logits with a scalar loop. The scalar dequant loop erased the intended QK
+speedup.
+
+### Fix Used
+
+Vectorize the int32-to-bf16 dequant loop:
+
+```cpp
+constexpr int vec_len = 16;
+const auto scale = aie::broadcast<float, vec_len>((float)dequant_scale);
+for (int i = 0; i < DIM_M * DIM_N; i += vec_len) {
+    auto qk_i32 = aie::load_v<vec_len>(scratch_i32 + i);
+    auto qk_f32 = aie::to_float<float>(qk_i32, 0);
+    auto scaled = aie::mul(qk_f32, scale);
+    aie::store_v(logits_out + i, scaled.to_vector<bfloat16>());
+}
+```
+
+## Case 2: Fusing QK and Softmax Was Correct but Slower
+
+### Symptom
+
+The fused QK+softmax worker passed numerical verification after fixing the
+layout bug, but longer performance probes showed it was slower than MHA:
+
+```text
+64  sage 333.3988  mha 295.6772  speedup 0.887x
+128 sage 542.2411  mha 387.9595  speedup 0.715x
+256 sage 1242.9985 mha 689.3278  speedup 0.555x
+```
+
+### Cause
+
+The fusion removed the `memA -> outA` ObjectFIFO transfer, but it forced the QK
+kernel to convert the blocked accumulator layout into row-major logits itself.
+That row-major writeback cost more than the saved FIFO stage.
+
+### Fix Used
+
+Revert to explicit stages:
+
+```text
+QK Worker -> ObjectFIFO forward layout conversion -> softmax Worker -> PV Worker
+```
+
+Then parallelize query blocks across two columns. This keeps the layout
+conversion in DMA and exposes more parallelism. After runtime scale metadata
+was added, the QK-to-softmax FIFO carries int32 scores and softmax performs the
+dequant step.
+
+## Case 3: Shape and Sample Count Matter
+
+### Symptom
+
+At `seq_len=128`, SageAttention and the one-pipeline MHA baseline were close
+enough that a short five-iteration average could pass or fail depending on a
+small outlier:
+
+```text
+SageAttention Latency (us): 387.2
+MHA Latency (us): 385.3
+Speedup: 0.995x
+```
+
+### Cause
+
+For short sequences, QK is not dominant enough. Runtime overhead, DMA setup,
+softmax, and PV hide much of the int8 QK benefit. A short timing sample also
+makes the assertion too sensitive.
+
+### Fix Used
+
+The performance test now uses `seq_len=256`, five warmups, and thirty timed
+iterations. With runtime scale metadata enabled, three pytest iterations
+produced:
+
+```text
+SageAttention Latency (us): 667.5
+MHA Latency (us): 685.6
+Speedup: 1.027x
+
+SageAttention Latency (us): 622.4
+MHA Latency (us): 727.8
+Speedup: 1.169x
+
+SageAttention Latency (us): 641.8
+MHA Latency (us): 665.1
+Speedup: 1.036x
+```
+
+The compile-time scale prototype was faster, but it was not a real runtime
+operator. Runtime scale metadata is the more correct design point even though
+the current int32 score FIFO leaves less speedup.
+
+The benchmark command was:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+source .venv/bin/activate
+pytest iron/operators/sage_attention/test.py --iterations 3 -s -v
+```

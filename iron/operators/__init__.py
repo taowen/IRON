@@ -6,6 +6,7 @@ from .elementwise_mul.op import ElementwiseMul
 from .gemm.op import GEMM
 from .gemv.op import GEMV
 from .mha.op import MHA
+from .sage_attention.op import SageAttention
 from .rms_norm.op import RMSNorm
 from .rope.op import RoPE
 from .silu.op import SiLU
