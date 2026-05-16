@@ -17,6 +17,11 @@ input-rmsnorm
 input-rmsnorm-qkv
 input-rmsnorm-qkv-rope-cache
 input-rmsnorm-qkv-rope-cache-scores-softmax
+input-rmsnorm-qkv-rope-cache-scores-softmax-context
+input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj
+post-attn-rmsnorm-mlp-gate-up
+post-attn-mlp-down-residual
+post-attn-rmsnorm-full-mlp
 ```
 
 The score/softmax checkpoint was accepted only after proving that `qk_pair` and
@@ -244,3 +249,28 @@ ffn_hidden_errors: 0 when checked against actual_silu * actual_up
 This is enough to accept the MLP front-half checkpoint, but a future
 full-accuracy run should decide whether to keep the fast SiLU approximation or
 replace it with a more accurate negative-input path.
+
+## 17. Full MLP Composition Fits As An Isolated Program
+
+The composed post-attention full MLP checkpoint proved that the MLP half can be
+expressed as one IRON Program with one input BO, one packed weight BO, and one
+packed debug/output BO:
+
+```text
+attn_residual -> post RMSNorm -> gate/up -> SiLU -> multiply -> down -> residual
+```
+
+Accepted preflight evidence:
+
+```text
+runtime_memrefs: 3
+arg_specs: 3
+max_fifo_buffered_bytes: 49152
+non_advancing_acquires: 0
+```
+
+This does not prove that the whole attention+MLP layer fits in one naive
+SequentialPlacer graph. The attention O-projection path already hit the worker
+budget once. The next composition step should use the same checkpoint pattern:
+combine only the minimum adjacent boundary, keep local-reference verification,
+and let preflight/placer identify the actual resource limit.

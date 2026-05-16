@@ -292,6 +292,31 @@ This stage starts from `ffn_hidden[3072]` and `attn_residual[1024]`, runs
 accepted on the current NPU2 environment with `ffn_out_errors: 0` and
 `layer_residual_errors: 0`.
 
+The next accepted checkpoint composes the isolated MLP pieces into one
+persistent full-MLP graph:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+  --model Qwen/Qwen3-0.6B \
+  --stage post-attn-rmsnorm-full-mlp \
+  --verify \
+  --verify-repeat 1 \
+  --clean-build \
+  --build-dir build_qwen3_persistent_full_mlp \
+  --dump-proof
+```
+
+This stage starts from `attn_residual[1024]`, packs post-attention norm,
+gate/up/down weights into one runtime weight BO, computes
+`mlp_x_norm -> gate/up -> silu(gate) * up -> down_proj -> layer_residual`, and
+drains every intermediate boundary for verification. It was accepted on the
+current NPU2 environment with `mlp_x_norm_errors: 0`, `ffn_gate_errors: 0`,
+`ffn_up_errors: 0`, `ffn_gate_silu_errors: 0`, `ffn_hidden_errors: 0`,
+`ffn_out_errors: 0`, and `layer_residual_errors: 0`. Preflight reported
+`runtime_memrefs=3`, `arg_specs=3`, `max_fifo_buffered_bytes=49152`, and
+`non_advancing_acquires=0`.
+
 Placement scaling, runtime position patching, full-layer persistent
 composition, and multi-token decode are still future persistent stages.
 

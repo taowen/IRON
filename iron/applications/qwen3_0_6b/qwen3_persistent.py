@@ -36,12 +36,14 @@ from iron.applications.qwen3_0_6b.qwen3_persistent_ops import (  # noqa: E402
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContext,
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj,
     Qwen3PersistentPostAttnMLPDownResidual,
+    Qwen3PersistentPostAttnRMSNormFullMLP,
     Qwen3PersistentPostAttnRMSNormMLPGateUp,
     verification_tolerance,
 )
 from iron.applications.qwen3_0_6b.qwen3_persistent_refs import (  # noqa: E402
     build_qk_pair_reference,
     build_reference_input,
+    build_reference_full_mlp,
     build_reference_mlp_down_residual,
     build_reference_mlp_gate_up,
     build_reference_qkv,
@@ -85,6 +87,7 @@ def parse_args():
             "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
             "post-attn-rmsnorm-mlp-gate-up",
             "post-attn-mlp-down-residual",
+            "post-attn-rmsnorm-full-mlp",
         ],
         default="input-rmsnorm",
         help="Persistent bring-up stage to compile/run",
@@ -183,6 +186,13 @@ def main():
         op = Qwen3PersistentPostAttnMLPDownResidual(
             hidden_size=model.config.hidden_size,
             intermediate_size=model.config.intermediate_size,
+            context=context,
+        )
+    elif args.stage == "post-attn-rmsnorm-full-mlp":
+        op = Qwen3PersistentPostAttnRMSNormFullMLP(
+            hidden_size=model.config.hidden_size,
+            intermediate_size=model.config.intermediate_size,
+            epsilon=model.config.rms_norm_eps,
             context=context,
         )
     else:
@@ -294,6 +304,26 @@ def main():
                 "worker_graph: ffn_hidden broadcast + down_weight_fifo -> "
                 "down_matvec_worker -> ffn_out broadcast -> residual_add_worker"
             )
+        elif args.stage == "post-attn-rmsnorm-full-mlp":
+            print(
+                "dispatch_shape: attn_residual[1024] + "
+                "post_attention_norm_weight[1024] + W_gate[3072,1024] + "
+                "W_up[3072,1024] + W_down[1024,3072] -> mlp_x_norm, "
+                "ffn_gate, ffn_up, ffn_gate_silu, ffn_hidden, ffn_out, "
+                "layer_residual"
+            )
+            print(
+                "runtime_bos: attn_residual[1024], "
+                f"packed_weights[{op.packed_weights_size}], "
+                f"packed_outputs[{op.packed_outputs_size}]"
+            )
+            print(f"full_mlp_columns: {op.num_aie_columns}")
+            print(
+                "worker_graph: attn_residual_fifo + post_norm_weight_fifo -> "
+                "weighted_rmsnorm_worker -> xnorm broadcast -> gate/up matvec "
+                "workers -> silu_worker + mul_worker -> down_matvec_worker -> "
+                "residual_add_worker"
+            )
         else:
             print(
                 "dispatch_shape: hidden[1024] + packed QKV/norm weights + "
@@ -386,6 +416,27 @@ def main():
             dtype=hidden_buf.dtype,
         )
         op_args = [hidden_buf, residual_buf, weights_buf, packed_outputs_buf]
+        output_buffers = {"packed_outputs": packed_outputs_buf}
+    elif args.stage == "post-attn-rmsnorm-full-mlp":
+        next_token, inputs, expected_buffers = build_reference_full_mlp(
+            model, input_ids, args.max_seq_len
+        )
+        full_expected_buffers = expected_buffers
+        hidden_buf = XRTTensor.from_torch(inputs["attn_residual"])
+        packed_weights = torch.cat(
+            [
+                inputs["post_norm_weight"].flatten(),
+                inputs["W_gate"].flatten(),
+                inputs["W_up"].flatten(),
+                inputs["W_down"].flatten(),
+            ]
+        ).contiguous()
+        weights_buf = XRTTensor.from_torch(packed_weights)
+        packed_outputs_buf = XRTTensor(
+            (op.packed_outputs_size,),
+            dtype=hidden_buf.dtype,
+        )
+        op_args = [hidden_buf, weights_buf, packed_outputs_buf]
         output_buffers = {"packed_outputs": packed_outputs_buf}
     else:
         next_token, position, inputs, expected_buffers = build_reference_qkv_rope_cache(
@@ -515,6 +566,51 @@ def main():
             residual_local = inputs["attn_residual"] + actual_buffers["ffn_out"]
             local_expected_buffers = {
                 **expected_buffers,
+                "ffn_out": ffn_out_local.contiguous(),
+                "layer_residual": residual_local.contiguous(),
+            }
+        elif args.stage == "post-attn-rmsnorm-full-mlp":
+            packed_outputs_buf.device = "npu"
+            packed_outputs = packed_outputs_buf.to_torch()
+            actual_buffers = {
+                "mlp_x_norm": packed_outputs[
+                    op.mlp_x_norm_output_base : op.ffn_gate_output_base
+                ],
+                "ffn_gate": packed_outputs[
+                    op.ffn_gate_output_base : op.ffn_up_output_base
+                ],
+                "ffn_up": packed_outputs[
+                    op.ffn_up_output_base : op.ffn_gate_silu_output_base
+                ],
+                "ffn_gate_silu": packed_outputs[
+                    op.ffn_gate_silu_output_base : op.ffn_hidden_output_base
+                ],
+                "ffn_hidden": packed_outputs[
+                    op.ffn_hidden_output_base : op.ffn_out_output_base
+                ],
+                "ffn_out": packed_outputs[
+                    op.ffn_out_output_base : op.layer_residual_output_base
+                ],
+                "layer_residual": packed_outputs[op.layer_residual_output_base :],
+            }
+            gate_local = F.linear(
+                actual_buffers["mlp_x_norm"].view(1, 1, -1), inputs["W_gate"]
+            ).flatten()
+            up_local = F.linear(
+                actual_buffers["mlp_x_norm"].view(1, 1, -1), inputs["W_up"]
+            ).flatten()
+            gate_silu_local = F.silu(actual_buffers["ffn_gate"])
+            hidden_local = actual_buffers["ffn_gate_silu"] * actual_buffers["ffn_up"]
+            ffn_out_local = F.linear(
+                actual_buffers["ffn_hidden"].view(1, 1, -1), inputs["W_down"]
+            ).flatten()
+            residual_local = inputs["attn_residual"] + actual_buffers["ffn_out"]
+            local_expected_buffers = {
+                **expected_buffers,
+                "ffn_gate": gate_local.contiguous(),
+                "ffn_up": up_local.contiguous(),
+                "ffn_gate_silu": gate_silu_local.contiguous(),
+                "ffn_hidden": hidden_local.contiguous(),
                 "ffn_out": ffn_out_local.contiguous(),
                 "layer_residual": residual_local.contiguous(),
             }
@@ -804,6 +900,7 @@ def main():
                     "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
                     "post-attn-rmsnorm-mlp-gate-up",
                     "post-attn-mlp-down-residual",
+                    "post-attn-rmsnorm-full-mlp",
                 }
                 and full_ref_name in full_expected_buffers
                 and name not in {"x_norm", "mlp_x_norm"}

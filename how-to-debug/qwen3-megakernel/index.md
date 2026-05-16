@@ -39,6 +39,7 @@ input-rmsnorm-qkv-rope-cache-scores-softmax-context
 input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj
 post-attn-rmsnorm-mlp-gate-up
 post-attn-mlp-down-residual
+post-attn-rmsnorm-full-mlp
 ```
 
 Score/softmax root cause that was fixed:
@@ -107,6 +108,28 @@ inputs, computes down_proj, drains ffn_out, then checks layer_residual through
 the residual add Worker.
 
 Accepted evidence:
+ffn_out_errors: 0
+layer_residual_errors: 0
+```
+
+Full MLP checkpoint status:
+
+```text
+The composed post-attention full MLP checkpoint compiled, passed preflight, and
+verified without new debug symptoms. It starts from attn_residual, computes
+post-attention RMSNorm, gate/up, SiLU, elementwise multiply, down projection,
+and layer residual in one IRON Program while draining every boundary.
+
+Accepted evidence:
+runtime_memrefs: 3
+arg_specs: 3
+max_fifo_buffered_bytes: 49152
+non_advancing_acquires: 0
+mlp_x_norm_errors: 0
+ffn_gate_errors: 0
+ffn_up_errors: 0
+ffn_gate_silu_errors: 0
+ffn_hidden_errors: 0
 ffn_out_errors: 0
 layer_residual_errors: 0
 ```

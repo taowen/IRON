@@ -204,6 +204,54 @@ def build_reference_mlp_down_residual(
     )
 
 
+def build_reference_full_mlp(
+    model: Qwen3ForCausalLM,
+    input_ids: torch.Tensor,
+    max_seq_len: int,
+):
+    ref = Qwen3CachedReference(model, max_seq_len, num_layers=1)
+    prefill_logits, state = ref.prefill(input_ids)
+    next_token = int(torch.argmax(prefill_logits[:, -1, :], dim=-1).item())
+    references = one_layer_reference_tensors(model, next_token, state, max_seq_len)
+    layer = "model.layers.0"
+    mlp = f"{layer}.mlp"
+    attn_residual = references["attn_residual"].flatten().contiguous()
+    post_norm_weight = model.w(f"{layer}.post_attention_layernorm.weight").flatten()
+    w_gate = model.w(f"{mlp}.gate_proj.weight").contiguous()
+    w_up = model.w(f"{mlp}.up_proj.weight").contiguous()
+    w_down = model.w(f"{mlp}.down_proj.weight").contiguous()
+    mlp_x_norm = rms_norm(
+        attn_residual.view(1, 1, -1),
+        post_norm_weight,
+        model.config.rms_norm_eps,
+    ).flatten()
+    ffn_gate = F.linear(mlp_x_norm.view(1, 1, -1), w_gate).flatten()
+    ffn_up = F.linear(mlp_x_norm.view(1, 1, -1), w_up).flatten()
+    ffn_gate_silu = F.silu(ffn_gate)
+    ffn_hidden = ffn_gate_silu * ffn_up
+    ffn_out = F.linear(ffn_hidden.view(1, 1, -1), w_down).flatten()
+    layer_residual = attn_residual + ffn_out
+    return (
+        next_token,
+        {
+            "attn_residual": attn_residual,
+            "post_norm_weight": post_norm_weight.contiguous(),
+            "W_gate": w_gate,
+            "W_up": w_up,
+            "W_down": w_down,
+        },
+        {
+            "mlp_x_norm": mlp_x_norm.contiguous(),
+            "ffn_gate": ffn_gate.contiguous(),
+            "ffn_up": ffn_up.contiguous(),
+            "ffn_gate_silu": ffn_gate_silu.contiguous(),
+            "ffn_hidden": ffn_hidden.contiguous(),
+            "ffn_out": ffn_out.contiguous(),
+            "layer_residual": layer_residual.contiguous(),
+        },
+    )
+
+
 def build_qk_pair_reference(
     queries: torch.Tensor,
     current_keys: torch.Tensor,
