@@ -38,6 +38,7 @@ input-rmsnorm-qkv-rope-cache-scores-softmax
 input-rmsnorm-qkv-rope-cache-scores-softmax-context
 input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj
 post-attn-rmsnorm-mlp-gate-up
+post-attn-mlp-down-residual
 ```
 
 Score/softmax root cause that was fixed:
@@ -95,6 +96,19 @@ The remaining SiLU mismatches were only on negative gate values. The existing
 AIE SiLU kernel uses a tanh approximation, and the old standalone SiLU test
 only covered positive inputs. The checkpoint now verifies SiLU with the same
 local input boundary and an explicit absolute tolerance for that approximation.
+```
+
+MLP down/residual checkpoint status:
+
+```text
+The isolated MLP down checkpoint compiled, passed preflight, and verified
+without new debug symptoms. It starts from ffn_hidden and attn_residual host
+inputs, computes down_proj, drains ffn_out, then checks layer_residual through
+the residual add Worker.
+
+Accepted evidence:
+ffn_out_errors: 0
+layer_residual_errors: 0
 ```
 
 Do not debug from final logits first. Start from the symptom, prove the failing

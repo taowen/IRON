@@ -274,8 +274,26 @@ SiLU discrepancy was the existing AIE tanh-approx SiLU on negative gate inputs,
 so this checkpoint uses an operator-specific absolute tolerance for
 `ffn_gate_silu`.
 
-MLP down projection, placement scaling, runtime position patching, and
-multi-token decode are still future persistent stages.
+The next accepted checkpoint isolates the MLP down projection and layer
+residual add:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+  --model Qwen/Qwen3-0.6B \
+  --stage post-attn-mlp-down-residual \
+  --verify \
+  --verify-repeat 1 \
+  --dump-proof
+```
+
+This stage starts from `ffn_hidden[3072]` and `attn_residual[1024]`, runs
+`down_proj`, and computes `layer_residual = attn_residual + ffn_out`. It was
+accepted on the current NPU2 environment with `ffn_out_errors: 0` and
+`layer_residual_errors: 0`.
+
+Placement scaling, runtime position patching, full-layer persistent
+composition, and multi-token decode are still future persistent stages.
 
 ## Weight Format Decision
 

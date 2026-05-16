@@ -175,6 +175,35 @@ def build_reference_mlp_gate_up(
     )
 
 
+def build_reference_mlp_down_residual(
+    model: Qwen3ForCausalLM,
+    input_ids: torch.Tensor,
+    max_seq_len: int,
+):
+    ref = Qwen3CachedReference(model, max_seq_len, num_layers=1)
+    prefill_logits, state = ref.prefill(input_ids)
+    next_token = int(torch.argmax(prefill_logits[:, -1, :], dim=-1).item())
+    references = one_layer_reference_tensors(model, next_token, state, max_seq_len)
+    mlp = "model.layers.0.mlp"
+    ffn_hidden = references["ffn_hidden"].flatten().contiguous()
+    attn_residual = references["attn_residual"].flatten().contiguous()
+    w_down = model.w(f"{mlp}.down_proj.weight").contiguous()
+    ffn_out = F.linear(ffn_hidden.view(1, 1, -1), w_down).flatten()
+    layer_residual = attn_residual + ffn_out
+    return (
+        next_token,
+        {
+            "ffn_hidden": ffn_hidden,
+            "attn_residual": attn_residual,
+            "W_down": w_down,
+        },
+        {
+            "ffn_out": ffn_out.contiguous(),
+            "layer_residual": layer_residual.contiguous(),
+        },
+    )
+
+
 def build_qk_pair_reference(
     queries: torch.Tensor,
     current_keys: torch.Tensor,
@@ -281,6 +310,8 @@ def print_structured_attention_error(
         "ffn_up",
         "ffn_gate_silu",
         "ffn_hidden",
+        "ffn_out",
+        "layer_residual",
     }:
         dim = first % output.numel()
         print(
