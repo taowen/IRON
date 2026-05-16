@@ -296,19 +296,28 @@ class FullELFCallable:
             raise RuntimeError(f"Kernel execution failed with return code {ret_code}")
 
     def reload_elf(self, elf_data):
+        # pyxrt.elf is constructed from a PyCapsule pointing at the numpy
+        # buffer. Keep the backing array and view alive for the lifetime of the
+        # XRT objects, otherwise patched local ELF buffers can be freed while
+        # the runtime still references their memory.
+        self._elf_data = elf_data
         # Create a PyCapsule from the numpy array pointer for pybind11
-        elf_data_u8 = elf_data.view(dtype=np.uint8)
+        self._elf_data_u8 = self._elf_data.view(dtype=np.uint8)
         ctypes.pythonapi.PyCapsule_New.restype = ctypes.py_object
         ctypes.pythonapi.PyCapsule_New.argtypes = [
             ctypes.c_void_p,
             ctypes.c_char_p,
             ctypes.c_void_p,
         ]
-        capsule = ctypes.pythonapi.PyCapsule_New(elf_data_u8.ctypes.data, None, None)
-        xrt_elf = pyxrt.elf(capsule, elf_data.nbytes)
-        xrt_context = pyxrt.hw_context(aie_utils.DefaultNPURuntime._device, xrt_elf)
+        capsule = ctypes.pythonapi.PyCapsule_New(
+            self._elf_data_u8.ctypes.data, None, None
+        )
+        self._xrt_elf = pyxrt.elf(capsule, self._elf_data.nbytes)
+        self._xrt_context = pyxrt.hw_context(
+            aie_utils.DefaultNPURuntime._device, self._xrt_elf
+        )
         self.xrt_kernel = pyxrt.ext.kernel(
-            xrt_context, f"{self.device_name}:{self.sequence_name}"
+            self._xrt_context, f"{self.device_name}:{self.sequence_name}"
         )
 
 
@@ -365,6 +374,7 @@ class FusedFullELFCallable(FullELFCallable):
             size_bytes=length,
             shape=(length // itemsize,),
             dtype=ml_dtypes.bfloat16,
+            parent_tensor=main_buffer,
         )
 
         self._buffer_cache[buffer_name] = sub_buffer

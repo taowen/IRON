@@ -42,7 +42,15 @@ class XRTSubBuffer(XRTTensor):
     The parent XRTTensor must remain alive as long as this sub-buffer is in use.
     """
 
-    def __init__(self, parent_bo, offset_bytes, size_bytes, shape, dtype):
+    def __init__(
+        self,
+        parent_bo,
+        offset_bytes,
+        size_bytes,
+        shape,
+        dtype,
+        parent_tensor=None,
+    ):
         """
         Args:
             parent_bo: The parent pyxrt.bo object.
@@ -50,10 +58,13 @@ class XRTSubBuffer(XRTTensor):
             size_bytes: Size of this sub-region in bytes.
             shape: Tuple giving the logical shape of this sub-buffer.
             dtype: numpy dtype for interpreting the buffer contents.
+            parent_tensor: Optional parent XRTTensor. When present, write views
+                mark the parent dirty so a later parent `.to("npu")` syncs.
         """
         # Skip XRTTensor.__init__ (which would allocate a new bo); set base attrs directly.
         self.device = "npu"
         self.dtype = np.dtype(dtype)
+        self._parent_tensor = parent_tensor
         # TODO: replace with XRTTensor.__getitem__ slice support when available upstream
         self._bo = _pyxrt.bo(parent_bo, size_bytes, offset_bytes)
         self._shape = tuple(shape)
@@ -72,6 +83,13 @@ class XRTSubBuffer(XRTTensor):
         """Return the underlying pyxrt.bo (required by NPUKernel)."""
         return self._bo
 
+    def torch_view(self):
+        """Return a writable host view and mark the parent BO dirty."""
+        self.device = "cpu"
+        if self._parent_tensor is not None:
+            self._parent_tensor.device = "cpu"
+        return super().torch_view()
+
     @classmethod
     def from_parent(cls, parent, shape, offset_elements, length_elements, dtype):
         """Create an XRTSubBuffer into a sub-region of a parent XRTTensor.
@@ -87,4 +105,5 @@ class XRTSubBuffer(XRTTensor):
             size_bytes=length_elements * itemsize,
             shape=shape,
             dtype=dtype,
+            parent_tensor=parent,
         )
