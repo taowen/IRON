@@ -248,8 +248,34 @@ variant, the naive three-worker extension exceeded the current 16 Worker
 SequentialPlacer budget, and disabling an older debug stream left behind a
 zero-length TAP. These are recorded in `how-to-debug/qwen3-megakernel/`.
 
-MLP, placement scaling, runtime position patching, and multi-token decode are
-still future persistent stages.
+The next accepted checkpoint isolates the MLP front half rather than appending
+it to the already full attention graph:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+  --model Qwen/Qwen3-0.6B \
+  --stage post-attn-rmsnorm-mlp-gate-up \
+  --verify \
+  --verify-repeat 1 \
+  --dump-proof
+```
+
+This stage starts from the verified `attn_residual[1024]`, runs
+post-attention RMSNorm, `gate_proj`, `up_proj`, SiLU, and
+`ffn_hidden = silu(gate) * up`. It was accepted on the current NPU2 environment
+with `mlp_x_norm_errors: 0`, `ffn_gate_errors: 0`, `ffn_up_errors: 0`,
+`ffn_gate_silu_errors: 0`, and `ffn_hidden_errors: 0`.
+
+During bring-up, comparing gate/up directly to the full PyTorch reference
+misidentified the boundary. Recomputing the local reference from the actual NPU
+`mlp_x_norm` proved the GEMV outputs were exact at that boundary. The remaining
+SiLU discrepancy was the existing AIE tanh-approx SiLU on negative gate inputs,
+so this checkpoint uses an operator-specific absolute tolerance for
+`ffn_gate_silu`.
+
+MLP down projection, placement scaling, runtime position patching, and
+multi-token decode are still future persistent stages.
 
 ## Weight Format Decision
 

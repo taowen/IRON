@@ -37,6 +37,7 @@ current NPU2 environment:
 input-rmsnorm-qkv-rope-cache-scores-softmax
 input-rmsnorm-qkv-rope-cache-scores-softmax-context
 input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj
+post-attn-rmsnorm-mlp-gate-up
 ```
 
 Score/softmax root cause that was fixed:
@@ -80,6 +81,20 @@ copy Worker in this deeper checkpoint.
 After K-cache debug was disabled, a stale TAP was still generated with length
 0. Optional debug streams now use one boolean for size, FIFO, Worker, fill,
 drain, TAP, and verifier slicing.
+```
+
+MLP gate/up root causes that were diagnosed:
+
+```text
+The isolated MLP checkpoint initially showed gate/up mismatches against the
+full PyTorch reference even though mlp_x_norm passed. Recomputing gate/up from
+the actual NPU mlp_x_norm proved the GEMV workers and packed weights were
+correct; the full-reference difference was upstream bf16 boundary drift.
+
+The remaining SiLU mismatches were only on negative gate values. The existing
+AIE SiLU kernel uses a tanh approximation, and the old standalone SiLU test
+only covered positive inputs. The checkpoint now verifies SiLU with the same
+local input boundary and an explicit absolute tolerance for that approximation.
 ```
 
 Do not debug from final logits first. Start from the symptom, prove the failing

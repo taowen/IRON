@@ -367,3 +367,26 @@ def test_qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax_context_o_
         "1",
     ]
     subprocess.run(command, check=True)
+
+
+@pytest.mark.extensive
+def test_qwen3_persistent_post_attn_rmsnorm_mlp_gate_up():
+    model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
+    if model is None:
+        pytest.skip(
+            "Set IRON_QWEN3_0_6B_MODEL to run the Qwen3-0.6B persistent MLP gate/up bring-up test"
+        )
+
+    test_dir = Path(__file__).parent
+    command = [
+        sys.executable,
+        str(test_dir / "qwen3_persistent.py"),
+        "--model",
+        model,
+        "--stage",
+        "post-attn-rmsnorm-mlp-gate-up",
+        "--verify",
+        "--verify-repeat",
+        "1",
+    ]
+    subprocess.run(command, check=True)

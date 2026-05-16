@@ -393,6 +393,315 @@ def qwen3_persistent_input_rmsnorm_qkv(
     return Program(dev, rt).resolve_program(SequentialPlacer())
 
 
+def qwen3_persistent_post_attn_rmsnorm_mlp_gate_up(
+    dev,
+    hidden_size,
+    intermediate_size,
+    num_columns,
+    tile_size_input,
+    tile_size_output,
+    trace_size,
+    func_prefix="",
+    rms_kernel_object="rms_norm.o",
+    gemv_kernel_object="mv.o",
+    silu_kernel_object="silu.o",
+    mul_kernel_object="mul.o",
+):
+    """Single-token post-attention RMSNorm + MLP gate/up checkpoint."""
+    dtype = bfloat16
+    weights_size = hidden_size + 2 * intermediate_size * hidden_size
+    outputs_size = hidden_size + 4 * intermediate_size
+    tensor_ty = np.ndarray[(hidden_size,), np.dtype[dtype]]
+    weights_ty = np.ndarray[(weights_size,), np.dtype[dtype]]
+    outputs_ty = np.ndarray[(outputs_size,), np.dtype[dtype]]
+    hidden_ty = np.ndarray[(hidden_size,), np.dtype[dtype]]
+    hidden_weight_ty = np.ndarray[(hidden_size,), np.dtype[dtype]]
+    ffn_tile_ty = np.ndarray[(tile_size_output,), np.dtype[dtype]]
+    gemv_a_ty = np.ndarray[(tile_size_input, hidden_size), np.dtype[dtype]]
+
+    if hidden_size != 1024:
+        raise ValueError("post-attn MLP checkpoint expects hidden_size=1024")
+    if intermediate_size != 3072:
+        raise ValueError("post-attn MLP checkpoint expects intermediate_size=3072")
+    if intermediate_size % num_columns != 0:
+        raise ValueError("intermediate_size must be divisible by num_columns")
+    if intermediate_size % tile_size_output != 0:
+        raise ValueError("intermediate_size must be divisible by tile_size_output")
+    if tile_size_output % tile_size_input != 0:
+        raise ValueError("tile_size_output must be a multiple of tile_size_input")
+    if tile_size_output % 16 != 0:
+        raise ValueError("tile_size_output must be a multiple of 16")
+
+    in_residual = ObjectFifo(hidden_ty, name="qwen3_mlp_attn_residual", depth=2)
+    post_norm_weight = ObjectFifo(
+        hidden_weight_ty, name="qwen3_mlp_post_norm_weight", depth=2
+    )
+    mlp_xnorm = ObjectFifo(hidden_ty, name="qwen3_mlp_xnorm", depth=2)
+
+    gate_weight_fifos = [
+        ObjectFifo(gemv_a_ty, name=f"qwen3_mlp_gate_weight_{col}", depth=2)
+        for col in range(num_columns)
+    ]
+    up_weight_fifos = [
+        ObjectFifo(gemv_a_ty, name=f"qwen3_mlp_up_weight_{col}", depth=2)
+        for col in range(num_columns)
+    ]
+    gate_fifos = [
+        ObjectFifo(ffn_tile_ty, name=f"qwen3_mlp_gate_{col}", depth=2)
+        for col in range(num_columns)
+    ]
+    up_fifos = [
+        ObjectFifo(ffn_tile_ty, name=f"qwen3_mlp_up_{col}", depth=2)
+        for col in range(num_columns)
+    ]
+    gate_silu_fifos = [
+        ObjectFifo(ffn_tile_ty, name=f"qwen3_mlp_gate_silu_{col}", depth=2)
+        for col in range(num_columns)
+    ]
+    hidden_fifos = [
+        ObjectFifo(ffn_tile_ty, name=f"qwen3_mlp_hidden_{col}", depth=2)
+        for col in range(num_columns)
+    ]
+
+    weighted_rms_norm = Kernel(
+        f"{func_prefix}weighted_rms_norm",
+        f"{func_prefix}{rms_kernel_object}",
+        [hidden_ty, hidden_weight_ty, hidden_ty, np.int32],
+    )
+    matvec = Kernel(
+        f"{func_prefix}matvec_vectorized_bf16_bf16",
+        f"{func_prefix}{gemv_kernel_object}",
+        [np.int32, np.int32, gemv_a_ty, hidden_ty, ffn_tile_ty],
+    )
+    silu = Kernel(
+        f"{func_prefix}silu_bf16",
+        f"{func_prefix}{silu_kernel_object}",
+        [ffn_tile_ty, ffn_tile_ty, np.int32],
+    )
+    mul = Kernel(
+        f"{func_prefix}eltwise_mul_bf16_vector",
+        f"{func_prefix}{mul_kernel_object}",
+        [ffn_tile_ty, ffn_tile_ty, ffn_tile_ty, np.int32],
+    )
+
+    def post_norm_worker(of_in, of_weight, of_out, rms_norm):
+        residual = of_in.acquire(1)
+        weight = of_weight.acquire(1)
+        out = of_out.acquire(1)
+        rms_norm(residual, weight, out, hidden_size)
+        of_out.release(1)
+        of_weight.release(1)
+        of_in.release(1)
+
+    def mlp_matvec_worker(weight_fifo, x_fifo, out_fifo, matvec_kernel):
+        x = x_fifo.acquire(1)
+        for _ in range_(intermediate_size // tile_size_output // num_columns):
+            c = out_fifo.acquire(1)
+            for j_idx in range_(tile_size_output // tile_size_input):
+                j_i32 = index.casts(T.i32(), j_idx)
+                output_row_offset = j_i32 * tile_size_input
+                w = weight_fifo.acquire(1)
+                matvec_kernel(tile_size_input, output_row_offset, w, x, c)
+                weight_fifo.release(1)
+            out_fifo.release(1)
+        x_fifo.release(1)
+
+    def silu_worker(of_in, of_out, silu_kernel):
+        for _ in range_(intermediate_size // tile_size_output // num_columns):
+            gate = of_in.acquire(1)
+            out = of_out.acquire(1)
+            silu_kernel(gate, out, tile_size_output)
+            of_out.release(1)
+            of_in.release(1)
+
+    def mul_worker(of_gate, of_up, of_out, mul_kernel):
+        for _ in range_(intermediate_size // tile_size_output // num_columns):
+            gate = of_gate.acquire(1)
+            up = of_up.acquire(1)
+            out = of_out.acquire(1)
+            mul_kernel(gate, up, out, tile_size_output)
+            of_out.release(1)
+            of_up.release(1)
+            of_gate.release(1)
+
+    workers = [
+        Worker(
+            post_norm_worker,
+            [
+                in_residual.cons(),
+                post_norm_weight.cons(),
+                mlp_xnorm.prod(),
+                weighted_rms_norm,
+            ],
+        ),
+    ]
+    for col in range(num_columns):
+        workers.extend(
+            [
+                Worker(
+                    mlp_matvec_worker,
+                    [
+                        gate_weight_fifos[col].cons(),
+                        mlp_xnorm.cons(),
+                        gate_fifos[col].prod(),
+                        matvec,
+                    ],
+                ),
+                Worker(
+                    mlp_matvec_worker,
+                    [
+                        up_weight_fifos[col].cons(),
+                        mlp_xnorm.cons(),
+                        up_fifos[col].prod(),
+                        matvec,
+                    ],
+                ),
+                Worker(
+                    silu_worker,
+                    [
+                        gate_fifos[col].cons(),
+                        gate_silu_fifos[col].prod(),
+                        silu,
+                    ],
+                ),
+                Worker(
+                    mul_worker,
+                    [
+                        gate_silu_fifos[col].cons(),
+                        up_fifos[col].cons(),
+                        hidden_fifos[col].prod(),
+                        mul,
+                    ],
+                ),
+            ]
+        )
+
+    hidden_tap = TensorAccessPattern(
+        (1, hidden_size),
+        0,
+        [1, 1, 1, hidden_size],
+        [0, 0, 0, 1],
+    )
+    post_norm_weight_tap = TensorAccessPattern(
+        (weights_size,),
+        0,
+        [1, 1, 1, hidden_size],
+        [0, 0, 0, 1],
+    )
+    gate_weight_base = hidden_size
+    up_weight_base = gate_weight_base + intermediate_size * hidden_size
+
+    def weight_taps(total_rows, base_offset):
+        return [
+            TensorAccessPattern(
+                (weights_size,),
+                base_offset + col * (total_rows // num_columns) * hidden_size,
+                [1, 1, 1, (total_rows // num_columns) * hidden_size],
+                [0, 0, 0, 1],
+            )
+            for col in range(num_columns)
+        ]
+
+    mlp_xnorm_output_base = 0
+    ffn_gate_output_base = hidden_size
+    ffn_up_output_base = ffn_gate_output_base + intermediate_size
+    ffn_gate_silu_output_base = ffn_up_output_base + intermediate_size
+    ffn_hidden_output_base = ffn_gate_silu_output_base + intermediate_size
+
+    mlp_xnorm_output_tap = TensorAccessPattern(
+        (outputs_size,),
+        mlp_xnorm_output_base,
+        [1, 1, 1, hidden_size],
+        [0, 0, 0, 1],
+    )
+
+    def out_taps(total_rows, base_offset):
+        return [
+            TensorAccessPattern(
+                (outputs_size,),
+                base_offset + col * (total_rows // num_columns),
+                [1, 1, 1, total_rows // num_columns],
+                [0, 0, 0, 1],
+            )
+            for col in range(num_columns)
+        ]
+
+    gate_weight_taps = weight_taps(intermediate_size, gate_weight_base)
+    up_weight_taps = weight_taps(intermediate_size, up_weight_base)
+    gate_output_taps = out_taps(intermediate_size, ffn_gate_output_base)
+    up_output_taps = out_taps(intermediate_size, ffn_up_output_base)
+    gate_silu_output_taps = out_taps(intermediate_size, ffn_gate_silu_output_base)
+    hidden_output_taps = out_taps(intermediate_size, ffn_hidden_output_base)
+
+    rt = Runtime()
+    with rt.sequence(tensor_ty, weights_ty, outputs_ty) as (
+        residual,
+        weights,
+        outputs,
+    ):
+        rt.start(*workers)
+        tg = rt.task_group()
+        rt.fill(in_residual.prod(), residual, hidden_tap, task_group=tg)
+        rt.fill(
+            post_norm_weight.prod(),
+            weights,
+            post_norm_weight_tap,
+            task_group=tg,
+        )
+        for col in range(num_columns):
+            rt.fill(
+                gate_weight_fifos[col].prod(),
+                weights,
+                gate_weight_taps[col],
+                task_group=tg,
+            )
+            rt.fill(
+                up_weight_fifos[col].prod(),
+                weights,
+                up_weight_taps[col],
+                task_group=tg,
+            )
+        rt.drain(
+            mlp_xnorm.cons(),
+            outputs,
+            mlp_xnorm_output_tap,
+            wait=True,
+            task_group=tg,
+        )
+        for col in range(num_columns):
+            rt.drain(
+                gate_fifos[col].cons(),
+                outputs,
+                gate_output_taps[col],
+                wait=True,
+                task_group=tg,
+            )
+            rt.drain(
+                up_fifos[col].cons(),
+                outputs,
+                up_output_taps[col],
+                wait=True,
+                task_group=tg,
+            )
+            rt.drain(
+                gate_silu_fifos[col].cons(),
+                outputs,
+                gate_silu_output_taps[col],
+                wait=True,
+                task_group=tg,
+            )
+            rt.drain(
+                hidden_fifos[col].cons(),
+                outputs,
+                hidden_output_taps[col],
+                wait=True,
+                task_group=tg,
+            )
+        rt.finish_task_group(tg)
+
+    return Program(dev, rt).resolve_program(SequentialPlacer())
+
+
 def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     dev,
     hidden_size,

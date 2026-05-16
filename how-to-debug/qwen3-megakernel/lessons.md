@@ -212,3 +212,35 @@ qwen3_o_proj_matvec_scalar_bf16_bf16
 
 Preflight now rejects a `memref<4x2048xbf16>` O-projection declaration that
 still uses the generic `matvec_vectorized_bf16_bf16` symbol.
+
+## 15. Full Reference And Local Boundary Reference Answer Different Questions
+
+The MLP gate/up checkpoint showed why both references are needed:
+
+```text
+full reference:  measures accumulated model drift from PyTorch
+local reference: proves whether the current Worker consumes and computes correctly
+```
+
+When `mlp_x_norm` passed but `ffn_gate` and `ffn_up` failed full reference, the
+local reference built from actual `mlp_x_norm` showed zero GEMV error. That
+kept the diagnosis focused on the true boundary instead of rewriting the GEMV
+dataflow.
+
+## 16. Operator Tests Must Cover The Model Distribution
+
+The existing SiLU operator test used positive random inputs. Qwen3 gate
+projection feeds negative values into SiLU, exposing the tanh-approximation
+error that the standalone test did not exercise.
+
+For model bring-up, keep the operator's standalone tolerance in mind but also
+record the model-distribution evidence:
+
+```text
+ffn_gate_silu_max_abs: 0.019531
+ffn_hidden_errors: 0 when checked against actual_silu * actual_up
+```
+
+This is enough to accept the MLP front-half checkpoint, but a future
+full-accuracy run should decide whether to keep the fast SiLU approximation or
+replace it with a more accurate negative-input path.

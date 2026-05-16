@@ -627,3 +627,52 @@ Runtime.drain
 TensorAccessPattern creation
 host verifier slices
 ```
+
+## 26. Rebuild Local References From The Actual FIFO Boundary
+
+Use when the first tensor in a stage passes but every downstream tensor has
+small numeric mismatches against the full model reference.
+
+For the MLP gate/up checkpoint, `mlp_x_norm` passed, but gate/up initially
+failed against the full PyTorch reference. The decisive check was:
+
+```python
+gate_local = F.linear(actual_mlp_x_norm.view(1, 1, -1), W_gate).flatten()
+up_local = F.linear(actual_mlp_x_norm.view(1, 1, -1), W_up).flatten()
+```
+
+Result:
+
+```text
+ffn_gate_errors: 0
+ffn_up_errors: 0
+```
+
+That proves the active boundary is `actual_mlp_x_norm`, not the higher
+precision PyTorch tensor with the same semantic name.
+
+## 27. Test Approximation Kernels On The Model's Real Input Distribution
+
+Use when an elementwise approximation passes its standalone operator test but
+fails inside a model checkpoint.
+
+The SiLU standalone test covered positive inputs only. Qwen3 gate values include
+negative inputs, and the AIE tanh-approx SiLU produced a few values with about
+0.02 absolute error against PyTorch exact SiLU.
+
+Diagnosis:
+
+```text
+1. Compare SiLU against a local reference fed by actual ffn_gate.
+2. Check whether ffn_hidden matches actual_ffn_gate_silu * actual_ffn_up.
+3. If the multiply passes, the boundary is the approximation kernel, not the
+   downstream elementwise multiply.
+```
+
+Accepted checkpoint evidence:
+
+```text
+ffn_gate_silu_max_abs: 0.019531
+ffn_gate_silu_errors: 0
+ffn_hidden_errors: 0
+```

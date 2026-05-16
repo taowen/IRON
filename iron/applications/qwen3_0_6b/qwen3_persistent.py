@@ -71,6 +71,8 @@ def verification_tolerance(stage: str, name: str) -> tuple[float, float]:
         "attn_context_flat",
     }:
         return 0.05, 0.5
+    if stage == "post-attn-rmsnorm-mlp-gate-up" and name == "ffn_gate_silu":
+        return 0.04, 0.025
     return 0.04, 1e-6
 
 
@@ -801,6 +803,176 @@ class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj(
         return artifacts
 
 
+@dataclass
+class Qwen3PersistentPostAttnRMSNormMLPGateUp(MLIROperator):
+    """Single-token persistent post-attention RMSNorm + MLP gate/up stage."""
+
+    hidden_size: int = 1024
+    intermediate_size: int = 3072
+    num_aie_columns: int = 1
+    tile_size_input: int = 4
+    tile_size_output: int = 384
+    epsilon: float = 1e-6
+    kernel_vector_size: int = field(default=64, repr=False)
+    context: object = field(default=None, repr=False)
+
+    _name_aliases: ClassVar[dict[str, str]] = {
+        **MLIROperator._name_aliases,
+        "hidden_size": "h",
+        "intermediate_size": "ffn",
+        "num_aie_columns": "col",
+        "tile_size_input": "tsi",
+        "tile_size_output": "tso",
+    }
+
+    def __post_init__(self):
+        if self.hidden_size != 1024:
+            raise ValueError(
+                f"Qwen3-0.6B persistent MLP expects hidden_size=1024, got {self.hidden_size}"
+            )
+        if self.intermediate_size != 3072:
+            raise ValueError(
+                "Qwen3-0.6B persistent MLP expects intermediate_size=3072, "
+                f"got {self.intermediate_size}"
+            )
+        if self.hidden_size % self.kernel_vector_size != 0:
+            raise ValueError("hidden_size must be a multiple of kernel_vector_size")
+        if self.intermediate_size % self.num_aie_columns != 0:
+            raise ValueError("intermediate_size must be divisible by num_aie_columns")
+        if self.intermediate_size % self.tile_size_output != 0:
+            raise ValueError("intermediate_size must be divisible by tile_size_output")
+        if self.tile_size_output % self.tile_size_input != 0:
+            raise ValueError("tile_size_output must be a multiple of tile_size_input")
+        if self.tile_size_output % 16 != 0:
+            raise ValueError("tile_size_output must be a multiple of 16")
+        if self.epsilon <= 0:
+            raise ValueError(f"epsilon must be positive, got {self.epsilon}")
+        MLIROperator.__init__(self, context=self.context)
+
+    @property
+    def _epsilon_tag(self):
+        return f"eps_{self.epsilon:.0e}".replace("-", "m")
+
+    @property
+    def _rms_kernel_object(self):
+        return f"qwen3_persistent_rms_norm_{self._epsilon_tag}.o"
+
+    @property
+    def _gemv_kernel_object(self):
+        return (
+            f"qwen3_persistent_gemv_{self.hidden_size}k_{self.kernel_vector_size}vs.o"
+        )
+
+    @property
+    def _silu_kernel_object(self):
+        return "qwen3_persistent_silu.o"
+
+    @property
+    def _mul_kernel_object(self):
+        return "qwen3_persistent_mul.o"
+
+    @property
+    def packed_weights_size(self):
+        return self.hidden_size + 2 * self.intermediate_size * self.hidden_size
+
+    @property
+    def packed_outputs_size(self):
+        return self.hidden_size + 4 * self.intermediate_size
+
+    @property
+    def mlp_x_norm_output_base(self):
+        return 0
+
+    @property
+    def ffn_gate_output_base(self):
+        return self.hidden_size
+
+    @property
+    def ffn_up_output_base(self):
+        return self.ffn_gate_output_base + self.intermediate_size
+
+    @property
+    def ffn_gate_silu_output_base(self):
+        return self.ffn_up_output_base + self.intermediate_size
+
+    @property
+    def ffn_hidden_output_base(self):
+        return self.ffn_gate_silu_output_base + self.intermediate_size
+
+    def get_mlir_artifact(self):
+        return PythonGeneratedMLIRArtifact(
+            f"{self.name}.mlir",
+            DesignGenerator(
+                self.operator_dir / "qwen3_persistent_design.py",
+                "qwen3_persistent_post_attn_rmsnorm_mlp_gate_up",
+                (
+                    aie_utils.get_current_device(),
+                    self.hidden_size,
+                    self.intermediate_size,
+                    self.num_aie_columns,
+                    self.tile_size_input,
+                    self.tile_size_output,
+                    0,
+                ),
+                {
+                    "rms_kernel_object": self._rms_kernel_object,
+                    "gemv_kernel_object": self._gemv_kernel_object,
+                    "silu_kernel_object": self._silu_kernel_object,
+                    "mul_kernel_object": self._mul_kernel_object,
+                },
+            ),
+        )
+
+    def get_kernel_artifacts(self):
+        arch_dir = get_kernel_dir()
+        return [
+            KernelObjectArtifact(
+                self._rms_kernel_object,
+                dependencies=[
+                    SourceArtifact(
+                        self.context.base_dir / "aie_kernels" / arch_dir / "rms_norm.cc"
+                    )
+                ],
+                extra_flags=[f"-DRMS_NORM_EPSILON={self.epsilon}f"],
+            ),
+            KernelObjectArtifact(
+                self._gemv_kernel_object,
+                dependencies=[
+                    SourceArtifact(
+                        self.context.base_dir / "aie_kernels" / "generic" / "mv.cc"
+                    )
+                ],
+                extra_flags=[
+                    f"-DDIM_K={self.hidden_size}",
+                    f"-DVEC_SIZE={self.kernel_vector_size}",
+                ],
+            ),
+            KernelObjectArtifact(
+                self._silu_kernel_object,
+                dependencies=[
+                    SourceArtifact(
+                        self.context.base_dir / "aie_kernels" / arch_dir / "silu.cc"
+                    )
+                ],
+            ),
+            KernelObjectArtifact(
+                self._mul_kernel_object,
+                dependencies=[
+                    SourceArtifact(
+                        self.context.base_dir / "aie_kernels" / "generic" / "mul.cc"
+                    )
+                ],
+            ),
+        ]
+
+    def get_arg_spec(self):
+        return [
+            AIERuntimeArgSpec("in", (self.hidden_size,)),
+            AIERuntimeArgSpec("in", (self.packed_weights_size,)),
+            AIERuntimeArgSpec("out", (self.packed_outputs_size,)),
+        ]
+
+
 def assert_standard_runtime_available():
     import pyxrt  # noqa: F401
 
@@ -918,6 +1090,48 @@ def build_reference_qkv_rope_cache(
     )
 
 
+def build_reference_mlp_gate_up(
+    model: Qwen3ForCausalLM,
+    input_ids: torch.Tensor,
+    max_seq_len: int,
+):
+    ref = Qwen3CachedReference(model, max_seq_len, num_layers=1)
+    prefill_logits, state = ref.prefill(input_ids)
+    next_token = int(torch.argmax(prefill_logits[:, -1, :], dim=-1).item())
+    references = one_layer_reference_tensors(model, next_token, state, max_seq_len)
+    layer = "model.layers.0"
+    mlp = f"{layer}.mlp"
+    attn_residual = references["attn_residual"].flatten().contiguous()
+    post_norm_weight = model.w(f"{layer}.post_attention_layernorm.weight").flatten()
+    mlp_x_norm = rms_norm(
+        attn_residual.view(1, 1, -1),
+        post_norm_weight,
+        model.config.rms_norm_eps,
+    ).flatten()
+    w_gate = model.w(f"{mlp}.gate_proj.weight").contiguous()
+    w_up = model.w(f"{mlp}.up_proj.weight").contiguous()
+    ffn_gate = F.linear(mlp_x_norm.view(1, 1, -1), w_gate).flatten()
+    ffn_up = F.linear(mlp_x_norm.view(1, 1, -1), w_up).flatten()
+    ffn_gate_silu = F.silu(ffn_gate)
+    ffn_hidden = ffn_gate_silu * ffn_up
+    return (
+        next_token,
+        {
+            "attn_residual": attn_residual.contiguous(),
+            "post_norm_weight": post_norm_weight.contiguous(),
+            "W_gate": w_gate,
+            "W_up": w_up,
+        },
+        {
+            "mlp_x_norm": mlp_x_norm.contiguous(),
+            "ffn_gate": ffn_gate.contiguous(),
+            "ffn_up": ffn_up.contiguous(),
+            "ffn_gate_silu": ffn_gate_silu.contiguous(),
+            "ffn_hidden": ffn_hidden.contiguous(),
+        },
+    )
+
+
 def build_qk_pair_reference(
     queries: torch.Tensor,
     current_keys: torch.Tensor,
@@ -1018,6 +1232,19 @@ def print_structured_attention_error(
             f"dim={dim} expected={float(exp_flat[first]):.6f} "
             f"got={float(out_flat[first]):.6f}"
         )
+    elif name in {
+        "mlp_x_norm",
+        "ffn_gate",
+        "ffn_up",
+        "ffn_gate_silu",
+        "ffn_hidden",
+    }:
+        dim = first % output.numel()
+        print(
+            f"{name}_first_error: "
+            f"dim={dim} expected={float(exp_flat[first]):.6f} "
+            f"got={float(out_flat[first]):.6f}"
+        )
 
 
 def parse_args():
@@ -1043,6 +1270,7 @@ def parse_args():
             "input-rmsnorm-qkv-rope-cache-scores-softmax",
             "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
             "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
+            "post-attn-rmsnorm-mlp-gate-up",
         ],
         default="input-rmsnorm",
         help="Persistent bring-up stage to compile/run",
@@ -1071,6 +1299,11 @@ def main():
     if model.config.hidden_size != 1024:
         raise ValueError(
             f"expected Qwen3-0.6B hidden_size=1024, got {model.config.hidden_size}"
+        )
+    if model.config.intermediate_size != 3072:
+        raise ValueError(
+            "expected Qwen3-0.6B intermediate_size=3072, "
+            f"got {model.config.intermediate_size}"
         )
     if args.max_seq_len < 256:
         raise ValueError("max_seq_len must be at least 256")
@@ -1122,6 +1355,13 @@ def main():
             head_dim=model.config.head_dim,
             max_seq_len=args.max_seq_len,
             position=input_ids.shape[1],
+            epsilon=model.config.rms_norm_eps,
+            context=context,
+        )
+    elif args.stage == "post-attn-rmsnorm-mlp-gate-up":
+        op = Qwen3PersistentPostAttnRMSNormMLPGateUp(
+            hidden_size=model.config.hidden_size,
+            intermediate_size=model.config.intermediate_size,
             epsilon=model.config.rms_norm_eps,
             context=context,
         )
@@ -1201,6 +1441,24 @@ def main():
                 "worker_graph: hidden_fifo -> rmsnorm_worker -> weight_worker -> "
                 "xnorm broadcast -> Q/K/V matvec -> Q/K norm -> Q/K RoPE -> KV cache drains"
             )
+        elif args.stage == "post-attn-rmsnorm-mlp-gate-up":
+            print(
+                "dispatch_shape: attn_residual[1024] + "
+                "post_attention_norm_weight[1024] + W_gate[3072,1024] + "
+                "W_up[3072,1024] -> mlp_x_norm, ffn_gate, ffn_up, "
+                "ffn_gate_silu, ffn_hidden"
+            )
+            print(
+                "runtime_bos: attn_residual[1024], "
+                f"packed_weights[{op.packed_weights_size}], "
+                f"packed_outputs[{op.packed_outputs_size}]"
+            )
+            print(f"mlp_columns: {op.num_aie_columns}")
+            print(
+                "worker_graph: attn_residual_fifo + post_norm_weight_fifo -> "
+                "weighted_rmsnorm_worker -> xnorm broadcast -> gate/up matvec "
+                "workers -> silu_worker + mul_worker"
+            )
         else:
             print(
                 "dispatch_shape: hidden[1024] + packed QKV/norm weights + "
@@ -1251,6 +1509,26 @@ def main():
                 inputs["W_q"].flatten(),
                 inputs["W_k"].flatten(),
                 inputs["W_v"].flatten(),
+            ]
+        ).contiguous()
+        weights_buf = XRTTensor.from_torch(packed_weights)
+        packed_outputs_buf = XRTTensor(
+            (op.packed_outputs_size,),
+            dtype=hidden_buf.dtype,
+        )
+        op_args = [hidden_buf, weights_buf, packed_outputs_buf]
+        output_buffers = {"packed_outputs": packed_outputs_buf}
+    elif args.stage == "post-attn-rmsnorm-mlp-gate-up":
+        next_token, inputs, expected_buffers = build_reference_mlp_gate_up(
+            model, input_ids, args.max_seq_len
+        )
+        full_expected_buffers = expected_buffers
+        hidden_buf = XRTTensor.from_torch(inputs["attn_residual"])
+        packed_weights = torch.cat(
+            [
+                inputs["post_norm_weight"].flatten(),
+                inputs["W_gate"].flatten(),
+                inputs["W_up"].flatten(),
             ]
         ).contiguous()
         weights_buf = XRTTensor.from_torch(packed_weights)
@@ -1339,6 +1617,39 @@ def main():
                 )
                 .flatten()
                 .contiguous(),
+            }
+        elif args.stage == "post-attn-rmsnorm-mlp-gate-up":
+            packed_outputs_buf.device = "npu"
+            packed_outputs = packed_outputs_buf.to_torch()
+            actual_buffers = {
+                "mlp_x_norm": packed_outputs[
+                    op.mlp_x_norm_output_base : op.ffn_gate_output_base
+                ],
+                "ffn_gate": packed_outputs[
+                    op.ffn_gate_output_base : op.ffn_up_output_base
+                ],
+                "ffn_up": packed_outputs[
+                    op.ffn_up_output_base : op.ffn_gate_silu_output_base
+                ],
+                "ffn_gate_silu": packed_outputs[
+                    op.ffn_gate_silu_output_base : op.ffn_hidden_output_base
+                ],
+                "ffn_hidden": packed_outputs[op.ffn_hidden_output_base :],
+            }
+            gate_local = F.linear(
+                actual_buffers["mlp_x_norm"].view(1, 1, -1), inputs["W_gate"]
+            ).flatten()
+            up_local = F.linear(
+                actual_buffers["mlp_x_norm"].view(1, 1, -1), inputs["W_up"]
+            ).flatten()
+            gate_silu_local = F.silu(actual_buffers["ffn_gate"])
+            hidden_local = actual_buffers["ffn_gate_silu"] * actual_buffers["ffn_up"]
+            local_expected_buffers = {
+                **expected_buffers,
+                "ffn_gate": gate_local.contiguous(),
+                "ffn_up": up_local.contiguous(),
+                "ffn_gate_silu": gate_silu_local.contiguous(),
+                "ffn_hidden": hidden_local.contiguous(),
             }
         else:
             packed_outputs_buf.device = "npu"
@@ -1624,9 +1935,10 @@ def main():
                     "input-rmsnorm-qkv-rope-cache-scores-softmax",
                     "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
                     "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
+                    "post-attn-rmsnorm-mlp-gate-up",
                 }
                 and full_ref_name in full_expected_buffers
-                and name != "x_norm"
+                and name not in {"x_norm", "mlp_x_norm"}
             ):
                 full_ref = full_expected_buffers[full_ref_name]
                 full_diff = (

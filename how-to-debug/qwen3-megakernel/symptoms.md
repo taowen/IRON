@@ -1100,3 +1100,75 @@ Fix:
 When a debug stream is optional, guard object FIFOs, workers, fills, drains,
 and TAPs with the same boolean.
 ```
+
+## MLP Gate/Up Fails Full Reference But Passes Local Boundary
+
+Symptom:
+
+```text
+mlp_x_norm_errors: 0
+ffn_gate_errors: 108
+ffn_up_errors: 145
+```
+
+Evidence after changing only the verifier to use the actual NPU
+`mlp_x_norm` as the GEMV input boundary:
+
+```text
+ffn_gate_max_abs: 0.000000
+ffn_gate_errors: 0
+ffn_up_max_abs: 0.000000
+ffn_up_errors: 0
+ffn_gate_full_ref_max_abs: 0.015625
+ffn_up_full_ref_max_abs: 0.007812
+```
+
+Root cause:
+
+```text
+The gate/up GEMV workers were correct. The original check compared them to a
+full PyTorch reference fed by PyTorch mlp_x_norm, while the NPU workers consume
+the bf16 mlp_x_norm FIFO produced by the NPU weighted RMSNorm worker.
+```
+
+Fix:
+
+```text
+For each stage, compare the first output at the full reference boundary, then
+build downstream local references from the actual NPU FIFO output that the next
+Worker consumes.
+```
+
+## SiLU Negative Inputs Exceed The Positive-Only Operator Tolerance
+
+Symptom:
+
+```text
+ffn_gate_silu_errors: 3
+ffn_gate_silu_max_abs: 0.019531
+Mismatch in ffn_gate_silu[1331]: expected -0.090820, got -0.100586
+```
+
+Root cause:
+
+```text
+The AIE SiLU kernel uses the tanh-form approximation. The standalone SiLU test
+used random positive inputs in [0, 4), but Qwen3 gate projection produces
+negative values where the approximation has a larger absolute error against
+PyTorch exact SiLU.
+```
+
+Fix:
+
+```text
+Verify SiLU at the actual gate FIFO boundary and use an explicit absolute
+tolerance for the approximation. Do not treat the downstream ffn_hidden as a
+new multiply bug if it matches actual_silu * actual_up.
+```
+
+Recheck:
+
+```text
+ffn_gate_silu_errors: 0
+ffn_hidden_errors: 0
+```
