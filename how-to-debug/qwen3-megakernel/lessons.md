@@ -89,16 +89,17 @@ shape that can safely block from the beginning.
 ## 8. Preflight Checks Worth Building Next
 
 These are worth turning into code because each comes from a real diagnosed
-failure:
+failure. The persistent artifact preflight now covers the checks marked
+`implemented`:
 
 ```text
 pyxrt capability probe for full-ELF APIs
 clean-build or artifact freshness assertion after graph edits
-runtime_sequence memref count vs main_kernels.json BO metadata
+runtime_sequence memref count vs main_kernels.json BO metadata [implemented]
 ObjectFIFO producer/consumer endpoint count from generated MLIR
-tile input/output FIFO count before aiecc
-ObjectFIFO object bytes * depth vs L1 budget
-DMA task count per FIFO and BD dimension legality
+tile input/output FIFO count before aiecc [implemented]
+ObjectFIFO object bytes * depth vs L1 budget [implemented]
+DMA task count per FIFO and BD dimension legality [partly implemented]
 runtime patch-site count and uniqueness
 local-reference verifier per accepted checkpoint
 ```

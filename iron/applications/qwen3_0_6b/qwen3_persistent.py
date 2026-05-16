@@ -37,6 +37,9 @@ from iron.applications.qwen3_0_6b.qwen3_decode_reference import (  # noqa: E402
 from iron.applications.qwen3_0_6b.qwen3_megakernel_debug import (  # noqa: E402
     one_layer_reference_tensors,
 )
+from iron.applications.qwen3_0_6b.qwen3_preflight import (  # noqa: E402
+    run_persistent_artifact_preflight,
+)
 from iron.common import (  # noqa: E402
     AIERuntimeArgSpec,
     DesignGenerator,
@@ -763,10 +766,24 @@ def main():
     start = time.perf_counter()
     op.compile()
     compile_s = time.perf_counter() - start
+    preflight = run_persistent_artifact_preflight(
+        mlir_path=Path(op.xclbin_artifact.mlir_input.filename),
+        arg_specs=len(op.get_arg_spec()),
+    )
     print(f"stage: {args.stage}")
     print("implementation: hand-authored IRON Program/Worker/ObjectFifo")
     print(f"operator_name: {op.name}")
     print(f"compile_s: {compile_s:.3f}")
+    print(
+        "preflight: ok "
+        f"runtime_memrefs={preflight.runtime_memrefs} "
+        f"arg_specs={preflight.arg_specs} "
+        f"metadata_host_bos={preflight.metadata_host_bos} "
+        f"max_fifo_buffered_bytes={preflight.max_fifo_buffered_bytes} "
+        f"max_dma_tasks_per_fifo={preflight.max_dma_tasks_per_fifo} "
+        f"max_tile_inputs={preflight.max_compute_tile_inputs} "
+        f"max_tile_outputs={preflight.max_compute_tile_outputs}"
+    )
     if args.dump_proof:
         for artifact in op.artifacts:
             print(f"artifact: {artifact.filename}")

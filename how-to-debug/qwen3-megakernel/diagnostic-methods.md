@@ -22,6 +22,7 @@ this tree.
 | Operator-specific numeric mismatch | 12 |
 | Persistent phase ordering or timeout | 17 |
 | Structured attention-score mismatch | 18 |
+| Persistent artifact should fail before runtime | 19 |
 
 ## 1. Classify The Failure Boundary First
 
@@ -385,3 +386,36 @@ Example:
 
 This points at GQA pair ordering or qk-pair packing, not at all Q heads, not at
 the K-cache prefix, and not at the final output drain.
+
+## 19. Run Persistent Artifact Preflight
+
+Use after `op.compile()` and before `op.get_callable()` for hand-authored
+persistent stages.
+
+Implemented checks:
+
+```text
+MLIR runtime_sequence memref count == operator arg spec count
+MLIR runtime_sequence memref count <= main_kernels.json HOST bo* count
+ObjectFIFO object bytes * depth <= L1 budget
+compute tile input/output ObjectFIFO count <= expected channel budget
+DMA task count per FIFO <= expected BD budget
+```
+
+This turns already diagnosed failures into Python errors before runtime:
+
+```text
+Runtime BO metadata mismatch instead of XRT BO validation segfault
+ObjectFIFO L1 budget mismatch instead of aiecc MemoryMap failure
+Compute tile input ObjectFIFO overuse instead of DMA channel allocation failure
+FIFO DMA task overuse instead of BD ID exhaustion
+```
+
+Current implementation:
+
+```text
+iron/applications/qwen3_0_6b/qwen3_preflight.py
+```
+
+The persistent CLI now prints a `preflight: ok ...` summary immediately after
+compile when these checks pass.
