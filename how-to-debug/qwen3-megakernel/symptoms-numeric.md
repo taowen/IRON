@@ -442,3 +442,78 @@ cache writeback DMA/TAP: values_cache_current == v_context_stream_current
 full-layer V FIFO/dataflow: full V == isolated QKV V
 standalone V GEMV: QKV V == F.linear(actual NPU x_norm, W_v)
 ```
+
+## N-Layer Final-Only Cache Fails Full Reference But Debug Path Passes Local Boundary
+
+Symptom:
+
+```text
+n-layer-final-only --layer-chunk-size 4 --verify
+chunk_hidden_errors: 0
+layer2_values_cache_current_errors: 3
+layer3_values_cache_current_errors: 123
+```
+
+The same compile passed static checks:
+
+```text
+preflight: ok runtime_memrefs=5 metadata_host_bos=5
+compute_cores=21 max_dma_tasks_per_fifo=4 non_advancing_acquires=0
+```
+
+Diagnostic:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+.venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
+  --stage multi-layer-full-layer \
+  --num-layers 4 \
+  --verify \
+  --diagnose-depth \
+  --build-dir build_qwen3_persistent_multilayer \
+  --prompt 'Count from one to five.' \
+  --raw-prompt
+```
+
+Evidence found:
+
+```text
+layer_2_values_cache_vs_context_current_errors: 0
+layer_2_values_cache_current_errors: 0
+layer_3_values_cache_vs_context_current_errors: 0
+layer_3_values_cache_current_errors: 0
+hidden_after_layers_errors: 0
+first_failure: none
+first_full_ref_drift: layer_0_ffn_hidden_full_ref
+```
+
+Root cause:
+
+```text
+The final-only n-layer verifier compared deeper layer cache values directly
+against the full PyTorch reference. After multiple NPU bf16/approximation
+boundaries, the hidden entering layer 2/3 has already drifted enough that strict
+V-cache full-reference tolerance is not the right boundary check. The debug
+full-layer ladder recomputed local references from actual NPU hidden and showed
+cache writeback and V stream were consistent.
+```
+
+Fix used:
+
+```text
+Keep strict cache checks for shallow layers, but scale final-only V-cache
+absolute tolerance by layer depth when checking against the full reference.
+Use the debug full-layer ladder for dataflow proof when the final-only path has
+no intermediate drains.
+```
+
+Recheck:
+
+```text
+n-layer-final-only --layer-chunk-size 4 --verify:
+layer2_values_cache_current_errors: 0
+layer3_values_cache_current_errors: 0
+
+generate --fast-generate --layer-chunk-size 4 --verify-generate:
+token_match: True for positions 6 and 7
+```

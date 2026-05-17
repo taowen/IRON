@@ -31,6 +31,7 @@ were used in this repository. Detailed entries are split by failure class.
 - [MLP Gate/Up Fails Full Reference But Passes Local Boundary](symptoms-numeric.md#mlp-gateup-fails-full-reference-but-passes-local-boundary)
 - [SiLU Negative Inputs Exceed The Positive-Only Operator Tolerance](symptoms-numeric.md#silu-negative-inputs-exceed-the-positive-only-operator-tolerance)
 - [Full-Depth Multi-Layer Hidden Fails After Short Ladder Passes](symptoms-numeric.md#full-depth-multi-layer-hidden-fails-after-short-ladder-passes)
+- [N-Layer Final-Only Cache Fails Full Reference But Debug Path Passes Local Boundary](symptoms-numeric.md#n-layer-final-only-cache-fails-full-reference-but-debug-path-passes-local-boundary)
 
 ### Resources
 

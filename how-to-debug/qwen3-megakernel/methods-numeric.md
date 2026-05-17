@@ -278,3 +278,51 @@ full V != F.linear(PyTorch rms_norm(hidden), W_v) within strict V tolerance
 That rules out the full-layer V FIFO, cache writeback, and standalone V GEMV.
 The active mismatch is a PyTorch-reference boundary after NPU RMSNorm/bf16
 approximation, not a V dataflow bug.
+
+## 31. Use The Debug Ladder To Validate Final-Only Chunks
+
+Use when a final-only n-layer chunk has no intermediate drains, final hidden
+passes, but a deeper layer cache/current check fails against the full reference.
+
+The diagnostic is to run the accepted debug full-layer ladder with the same
+prompt and chunk depth:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+.venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
+  --stage multi-layer-full-layer \
+  --num-layers 4 \
+  --verify \
+  --diagnose-depth \
+  --build-dir build_qwen3_persistent_multilayer \
+  --prompt 'Count from one to five.' \
+  --raw-prompt
+```
+
+Interpretation:
+
+```text
+debug ladder local cache/current passes
+  -> final-only path likely has full-reference drift; adjust the verifier
+     boundary or tolerance, then prove token generation
+
+debug ladder local cache/current fails at the same layer
+  -> inspect V producer, cache writeback TAP, or hidden feedback before changing
+     tolerance
+
+final hidden fails too
+  -> this is not just a cache-reference-boundary issue; start from the first
+     wrong debug-drained boundary
+```
+
+Evidence from the n-layer final-only chunk=4 refactor:
+
+```text
+final-only layer3_values_cache_current_errors: 123
+debug ladder layer_3_values_cache_vs_context_current_errors: 0
+debug ladder layer_3_values_cache_current_errors: 0
+debug ladder first_full_ref_drift: layer_0_ffn_hidden_full_ref
+```
+
+The fix was to scale final-only V-cache full-reference tolerance by layer depth
+and keep the debug ladder as the dataflow proof.

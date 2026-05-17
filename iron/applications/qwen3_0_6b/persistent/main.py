@@ -51,8 +51,7 @@ from iron.applications.qwen3_0_6b.persistent.layout import (  # noqa: E402
 )
 from iron.applications.qwen3_0_6b.persistent.generate import (  # noqa: E402
     prepare_fast_generate_buffers,
-    run_full_layer_decode_hidden_fast,
-    run_full_layer_decode_hidden_fast_chunked,
+    run_n_layer_decode_hidden_fast,
 )
 from iron.applications.qwen3_0_6b.persistent.ops import (  # noqa: E402
     Qwen3PersistentInputRMSNorm,
@@ -62,8 +61,7 @@ from iron.applications.qwen3_0_6b.persistent.ops import (  # noqa: E402
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContext,
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj,
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP,
-    Qwen3PersistentSingleLayerFinalOnly,
-    Qwen3PersistentTwoLayerFullLayer,
+    Qwen3PersistentNLayerFinalOnly,
     Qwen3PersistentPostAttnMLPDownResidual,
     Qwen3PersistentPostAttnRMSNormFullMLP,
     Qwen3PersistentPostAttnRMSNormMLPGateUp,
@@ -91,8 +89,7 @@ from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor  # noqa: E402
 
 FULL_LAYER_STAGE = "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
 MULTI_LAYER_FULL_LAYER_STAGE = "multi-layer-full-layer"
-SINGLE_LAYER_FINAL_ONLY_STAGE = "single-layer-final-only"
-TWO_LAYER_FULL_LAYER_STAGE = "two-layer-full-layer"
+N_LAYER_FINAL_ONLY_STAGE = "n-layer-final-only"
 GENERATE_STAGE = "generate"
 
 
@@ -147,8 +144,7 @@ def parse_args():
             "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
             FULL_LAYER_STAGE,
             MULTI_LAYER_FULL_LAYER_STAGE,
-            SINGLE_LAYER_FINAL_ONLY_STAGE,
-            TWO_LAYER_FULL_LAYER_STAGE,
+            N_LAYER_FINAL_ONLY_STAGE,
             GENERATE_STAGE,
             "post-attn-rmsnorm-mlp-gate-up",
             "post-attn-mlp-down-residual",
@@ -182,7 +178,6 @@ def parse_args():
     parser.add_argument(
         "--layer-chunk-size",
         type=int,
-        choices=[1, 2],
         default=1,
         help="Number of full layers per persistent fast-generate invocation",
     )
@@ -457,13 +452,18 @@ def run_multi_layer_full_layer(
     return failed
 
 
-def run_two_layer_full_layer(
+def run_n_layer_final_only(
     args,
     model: Qwen3ForCausalLM,
     input_ids: torch.Tensor,
     op,
     op_func,
 ) -> bool:
+    if args.layer_chunk_size != op.layer_iterations:
+        raise RuntimeError(
+            f"CLI layer_chunk_size {args.layer_chunk_size} != "
+            f"op.layer_iterations {op.layer_iterations}"
+        )
     (
         next_token,
         position,
@@ -475,129 +475,31 @@ def run_two_layer_full_layer(
         model,
         input_ids,
         args.max_seq_len,
-        num_layers=2,
-        prefill_num_layers=2,
+        num_layers=op.layer_iterations,
+        prefill_num_layers=op.layer_iterations,
     )
     if position != op.position:
         raise RuntimeError(f"compiled position {op.position} != reference {position}")
 
-    inputs0 = build_full_layer_inputs_for_layer(
-        model,
-        0,
-        initial_hidden,
-        initial_state,
-    )
-    inputs1 = build_full_layer_inputs_for_layer(
-        model,
-        1,
-        initial_hidden,
-        initial_state,
-    )
+    inputs_by_layer = [
+        build_full_layer_inputs_for_layer(
+            model,
+            layer_idx,
+            initial_hidden,
+            initial_state,
+        )
+        for layer_idx in range(op.layer_iterations)
+    ]
     hidden_buf = XRTTensor.from_torch(initial_hidden)
-    packed_weight_pair = torch.cat(
-        [
-            pack_full_layer_weights(inputs0),
-            pack_full_layer_weights(inputs1),
-        ]
-    ).contiguous()
-    weights_buf = XRTTensor.from_torch(packed_weight_pair)
-    rope_angles_buf = XRTTensor.from_torch(inputs0["rope_angles"])
-
-    failed = False
-    repeat_count = max(1, args.verify_repeat)
-    for iteration in range(repeat_count):
-        output_buf = XRTTensor((op.packed_outputs_size,), dtype=hidden_buf.dtype)
-        packed_cache_pair = torch.cat(
-            [
-                inputs0["initial_cache"].clone(),
-                inputs1["initial_cache"].clone(),
-            ]
+    weights_buf = XRTTensor.from_torch(
+        torch.cat(
+            [pack_full_layer_weights(inputs) for inputs in inputs_by_layer]
         ).contiguous()
-        cache_buf = XRTTensor.from_torch(packed_cache_pair)
-        result = op_func(
-            hidden_buf,
-            weights_buf,
-            rope_angles_buf,
-            output_buf,
-            cache_buf,
-        )
-        print(f"iteration: {iteration}")
-        print(f"prompt_next_token: {next_token}")
-        print(f"decode_position: {position}")
-        print(f"npu_time_us: {result.npu_time / 1e3:.3f}")
-
-        output_buf.device = "npu"
-        cache_buf.device = "npu"
-        actual_hidden = output_buf.to_torch()
-        cache_pair = cache_buf.to_torch()
-        cache0 = cache_pair[: op.packed_cache_size]
-        cache1 = cache_pair[op.packed_cache_size :]
-        actual_keys0 = cache0[: op.cache_half_size].view(
-            op.kv_heads, args.max_seq_len, op.head_dim
-        )
-        actual_values0 = cache0[op.cache_half_size :].view(
-            op.kv_heads, args.max_seq_len, op.head_dim
-        )
-        actual_keys1 = cache1[: op.cache_half_size].view(
-            op.kv_heads, args.max_seq_len, op.head_dim
-        )
-        actual_values1 = cache1[op.cache_half_size :].view(
-            op.kv_heads, args.max_seq_len, op.head_dim
-        )
-
-        checks = {
-            "two_layer_hidden": (actual_hidden, expected_hidden, 0.06, 0.08),
-            "layer0_keys_cache_current": (
-                actual_keys0[:, position, :].flatten(),
-                expected_state.keys[0][:, position, :].flatten(),
-                0.05,
-                0.5,
-            ),
-            "layer0_values_cache_current": (
-                actual_values0[:, position, :].flatten(),
-                expected_state.values[0][:, position, :].flatten(),
-                0.05,
-                0.025,
-            ),
-            "layer1_keys_cache_current": (
-                actual_keys1[:, position, :].flatten(),
-                expected_state.keys[1][:, position, :].flatten(),
-                0.05,
-                0.5,
-            ),
-            "layer1_values_cache_current": (
-                actual_values1[:, position, :].flatten(),
-                expected_state.values[1][:, position, :].flatten(),
-                0.05,
-                0.025,
-            ),
-        }
-        for name, (actual, expected, rel_tol, abs_tol) in checks.items():
-            errors = print_tensor_check(name, actual, expected, rel_tol, abs_tol)
-            failed = failed or bool(errors)
-
-    return failed
-
-
-def run_single_layer_final_only(
-    args,
-    model: Qwen3ForCausalLM,
-    input_ids: torch.Tensor,
-    op,
-    op_func,
-) -> bool:
-    next_token, position, inputs, expected_buffers = build_reference_full_layer(
-        model,
-        input_ids,
-        args.max_seq_len,
     )
-    if position != op.position:
-        raise RuntimeError(f"compiled position {op.position} != reference {position}")
-
-    hidden_buf = XRTTensor.from_torch(inputs["hidden"])
-    weights_buf = XRTTensor.from_torch(pack_full_layer_weights(inputs))
-    rope_angles_buf = XRTTensor.from_torch(inputs["rope_angles"])
-    initial_cache = inputs["initial_cache"].clone()
+    rope_angles_buf = XRTTensor.from_torch(inputs_by_layer[0]["rope_angles"])
+    initial_cache = torch.cat(
+        [inputs["initial_cache"].clone() for inputs in inputs_by_layer]
+    ).contiguous()
 
     failed = False
     repeat_count = max(1, args.verify_repeat)
@@ -619,34 +521,40 @@ def run_single_layer_final_only(
         output_buf.device = "npu"
         cache_buf.device = "npu"
         actual_hidden = output_buf.to_torch()
-        packed_cache = cache_buf.to_torch()
-        keys_cache = packed_cache[: op.cache_half_size].view(
-            op.kv_heads, args.max_seq_len, op.head_dim
-        )
-        values_cache = packed_cache[op.cache_half_size :].view(
-            op.kv_heads, args.max_seq_len, op.head_dim
-        )
+        packed_cache_chunk = cache_buf.to_torch()
 
         checks = {
-            "layer_residual": (
+            "chunk_hidden": (
                 actual_hidden,
-                expected_buffers["layer_residual"],
+                expected_hidden,
                 0.06,
-                0.04,
-            ),
-            "keys_cache_current": (
-                keys_cache[:, position, :].flatten(),
-                expected_buffers["keys"],
-                0.05,
-                0.5,
-            ),
-            "values_cache_current": (
-                values_cache[:, position, :].flatten(),
-                expected_buffers["values"],
-                0.05,
-                0.025,
+                0.04 * op.layer_iterations,
             ),
         }
+        for layer_idx in range(op.layer_iterations):
+            layer_cache = packed_cache_chunk[
+                layer_idx
+                * op.packed_cache_size : (layer_idx + 1)
+                * op.packed_cache_size
+            ]
+            keys_cache = layer_cache[: op.cache_half_size].view(
+                op.kv_heads, args.max_seq_len, op.head_dim
+            )
+            values_cache = layer_cache[op.cache_half_size :].view(
+                op.kv_heads, args.max_seq_len, op.head_dim
+            )
+            checks[f"layer{layer_idx}_keys_cache_current"] = (
+                keys_cache[:, position, :].flatten(),
+                expected_state.keys[layer_idx][:, position, :].flatten(),
+                0.05,
+                0.5,
+            )
+            checks[f"layer{layer_idx}_values_cache_current"] = (
+                values_cache[:, position, :].flatten(),
+                expected_state.values[layer_idx][:, position, :].flatten(),
+                0.05,
+                0.025 * (layer_idx + 1),
+            )
         for name, (actual, expected, rel_tol, abs_tol) in checks.items():
             errors = print_tensor_check(name, actual, expected, rel_tol, abs_tol)
             failed = failed or bool(errors)
@@ -673,13 +581,14 @@ def make_full_layer_op_for_position(
     )
 
 
-def make_single_layer_final_only_op_for_position(
+def make_n_layer_final_only_op_for_position(
     args,
     model: Qwen3ForCausalLM,
     context: AIEContext,
     position: int,
+    layer_iterations: int,
 ):
-    return Qwen3PersistentSingleLayerFinalOnly(
+    return Qwen3PersistentNLayerFinalOnly(
         hidden_size=model.config.hidden_size,
         q_size=model.config.num_attention_heads * model.config.head_dim,
         kv_size=model.config.num_key_value_heads * model.config.head_dim,
@@ -687,25 +596,7 @@ def make_single_layer_final_only_op_for_position(
         max_seq_len=args.max_seq_len,
         position=position,
         intermediate_size=model.config.intermediate_size,
-        epsilon=model.config.rms_norm_eps,
-        context=context,
-    )
-
-
-def make_two_layer_op_for_position(
-    args,
-    model: Qwen3ForCausalLM,
-    context: AIEContext,
-    position: int,
-):
-    return Qwen3PersistentTwoLayerFullLayer(
-        hidden_size=model.config.hidden_size,
-        q_size=model.config.num_attention_heads * model.config.head_dim,
-        kv_size=model.config.num_key_value_heads * model.config.head_dim,
-        head_dim=model.config.head_dim,
-        max_seq_len=args.max_seq_len,
-        position=position,
-        intermediate_size=model.config.intermediate_size,
+        layer_iterations=layer_iterations,
         epsilon=model.config.rms_norm_eps,
         context=context,
     )
@@ -744,13 +635,20 @@ def compile_full_layer_op_for_position(
     return op, op.get_callable()
 
 
-def compile_single_layer_final_only_op_for_position(
+def compile_n_layer_final_only_op_for_position(
     args,
     model: Qwen3ForCausalLM,
     context: AIEContext,
     position: int,
+    layer_iterations: int,
 ):
-    op = make_single_layer_final_only_op_for_position(args, model, context, position)
+    op = make_n_layer_final_only_op_for_position(
+        args,
+        model,
+        context,
+        position,
+        layer_iterations,
+    )
     start = time.perf_counter()
     op.compile()
     compile_s = time.perf_counter() - start
@@ -759,44 +657,12 @@ def compile_single_layer_final_only_op_for_position(
         arg_specs=len(op.get_arg_spec()),
     )
     print(
-        f"generate_position_{position}_single_final_compile_s: {compile_s:.3f} "
+        f"generate_position_{position}_n_layer_{layer_iterations}_compile_s: "
+        f"{compile_s:.3f} "
         f"operator_name={op.name}"
     )
     print(
-        f"generate_position_{position}_single_final_preflight: ok "
-        f"runtime_memrefs={preflight.runtime_memrefs} "
-        f"arg_specs={preflight.arg_specs} "
-        f"metadata_host_bos={preflight.metadata_host_bos} "
-        f"compute_cores={preflight.compute_cores} "
-        f"max_fifo_buffered_bytes={preflight.max_fifo_buffered_bytes} "
-        f"max_dma_tasks_per_fifo={preflight.max_dma_tasks_per_fifo} "
-        f"max_tile_inputs={preflight.max_compute_tile_inputs} "
-        f"max_tile_outputs={preflight.max_compute_tile_outputs} "
-        f"non_advancing_acquires={preflight.non_advancing_acquires}"
-    )
-    return op, op.get_callable()
-
-
-def compile_two_layer_op_for_position(
-    args,
-    model: Qwen3ForCausalLM,
-    context: AIEContext,
-    position: int,
-):
-    op = make_two_layer_op_for_position(args, model, context, position)
-    start = time.perf_counter()
-    op.compile()
-    compile_s = time.perf_counter() - start
-    preflight = run_persistent_artifact_preflight(
-        mlir_path=Path(op.xclbin_artifact.mlir_input.filename),
-        arg_specs=len(op.get_arg_spec()),
-    )
-    print(
-        f"generate_position_{position}_two_layer_compile_s: {compile_s:.3f} "
-        f"operator_name={op.name}"
-    )
-    print(
-        f"generate_position_{position}_two_layer_preflight: ok "
+        f"generate_position_{position}_n_layer_{layer_iterations}_preflight: ok "
         f"runtime_memrefs={preflight.runtime_memrefs} "
         f"arg_specs={preflight.arg_specs} "
         f"metadata_host_bos={preflight.metadata_host_bos} "
@@ -894,8 +760,12 @@ def run_generate(
     input_ids: torch.Tensor,
     context: AIEContext,
 ) -> bool:
+    if args.layer_chunk_size < 1:
+        raise ValueError(
+            f"layer_chunk_size must be positive, got {args.layer_chunk_size}"
+        )
     if args.layer_chunk_size != 1 and not args.fast_generate:
-        raise ValueError("--layer-chunk-size 2 requires --fast-generate")
+        raise ValueError("--layer-chunk-size > 1 requires --fast-generate")
     if args.max_new_tokens < 1:
         raise ValueError(f"max_new_tokens must be positive, got {args.max_new_tokens}")
     if input_ids.shape[1] + args.max_new_tokens > args.max_seq_len:
@@ -914,13 +784,9 @@ def run_generate(
     first_text = tokenizer.decode([first_token], skip_special_tokens=True)
     print("stage: generate")
     if args.fast_generate:
-        chunk_desc = (
-            "single-layer final-only"
-            if args.layer_chunk_size == 1
-            else "two-layer final-only"
-        )
         print(
-            f"implementation: persistent {chunk_desc} decode with cached XRT "
+            f"implementation: persistent n-layer final-only decode "
+            f"(chunk={args.layer_chunk_size}) with cached XRT "
             "weights/cache + CPU final norm/lm head"
         )
     else:
@@ -931,8 +797,7 @@ def run_generate(
     print(f"prompt_next_token: {first_token} text={first_text!r}")
 
     op_cache = {}
-    single_final_op_cache = {}
-    two_layer_op_cache = {}
+    chunk_op_cache = {}
 
     def get_position_op(position: int):
         if position not in op_cache:
@@ -944,35 +809,37 @@ def run_generate(
             )
         return op_cache[position]
 
-    def get_position_single_final_op(position: int):
-        if position not in single_final_op_cache:
-            single_final_op_cache[position] = (
-                compile_single_layer_final_only_op_for_position(
-                    args,
-                    model,
-                    context,
-                    position,
-                )
-            )
-        return single_final_op_cache[position]
-
-    def get_position_two_layer_op(position: int):
-        if position not in two_layer_op_cache:
-            two_layer_op_cache[position] = compile_two_layer_op_for_position(
+    def get_position_chunk_op(position: int, chunk_len: int):
+        key = (position, chunk_len)
+        if key not in chunk_op_cache:
+            chunk_op_cache[key] = compile_n_layer_final_only_op_for_position(
                 args,
                 model,
                 context,
                 position,
+                chunk_len,
             )
-        return two_layer_op_cache[position]
+        return chunk_op_cache[key]
+
+    def chunk_lengths_for_model():
+        layer_idx = 0
+        while layer_idx < model.config.num_hidden_layers:
+            chunk_len = min(
+                args.layer_chunk_size,
+                model.config.num_hidden_layers - layer_idx,
+            )
+            yield chunk_len
+            layer_idx += chunk_len
+
+    def get_position_chunk_ops(position: int):
+        return {
+            chunk_len: get_position_chunk_op(position, chunk_len)
+            for chunk_len in sorted(set(chunk_lengths_for_model()))
+        }
 
     if args.compile_only:
-        if args.layer_chunk_size == 2:
-            get_position_two_layer_op(prefill_state.position)
-            if model.config.num_hidden_layers % 2:
-                get_position_single_final_op(prefill_state.position)
-        elif args.fast_generate:
-            get_position_single_final_op(prefill_state.position)
+        if args.fast_generate:
+            get_position_chunk_ops(prefill_state.position)
         else:
             get_position_op(prefill_state.position)
         return False
@@ -982,20 +849,10 @@ def run_generate(
     ref_state = clone_decode_state(prefill_state)
     fast_buffers = None
     if args.fast_generate:
-        if args.layer_chunk_size == 2:
-            first_two_layer_op, _first_two_layer_op_func = get_position_two_layer_op(
-                prefill_state.position
-            )
-            first_op = first_two_layer_op
-            if model.config.num_hidden_layers % 2:
-                first_op, _first_op_func = get_position_single_final_op(
-                    prefill_state.position
-                )
-        else:
-            first_op, _first_op_func = get_position_single_final_op(
-                prefill_state.position
-            )
-            first_two_layer_op = None
+        first_chunk_ops = get_position_chunk_ops(prefill_state.position)
+        first_op, _first_op_func = first_chunk_ops[
+            min(args.layer_chunk_size, model.config.num_hidden_layers)
+        ]
         setup_start = time.perf_counter()
         fast_buffers = prepare_fast_generate_buffers(
             model,
@@ -1004,7 +861,6 @@ def run_generate(
             packed_weights_dir=args.packed_weights_dir,
             require_packed_weights=args.require_packed_weights,
             layer_chunk_size=args.layer_chunk_size,
-            two_layer_op=first_two_layer_op,
         )
         setup_s = time.perf_counter() - setup_start
         setup_timing = fast_buffers.timing
@@ -1023,41 +879,22 @@ def run_generate(
         position = npu_state.position
         op = None
         op_func = None
-        two_layer_op = None
-        two_layer_op_func = None
-        if args.fast_generate and args.layer_chunk_size == 2:
-            two_layer_op, two_layer_op_func = get_position_two_layer_op(position)
-            if model.config.num_hidden_layers % 2:
-                op, op_func = get_position_single_final_op(position)
-        elif args.fast_generate:
-            op, op_func = get_position_single_final_op(position)
+        chunk_ops = None
+        if args.fast_generate:
+            chunk_ops = get_position_chunk_ops(position)
         else:
             op, op_func = get_position_op(position)
         start = time.perf_counter()
         fast_timing = None
         if args.fast_generate:
-            if args.layer_chunk_size == 2:
-                npu_hidden, npu_time, fast_timing = (
-                    run_full_layer_decode_hidden_fast_chunked(
-                        model,
-                        current_token,
-                        position,
-                        op,
-                        op_func,
-                        two_layer_op,
-                        two_layer_op_func,
-                        fast_buffers,
-                    )
-                )
-            else:
-                npu_hidden, npu_time, fast_timing = run_full_layer_decode_hidden_fast(
-                    model,
-                    current_token,
-                    position,
-                    op,
-                    op_func,
-                    fast_buffers,
-                )
+            npu_hidden, npu_time, fast_timing = run_n_layer_decode_hidden_fast(
+                model,
+                current_token,
+                position,
+                args.layer_chunk_size,
+                chunk_ops,
+                fast_buffers,
+            )
             npu_state.position += 1
         else:
             npu_hidden, npu_time = run_full_layer_decode_hidden(
@@ -1278,8 +1115,8 @@ def main():
             epsilon=model.config.rms_norm_eps,
             context=context,
         )
-    elif args.stage == TWO_LAYER_FULL_LAYER_STAGE:
-        op = Qwen3PersistentTwoLayerFullLayer(
+    elif args.stage == N_LAYER_FINAL_ONLY_STAGE:
+        op = Qwen3PersistentNLayerFinalOnly(
             hidden_size=model.config.hidden_size,
             q_size=model.config.num_attention_heads * model.config.head_dim,
             kv_size=model.config.num_key_value_heads * model.config.head_dim,
@@ -1287,18 +1124,7 @@ def main():
             max_seq_len=args.max_seq_len,
             position=input_ids.shape[1],
             intermediate_size=model.config.intermediate_size,
-            epsilon=model.config.rms_norm_eps,
-            context=context,
-        )
-    elif args.stage == SINGLE_LAYER_FINAL_ONLY_STAGE:
-        op = Qwen3PersistentSingleLayerFinalOnly(
-            hidden_size=model.config.hidden_size,
-            q_size=model.config.num_attention_heads * model.config.head_dim,
-            kv_size=model.config.num_key_value_heads * model.config.head_dim,
-            head_dim=model.config.head_dim,
-            max_seq_len=args.max_seq_len,
-            position=input_ids.shape[1],
-            intermediate_size=model.config.intermediate_size,
+            layer_iterations=args.layer_chunk_size,
             epsilon=model.config.rms_norm_eps,
             context=context,
         )
@@ -1480,41 +1306,23 @@ def main():
                 "worker_graph: reuse the accepted full-layer persistent graph; "
                 "host switches layer weights and per-layer KV cache slices"
             )
-        elif args.stage == SINGLE_LAYER_FINAL_ONLY_STAGE:
+        elif args.stage == N_LAYER_FINAL_ONLY_STAGE:
             print(
-                "dispatch_shape: hidden[1024] through one full layer with only "
-                "final hidden[1024] and KV cache current position drained"
+                "dispatch_shape: hidden[1024] through "
+                f"{op.layer_iterations} full layer(s) in one persistent invocation"
             )
             print(
                 "runtime_bos: hidden[1024], "
-                f"packed_weights[{op.packed_weights_size}], "
+                f"weight_chunk[{op.packed_weight_chunk_size}], "
                 "rope_angles[128], "
                 f"final_hidden[{op.packed_outputs_size}], "
-                f"packed_cache[{op.packed_cache_size}]"
+                f"cache_chunk[{op.packed_cache_chunk_size}]"
             )
             print(f"decode_position: {op.position}")
             print(
-                "worker_graph: accepted full-layer graph with debug drains removed; "
-                "attention/MLP internal FIFOs stay on chip and layer_residual is "
-                "the only host output"
-            )
-        elif args.stage == TWO_LAYER_FULL_LAYER_STAGE:
-            print(
-                "dispatch_shape: hidden[1024] through layers 0 and 1 in one "
-                "persistent invocation"
-            )
-            print(
-                "runtime_bos: hidden[1024], "
-                f"weight_pair[{op.packed_weight_pair_size}], "
-                "rope_angles[128], "
-                f"final_hidden[{op.packed_outputs_size}], "
-                f"cache_pair[{op.packed_cache_pair_size}]"
-            )
-            print(f"decode_position: {op.position}")
-            print(
-                "worker_graph: one full-layer worker graph loops twice; "
-                "layer0 residual is routed back as layer1 hidden, and only "
-                "the final residual is drained to host"
+                "worker_graph: one full-layer worker graph loops over the chunk; "
+                "intermediate residuals are routed back as the next layer hidden, "
+                "and only the final residual is drained to host"
             )
         else:
             print(
@@ -1549,14 +1357,8 @@ def main():
             raise SystemExit(1)
         gc.collect()
         return
-    if args.stage == SINGLE_LAYER_FINAL_ONLY_STAGE:
-        failed = run_single_layer_final_only(args, model, input_ids, op, op_func)
-        if args.verify and failed:
-            raise SystemExit(1)
-        gc.collect()
-        return
-    if args.stage == TWO_LAYER_FULL_LAYER_STAGE:
-        failed = run_two_layer_full_layer(args, model, input_ids, op, op_func)
+    if args.stage == N_LAYER_FINAL_ONLY_STAGE:
+        failed = run_n_layer_final_only(args, model, input_ids, op, op_func)
         if args.verify and failed:
             raise SystemExit(1)
         gc.collect()

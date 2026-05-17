@@ -176,11 +176,11 @@ inside a layer, especially debug-free/full-output-free single-layer dispatch,
 weight/cache DMA volume, or a deeper persistent token loop.
 ```
 
-### Follow-up: Debug-Free Single-Layer Output Is Correct But Only Slightly Faster
+### Follow-up: N-Layer Final-Only Output Is Correct But Only Slightly Faster
 
-The next probe removed the debug drains from the single-layer full-layer graph
-and exposed `single-layer-final-only`. It drains only `final_hidden[1024]` plus
-the inout KV cache current-position updates.
+The next probe removed the debug drains from the full-layer graph and exposed a
+single `n-layer-final-only` path. It drains only `final_hidden[1024]` plus the
+inout KV cache current-position updates.
 
 Correctness command:
 
@@ -188,9 +188,10 @@ Correctness command:
 source /opt/xilinx/xrt/setup.sh
 source .venv/bin/activate
 python iron/applications/qwen3_0_6b/persistent/main.py \
-  --stage single-layer-final-only \
+  --stage n-layer-final-only \
+  --layer-chunk-size 4 \
   --verify \
-  --build-dir build_qwen3_persistent_final_only \
+  --build-dir build_qwen3_persistent_n_layer_4 \
   --prompt 'Count from one to five.' \
   --raw-prompt
 ```
@@ -198,32 +199,38 @@ python iron/applications/qwen3_0_6b/persistent/main.py \
 Accepted evidence:
 
 ```text
-preflight: ok runtime_memrefs=5 arg_specs=5 metadata_host_bos=5
-compute_cores=19 max_dma_tasks_per_fifo=1 non_advancing_acquires=0
-layer_residual_errors: 0
-keys_cache_current_errors: 0
-values_cache_current_errors: 0
+chunk=1 preflight: compute_cores=19 max_dma_tasks_per_fifo=1
+chunk=2 preflight: compute_cores=21 max_dma_tasks_per_fifo=2
+chunk=4 preflight: compute_cores=21 max_dma_tasks_per_fifo=4
+chunk=4 verify: chunk_hidden_errors=0
+chunk=4 verify: layer0..3 keys/values cache current errors=0
 ```
 
 Fast-generate comparison on the same prompt and `max_new_tokens=3`:
 
 ```text
-single-layer-final-only chunk=1 token 1:
-npu_layer_time_us_total=248328.410 decode_s=0.259780
-single-layer-final-only chunk=1 token 2:
-npu_layer_time_us_total=243659.828 decode_s=0.250062
+n-layer-final-only chunk=1 token 1:
+npu_layer_time_us_total=245563.972 decode_s=0.251359
+n-layer-final-only chunk=1 token 2:
+npu_layer_time_us_total=242661.658 decode_s=0.246359
 
-two-layer-final-only chunk=2 token 1:
-npu_layer_time_us_total=253886.050 decode_s=0.259990
-two-layer-final-only chunk=2 token 2:
-npu_layer_time_us_total=256314.458 decode_s=0.261668
+n-layer-final-only chunk=2 token 1:
+npu_layer_time_us_total=250323.856 decode_s=0.255839
+n-layer-final-only chunk=2 token 2:
+npu_layer_time_us_total=251366.210 decode_s=0.255056
+
+n-layer-final-only chunk=4 token 1:
+npu_layer_time_us_total=249153.122 decode_s=0.253014
+n-layer-final-only chunk=4 token 2:
+npu_layer_time_us_total=249887.935 decode_s=0.252974
 ```
 
 Conclusion:
 
 ```text
 Removing debug output is worth keeping because it reduces output BO size and
-keeps internal boundaries on chip, but it is not the main bottleneck. The next
+keeps internal boundaries on chip. Generalizing to n-layer chunks also removes
+the single/two-layer code split. It is still not the main bottleneck: the next
 real performance target is reducing repeated per-layer weight/cache DMA and
-external-kernel scalar work, not only host output volume.
+external-kernel scalar work, not only host output volume or dispatch count.
 ```

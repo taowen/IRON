@@ -187,22 +187,22 @@ The default generate path remains the debug flow: host switches layer weights,
 drains the full debug output and updated KV cache, and refills it for the next
 invocation.
 
-The accepted fast-generate path now uses single-layer-final-only for
---layer-chunk-size 1. It reuses packed weight XRT buffers, keeps each layer's
-KV cache resident in its XRT inout buffer across decode positions, and drains
-only the final hidden state after each layer because the layer loop is still
-host-driven.
+The accepted fast-generate path now uses one n-layer-final-only operator class
+for --layer-chunk-size 1, 2, and 4. It reuses packed weight XRT buffers, keeps
+each chunk's KV cache resident in its XRT inout buffer across decode positions,
+and drains only the final hidden state after each chunk because the chunk loop
+is still host-driven.
 
 Accepted evidence:
---fast-generate --verify-generate --max-new-tokens 4
-token_match: True for positions 6, 7, and 8
-decode_s: 0.249-0.257 per NPU-decoded token
+--fast-generate --verify-generate --max-new-tokens 3
+chunk=1 token_match: True for positions 6 and 7
+chunk=2 token_match: True for positions 6 and 7
+chunk=4 token_match: True for positions 6 and 7
 
-single-layer-final-only:
-layer_residual_errors: 0
-keys_cache_current_errors: 0
-values_cache_current_errors: 0
-preflight: runtime_memrefs=5 compute_cores=19 non_advancing_acquires=0
+n-layer-final-only:
+chunk_hidden_errors: 0 for chunk=1,2,4
+cache current errors: 0 for accepted chunk checks
+preflight: runtime_memrefs=5 compute_cores<=21 non_advancing_acquires=0
 ```
 
 Do not debug from final logits first. Start from the symptom, prove the failing

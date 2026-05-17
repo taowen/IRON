@@ -1006,10 +1006,30 @@ class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP(
 
 
 @dataclass
-class Qwen3PersistentSingleLayerFinalOnly(
+class Qwen3PersistentNLayerFinalOnly(
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP
 ):
-    """Single Qwen3 full layer that returns only the final hidden state."""
+    """One or more sequential Qwen3 full layers using one persistent graph."""
+
+    layer_iterations: int = 1
+
+    _name_aliases: ClassVar[dict[str, str]] = {
+        **Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP._name_aliases,
+        "layer_iterations": "layers",
+    }
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.layer_iterations < 1:
+            raise ValueError("layer_iterations must be positive")
+
+    @property
+    def packed_weight_chunk_size(self):
+        return self.layer_iterations * self.packed_weights_size
+
+    @property
+    def packed_cache_chunk_size(self):
+        return self.layer_iterations * self.packed_cache_size
 
     @property
     def packed_outputs_size(self):
@@ -1020,7 +1040,7 @@ class Qwen3PersistentSingleLayerFinalOnly(
             f"{self.name}.mlir",
             DesignGenerator(
                 self.operator_dir / "attention_design.py",
-                "qwen3_persistent_single_layer_final_only",
+                "qwen3_persistent_n_layer_final_only",
                 (
                     aie_utils.get_current_device(),
                     self.hidden_size,
@@ -1030,6 +1050,7 @@ class Qwen3PersistentSingleLayerFinalOnly(
                     self.max_seq_len,
                     self.position,
                     self.intermediate_size,
+                    self.layer_iterations,
                     self.num_aie_columns,
                     self.tile_size_input,
                     self.tile_size_output,
@@ -1055,75 +1076,10 @@ class Qwen3PersistentSingleLayerFinalOnly(
     def get_arg_spec(self):
         return [
             AIERuntimeArgSpec("in", (self.hidden_size,)),
-            AIERuntimeArgSpec("in", (self.packed_weights_size,)),
+            AIERuntimeArgSpec("in", (self.packed_weight_chunk_size,)),
             AIERuntimeArgSpec("in", (self.head_dim,)),
             AIERuntimeArgSpec("out", (self.packed_outputs_size,)),
-            AIERuntimeArgSpec("inout", (self.packed_cache_size,)),
-        ]
-
-
-@dataclass
-class Qwen3PersistentTwoLayerFullLayer(
-    Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP
-):
-    """Two sequential Qwen3 full layers using one persistent worker graph."""
-
-    @property
-    def packed_weight_pair_size(self):
-        return 2 * self.packed_weights_size
-
-    @property
-    def packed_cache_pair_size(self):
-        return 2 * self.packed_cache_size
-
-    @property
-    def packed_outputs_size(self):
-        return self.hidden_size
-
-    def get_mlir_artifact(self):
-        return PythonGeneratedMLIRArtifact(
-            f"{self.name}.mlir",
-            DesignGenerator(
-                self.operator_dir / "attention_design.py",
-                "qwen3_persistent_two_layer_full_layer",
-                (
-                    aie_utils.get_current_device(),
-                    self.hidden_size,
-                    self.q_size,
-                    self.kv_size,
-                    self.head_dim,
-                    self.max_seq_len,
-                    self.position,
-                    self.intermediate_size,
-                    self.num_aie_columns,
-                    self.tile_size_input,
-                    self.tile_size_output,
-                    0,
-                ),
-                {
-                    "rms_kernel_object": self._rms_kernel_object,
-                    "gemv_kernel_object": self._gemv_kernel_object,
-                    "rope_kernel_object": self._rope_kernel_object,
-                    "attention_kernel_object": self._attention_kernel_object,
-                    "passthrough_kernel_object": self._passthrough_kernel_object,
-                    "softmax_kernel_object": self._softmax_kernel_object,
-                    "o_gemv_kernel_object": self._o_gemv_kernel_object,
-                    "add_kernel_object": self._add_kernel_object,
-                    "mlp_gemv_kernel_object": self._mlp_gemv_kernel_object,
-                    "silu_kernel_object": self._silu_kernel_object,
-                    "mul_kernel_object": self._mul_kernel_object,
-                    "down_gemv_kernel_object": self._down_gemv_kernel_object,
-                },
-            ),
-        )
-
-    def get_arg_spec(self):
-        return [
-            AIERuntimeArgSpec("in", (self.hidden_size,)),
-            AIERuntimeArgSpec("in", (self.packed_weight_pair_size,)),
-            AIERuntimeArgSpec("in", (self.head_dim,)),
-            AIERuntimeArgSpec("out", (self.packed_outputs_size,)),
-            AIERuntimeArgSpec("inout", (self.packed_cache_pair_size,)),
+            AIERuntimeArgSpec("inout", (self.packed_cache_chunk_size,)),
         ]
 
 

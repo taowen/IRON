@@ -592,11 +592,12 @@ def test_qwen3_persistent_full_layer():
 
 
 @pytest.mark.extensive
-def test_qwen3_persistent_single_layer_final_only():
+@pytest.mark.parametrize("layer_chunk_size", [1, 2])
+def test_qwen3_persistent_n_layer_final_only(layer_chunk_size):
     model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
     if model is None:
         pytest.skip(
-            "Set IRON_QWEN3_0_6B_MODEL to run the Qwen3-0.6B persistent single-layer final-only test"
+            "Set IRON_QWEN3_0_6B_MODEL to run the Qwen3-0.6B persistent n-layer final-only test"
         )
 
     test_dir = Path(__file__).parent
@@ -606,7 +607,9 @@ def test_qwen3_persistent_single_layer_final_only():
         "--model",
         model,
         "--stage",
-        "single-layer-final-only",
+        "n-layer-final-only",
+        "--layer-chunk-size",
+        str(layer_chunk_size),
         "--verify",
         "--verify-repeat",
         "1",
@@ -632,29 +635,6 @@ def test_qwen3_persistent_multi_layer_full_layer():
         "multi-layer-full-layer",
         "--num-layers",
         "2",
-        "--verify",
-        "--verify-repeat",
-        "1",
-    ]
-    subprocess.run(command, check=True)
-
-
-@pytest.mark.extensive
-def test_qwen3_persistent_two_layer_full_layer():
-    model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
-    if model is None:
-        pytest.skip(
-            "Set IRON_QWEN3_0_6B_MODEL to run the Qwen3-0.6B persistent two-layer bring-up test"
-        )
-
-    test_dir = Path(__file__).parent
-    command = [
-        sys.executable,
-        str(test_dir / "persistent" / "main.py"),
-        "--model",
-        model,
-        "--stage",
-        "two-layer-full-layer",
         "--verify",
         "--verify-repeat",
         "1",
