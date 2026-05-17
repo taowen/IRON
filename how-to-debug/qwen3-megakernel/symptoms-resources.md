@@ -218,6 +218,190 @@ If repeated GQA access would require illegal stride=0, reuse K blocks inside a
 worker instead of asking DMA to reread the same block.
 ```
 
+## Full-Layer MLP Worker Exceeds Input DMA Channels
+
+Symptom:
+
+```text
+error: 'aie.tile' op number of input DMA channel exceeded! %tile_3_2
+```
+
+Diagnostic:
+
+```bash
+rg -n "tile_3_2|objectfifo" build_qwen3_persistent_full_layer/*.mlir
+```
+
+Evidence found:
+
+```text
+qwen3_rc_attn_residual_0                  -> tile_3_2
+qwen3_full_layer_mlp_post_norm_weight     -> tile_3_2
+qwen3_full_layer_mlp_gate_weight          -> tile_3_2
+qwen3_full_layer_mlp_up_weight            -> tile_3_2
+```
+
+Root cause:
+
+```text
+The first full-layer MLP worker tried to consume residual, post-norm weight,
+gate weight, and up weight on one compute tile. This failed before kernel
+execution; the external GEMV math was not the boundary to inspect.
+```
+
+Fix:
+
+```text
+Stream post-norm/gate/up weights through one row-wise weight FIFO and use a
+4-row matvec kernel. Then split down_proj and residual add so the down tile
+also has only two input streams.
+```
+
+Recheck:
+
+```text
+preflight: ok ... max_tile_inputs=2 max_tile_outputs=2
+```
+
+## Full-Layer K Project Exceeds Output DMA Channels
+
+Symptom:
+
+```text
+error: 'aie.tile' op number of output DMA channel exceeded! %tile_0_5
+```
+
+Evidence found:
+
+```text
+The K project+norm+RoPE worker produced k_raw, k_norm, and k_rope. Only k_rope
+was needed by downstream compute in the full-layer checkpoint.
+```
+
+Root cause:
+
+```text
+k_raw and k_norm were debug-only drains. Keeping them as ObjectFIFOs made the
+compute tile spend output DMA resources on values the accepted full-layer
+verifier no longer consumed.
+```
+
+Fix:
+
+```text
+Use tile-local Buffer storage for raw/norm temporaries in the full-layer path
+and only send k_rope across ObjectFifo.
+```
+
+## Full-Layer Q/K Project Exceeds Input DMA Channels
+
+Symptom:
+
+```text
+error: 'aie.tile' op number of input DMA channel exceeded! %tile_0_4
+```
+
+Evidence found:
+
+```text
+The fused Q project+norm+RoPE worker consumed xnorm, q_weight, qk_norm_weight,
+and rope_angles.
+```
+
+Root cause:
+
+```text
+Fusing math reduced worker count, but it created a four-input compute tile.
+On this IRON ObjectFifo lowering, worker count was not the limiting resource;
+tile DMA endpoint count was.
+```
+
+Fix:
+
+```text
+Split Q/K into matvec -> norm+RoPE. Add a metadata worker that packs q/k norm
+weights and RoPE angles into one ObjectFIFO, so norm+RoPE consumes raw + metadata
+instead of raw + norm_weight + rope_angles.
+```
+
+Recheck:
+
+```text
+compile_s: 71.184
+preflight: ok ... compute_cores=19 max_tile_inputs=2 max_tile_outputs=2
+```
+
+## Full-Layer MLP Debug Output Exceeds Output DMA Channels
+
+Symptom:
+
+```text
+error: 'aie.tile' op number of output DMA channel exceeded! %tile_3_5
+```
+
+Evidence found:
+
+```text
+The postnorm/gate/up worker produced ffn_gate, ffn_up, and debug-only
+mlp_xnorm.
+```
+
+Root cause:
+
+```text
+The debug drain was the third producer output from the tile. It was useful while
+building the isolated MLP checkpoint, but it was too expensive in the composed
+full-layer graph.
+```
+
+Fix:
+
+```text
+Keep mlp_xnorm in a tile-local Buffer, continue producing ffn_gate and ffn_up,
+and verify downstream ffn_hidden/ffn_out/layer_residual instead.
+```
+
+## Full-Layer Down Projection Exceeds L1
+
+Symptom:
+
+```text
+Failed to allocate buffer: "qwen3_full_layer_mlp_down_weight_cons_buff_0"
+allocated buffers exceeded available memory
+```
+
+Diagnostic:
+
+```text
+Read the aiecc MemoryMap printed under the failing tile. Do not infer this from
+tensor shapes alone.
+```
+
+Evidence found:
+
+```text
+qwen3_full_layer_mlp_down_weight_cons_buff_0 : 24576 bytes
+qwen3_full_layer_mlp_down_weight_cons_buff_1 : 24576 bytes
+qwen3_full_layer_ffn_hidden_0_cons_buff_0    :  6144 bytes
+qwen3_full_layer_ffn_hidden_0_cons_buff_1    :  6144 bytes
+qwen3_full_layer_ffn_out_buff_0              :  2048 bytes
+qwen3_full_layer_ffn_out_buff_1              :  2048 bytes
+```
+
+Root cause:
+
+```text
+The down weight ObjectFIFO was double-buffered. One object is already 4x3072
+bf16 = 24576 bytes, so depth=2 plus hidden/output buffers exceeded tile L1.
+```
+
+Fix:
+
+```text
+Set qwen3_full_layer_mlp_down_weight depth=1. This trades overlap for a legal
+checkpoint and keeps the full-layer graph compilable.
+```
+
 ## Multidimensional TAP Is Legal But NPU BD Rejects It
 
 Symptoms:
@@ -281,4 +465,3 @@ Recheck:
 ```text
 preflight: ok ... max_tile_inputs=2 max_tile_outputs=2
 ```
-

@@ -317,8 +317,33 @@ current NPU2 environment with `mlp_x_norm_errors: 0`, `ffn_gate_errors: 0`,
 `runtime_memrefs=3`, `arg_specs=3`, `max_fifo_buffered_bytes=49152`, and
 `non_advancing_acquires=0`.
 
-Placement scaling, runtime position patching, full-layer persistent
-composition, and multi-token decode are still future persistent stages.
+The first multi-layer checkpoint reuses the accepted full-layer persistent graph
+as a single-layer decode primitive:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+  --model Qwen/Qwen3-0.6B \
+  --stage multi-layer-full-layer \
+  --num-layers 4 \
+  --verify \
+  --verify-repeat 1 \
+  --build-dir build_qwen3_persistent_multilayer
+```
+
+This still does not run final RMSNorm, LM head, token selection, or a multi-token
+decode loop. The host repacks each layer's weights and per-layer KV cache slice,
+then invokes the same full-layer xclbin repeatedly. On the current NPU2
+environment, `num_layers=1`, `2`, and `4` pass hidden and cache-current
+verification. The `num_layers=4` run reported `hidden_after_layers_errors: 0`
+with `hidden_after_layers_max_abs: 0.125000`.
+
+Full-depth `num_layers=28` is intentionally not marked accepted yet:
+layer-local residual-add checks still pass, but the final hidden full-reference
+check exceeds the current tolerance after accumulated bf16/approximation drift.
+
+Placement scaling, runtime position patching, final norm/LM head, and
+multi-token decode are still future persistent stages.
 
 ## Weight Format Decision
 

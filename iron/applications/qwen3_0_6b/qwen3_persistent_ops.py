@@ -42,10 +42,21 @@ def verification_tolerance(stage: str, name: str) -> tuple[float, float]:
         in {
             "post-attn-rmsnorm-mlp-gate-up",
             "post-attn-rmsnorm-full-mlp",
+            "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp",
         }
         and name == "ffn_gate_silu"
     ):
         return 0.04, 0.025
+    if (
+        stage == "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
+        and name == "ffn_hidden"
+    ):
+        return 0.04, 0.025
+    if (
+        stage == "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
+        and name == "attn_residual"
+    ):
+        return 0.04, 0.016
     return 0.04, 1e-6
 
 
@@ -549,6 +560,8 @@ class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmax(
                         f"-DHEAD_DIM={self.head_dim}",
                         f"-DMAX_SEQ_LEN={self.max_seq_len}",
                         "-DCACHE_BLOCK=64",
+                        f"-DHIDDEN_SIZE={self.hidden_size}",
+                        f"-DRMS_NORM_EPSILON={self.epsilon}f",
                         f"-DATTN_SCALE={1.0 / math.sqrt(self.head_dim)}f",
                     ],
                 ),
@@ -769,6 +782,222 @@ class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj(
                         SourceArtifact(
                             self.context.base_dir / "aie_kernels" / "generic" / "add.cc"
                         )
+                    ],
+                ),
+            ]
+        )
+        return artifacts
+
+
+@dataclass
+class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP(
+    Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj
+):
+    """Single-token persistent Qwen3 stage through attention and full MLP."""
+
+    intermediate_size: int = 3072
+
+    _name_aliases: ClassVar[dict[str, str]] = {
+        **Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj._name_aliases,
+        "intermediate_size": "ffn",
+    }
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.intermediate_size != 3072:
+            raise ValueError(
+                "Qwen3-0.6B full-layer checkpoint expects intermediate_size=3072, "
+                f"got {self.intermediate_size}"
+            )
+        if self.num_aie_columns != 1:
+            raise ValueError("full-layer checkpoint is currently single-column only")
+        if self.hidden_size % self.kernel_vector_size != 0:
+            raise ValueError("hidden_size must be a multiple of kernel_vector_size")
+        if self.intermediate_size % self.kernel_vector_size != 0:
+            raise ValueError(
+                "intermediate_size must be a multiple of kernel_vector_size"
+            )
+
+    @property
+    def _mlp_gemv_kernel_object(self):
+        return (
+            f"qwen3_persistent_gemv_{self.hidden_size}k_"
+            f"{self.kernel_vector_size}vs_mlp.o"
+        )
+
+    @property
+    def _mlp_gemv_vectorized_fn(self):
+        return "qwen3_mlp_matvec_vectorized_bf16_bf16"
+
+    @property
+    def _mlp_gemv_scalar_fn(self):
+        return "qwen3_mlp_matvec_scalar_bf16_bf16"
+
+    @property
+    def _silu_kernel_object(self):
+        return "qwen3_persistent_silu.o"
+
+    @property
+    def _mul_kernel_object(self):
+        return "qwen3_persistent_mul.o"
+
+    @property
+    def _down_gemv_kernel_object(self):
+        return (
+            f"qwen3_persistent_gemv_{self.intermediate_size}k_"
+            f"{self.kernel_vector_size}vs_down_proj.o"
+        )
+
+    @property
+    def _down_gemv_vectorized_fn(self):
+        return "qwen3_down_proj_matvec_vectorized_bf16_bf16"
+
+    @property
+    def _down_gemv_scalar_fn(self):
+        return "qwen3_down_proj_matvec_scalar_bf16_bf16"
+
+    @property
+    def mlp_post_norm_weight_base(self):
+        return super().packed_weights_size
+
+    @property
+    def mlp_gate_weight_base(self):
+        return self.mlp_post_norm_weight_base + self.hidden_size
+
+    @property
+    def mlp_up_weight_base(self):
+        return self.mlp_gate_weight_base + self.intermediate_size * self.hidden_size
+
+    @property
+    def mlp_down_weight_base(self):
+        return self.mlp_up_weight_base + self.intermediate_size * self.hidden_size
+
+    @property
+    def packed_weights_size(self):
+        return super().packed_weights_size + (
+            self.hidden_size + 3 * self.intermediate_size * self.hidden_size
+        )
+
+    @property
+    def mlp_outputs_size(self):
+        return 3 * self.hidden_size + 4 * self.intermediate_size
+
+    @property
+    def packed_outputs_size(self):
+        return super().packed_outputs_size + self.mlp_outputs_size
+
+    @property
+    def mlp_x_norm_output_base(self):
+        return super().packed_outputs_size
+
+    @property
+    def ffn_gate_output_base(self):
+        return self.mlp_x_norm_output_base + self.hidden_size
+
+    @property
+    def ffn_up_output_base(self):
+        return self.ffn_gate_output_base + self.intermediate_size
+
+    @property
+    def ffn_gate_silu_output_base(self):
+        return self.ffn_up_output_base + self.intermediate_size
+
+    @property
+    def ffn_hidden_output_base(self):
+        return self.ffn_gate_silu_output_base + self.intermediate_size
+
+    @property
+    def ffn_out_output_base(self):
+        return self.ffn_hidden_output_base + self.intermediate_size
+
+    @property
+    def layer_residual_output_base(self):
+        return self.ffn_out_output_base + self.hidden_size
+
+    def get_mlir_artifact(self):
+        return PythonGeneratedMLIRArtifact(
+            f"{self.name}.mlir",
+            DesignGenerator(
+                self.operator_dir / "qwen3_persistent_attention_design.py",
+                "qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax_context_o_proj_full_mlp",
+                (
+                    aie_utils.get_current_device(),
+                    self.hidden_size,
+                    self.q_size,
+                    self.kv_size,
+                    self.head_dim,
+                    self.max_seq_len,
+                    self.position,
+                    self.intermediate_size,
+                    self.num_aie_columns,
+                    self.tile_size_input,
+                    self.tile_size_output,
+                    0,
+                ),
+                {
+                    "rms_kernel_object": self._rms_kernel_object,
+                    "gemv_kernel_object": self._gemv_kernel_object,
+                    "rope_kernel_object": self._rope_kernel_object,
+                    "attention_kernel_object": self._attention_kernel_object,
+                    "passthrough_kernel_object": self._passthrough_kernel_object,
+                    "softmax_kernel_object": self._softmax_kernel_object,
+                    "o_gemv_kernel_object": self._o_gemv_kernel_object,
+                    "add_kernel_object": self._add_kernel_object,
+                    "mlp_gemv_kernel_object": self._mlp_gemv_kernel_object,
+                    "silu_kernel_object": self._silu_kernel_object,
+                    "mul_kernel_object": self._mul_kernel_object,
+                    "down_gemv_kernel_object": self._down_gemv_kernel_object,
+                },
+            ),
+        )
+
+    def get_kernel_artifacts(self):
+        arch_dir = get_kernel_dir()
+        artifacts = super().get_kernel_artifacts()
+        artifacts.extend(
+            [
+                KernelObjectArtifact(
+                    self._mlp_gemv_kernel_object,
+                    dependencies=[
+                        SourceArtifact(
+                            self.context.base_dir / "aie_kernels" / "generic" / "mv.cc"
+                        )
+                    ],
+                    extra_flags=[
+                        f"-DDIM_K={self.hidden_size}",
+                        f"-DVEC_SIZE={self.kernel_vector_size}",
+                        f"-DMATVEC_SCALAR_FN={self._mlp_gemv_scalar_fn}",
+                        f"-DMATVEC_VECTORIZED_FN={self._mlp_gemv_vectorized_fn}",
+                    ],
+                ),
+                KernelObjectArtifact(
+                    self._silu_kernel_object,
+                    dependencies=[
+                        SourceArtifact(
+                            self.context.base_dir / "aie_kernels" / arch_dir / "silu.cc"
+                        )
+                    ],
+                ),
+                KernelObjectArtifact(
+                    self._mul_kernel_object,
+                    dependencies=[
+                        SourceArtifact(
+                            self.context.base_dir / "aie_kernels" / "generic" / "mul.cc"
+                        )
+                    ],
+                ),
+                KernelObjectArtifact(
+                    self._down_gemv_kernel_object,
+                    dependencies=[
+                        SourceArtifact(
+                            self.context.base_dir / "aie_kernels" / "generic" / "mv.cc"
+                        )
+                    ],
+                    extra_flags=[
+                        f"-DDIM_K={self.intermediate_size}",
+                        f"-DVEC_SIZE={self.kernel_vector_size}",
+                        f"-DMATVEC_SCALAR_FN={self._down_gemv_scalar_fn}",
+                        f"-DMATVEC_VECTORIZED_FN={self._down_gemv_vectorized_fn}",
                     ],
                 ),
             ]

@@ -35,20 +35,25 @@ from iron.applications.qwen3_0_6b.qwen3_persistent_ops import (  # noqa: E402
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmax,
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContext,
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj,
+    Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP,
     Qwen3PersistentPostAttnMLPDownResidual,
     Qwen3PersistentPostAttnRMSNormFullMLP,
     Qwen3PersistentPostAttnRMSNormMLPGateUp,
     verification_tolerance,
 )
 from iron.applications.qwen3_0_6b.qwen3_persistent_refs import (  # noqa: E402
+    build_reference_multi_layer_full_layer,
     build_qk_pair_reference,
     build_reference_input,
+    build_reference_full_layer,
     build_reference_full_mlp,
     build_reference_mlp_down_residual,
     build_reference_mlp_gate_up,
     build_reference_qkv,
     build_reference_qkv_rope_cache,
+    full_layer_reference_from_inputs,
     print_structured_attention_error,
+    rope_lut_for_position,
 )
 from iron.applications.qwen3_0_6b.qwen3_preflight import (  # noqa: E402
     run_persistent_artifact_preflight,
@@ -56,6 +61,9 @@ from iron.applications.qwen3_0_6b.qwen3_preflight import (  # noqa: E402
 from iron.common.context import AIEContext  # noqa: E402
 from iron.common.test_utils import verify_buffer  # noqa: E402
 from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor  # noqa: E402
+
+FULL_LAYER_STAGE = "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
+MULTI_LAYER_FULL_LAYER_STAGE = "multi-layer-full-layer"
 
 
 def assert_standard_runtime_available():
@@ -85,6 +93,8 @@ def parse_args():
             "input-rmsnorm-qkv-rope-cache-scores-softmax",
             "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
             "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
+            FULL_LAYER_STAGE,
+            MULTI_LAYER_FULL_LAYER_STAGE,
             "post-attn-rmsnorm-mlp-gate-up",
             "post-attn-mlp-down-residual",
             "post-attn-rmsnorm-full-mlp",
@@ -95,8 +105,228 @@ def parse_args():
     parser.add_argument("--compile-only", action="store_true")
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--verify-repeat", type=int, default=1)
+    parser.add_argument(
+        "--num-layers",
+        type=int,
+        default=2,
+        help="Number of transformer layers to run for multi-layer-full-layer",
+    )
     parser.add_argument("--dump-proof", action="store_true")
     return parser.parse_args()
+
+
+def pack_full_layer_weights(inputs: dict[str, torch.Tensor]) -> torch.Tensor:
+    return torch.cat(
+        [
+            inputs["input_norm_weight"].flatten(),
+            inputs["W_q"].flatten(),
+            inputs["W_k"].flatten(),
+            inputs["W_v"].flatten(),
+            inputs["W_q_norm"].flatten(),
+            inputs["W_k_norm"].flatten(),
+            inputs["W_o"].flatten(),
+            inputs["post_norm_weight"].flatten(),
+            inputs["W_gate"].flatten(),
+            inputs["W_up"].flatten(),
+            inputs["W_down"].flatten(),
+        ]
+    ).contiguous()
+
+
+def build_full_layer_inputs_for_layer(
+    model: Qwen3ForCausalLM,
+    layer_idx: int,
+    hidden: torch.Tensor,
+    state,
+) -> dict[str, torch.Tensor]:
+    layer = f"model.layers.{layer_idx}"
+    attn = f"{layer}.self_attn"
+    mlp = f"{layer}.mlp"
+    initial_cache = torch.cat(
+        [state.keys[layer_idx].flatten(), state.values[layer_idx].flatten()]
+    ).contiguous()
+    return {
+        "hidden": hidden.flatten().contiguous(),
+        "input_norm_weight": model.w(f"{layer}.input_layernorm.weight")
+        .flatten()
+        .contiguous(),
+        "W_q": model.w(f"{attn}.q_proj.weight").contiguous(),
+        "W_k": model.w(f"{attn}.k_proj.weight").contiguous(),
+        "W_v": model.w(f"{attn}.v_proj.weight").contiguous(),
+        "W_o": model.w(f"{attn}.o_proj.weight").contiguous(),
+        "W_q_norm": model.w(f"{attn}.q_norm.weight").flatten().contiguous(),
+        "W_k_norm": model.w(f"{attn}.k_norm.weight").flatten().contiguous(),
+        "rope_angles": rope_lut_for_position(
+            model.config.head_dim,
+            model.config.rope_theta,
+            state.position,
+        ),
+        "initial_cache": initial_cache,
+        "initial_keys_cache": state.keys[layer_idx].contiguous(),
+        "initial_values_cache": state.values[layer_idx].contiguous(),
+        "post_norm_weight": model.w(f"{layer}.post_attention_layernorm.weight")
+        .flatten()
+        .contiguous(),
+        "W_gate": model.w(f"{mlp}.gate_proj.weight").contiguous(),
+        "W_up": model.w(f"{mlp}.up_proj.weight").contiguous(),
+        "W_down": model.w(f"{mlp}.down_proj.weight").contiguous(),
+    }
+
+
+def unpack_full_layer_outputs(
+    op, packed_outputs: torch.Tensor
+) -> dict[str, torch.Tensor]:
+    return {
+        "attn_residual": packed_outputs[
+            op.attn_residual_output_base : op.mlp_x_norm_output_base
+        ],
+        "ffn_hidden": packed_outputs[
+            op.ffn_hidden_output_base : op.ffn_out_output_base
+        ],
+        "ffn_out": packed_outputs[
+            op.ffn_out_output_base : op.layer_residual_output_base
+        ],
+        "layer_residual": packed_outputs[op.layer_residual_output_base :],
+    }
+
+
+def run_multi_layer_full_layer(
+    args,
+    model: Qwen3ForCausalLM,
+    input_ids: torch.Tensor,
+    op,
+    op_func,
+) -> bool:
+    if not (1 <= args.num_layers <= model.config.num_hidden_layers):
+        raise ValueError(
+            f"num_layers must be in [1, {model.config.num_hidden_layers}], "
+            f"got {args.num_layers}"
+        )
+
+    (
+        next_token,
+        position,
+        initial_hidden,
+        initial_state,
+        expected_hidden,
+        _expected_state,
+    ) = build_reference_multi_layer_full_layer(
+        model,
+        input_ids,
+        args.max_seq_len,
+        args.num_layers,
+    )
+    if position != op.position:
+        raise RuntimeError(f"compiled position {op.position} != reference {position}")
+
+    failed = False
+    repeat_count = max(1, args.verify_repeat)
+    for iteration in range(repeat_count):
+        current_hidden = initial_hidden.clone()
+        total_npu_time = 0
+        print(f"iteration: {iteration}")
+        print(f"prompt_next_token: {next_token}")
+        print(f"decode_position: {position}")
+        for layer_idx in range(args.num_layers):
+            inputs = build_full_layer_inputs_for_layer(
+                model,
+                layer_idx,
+                current_hidden,
+                initial_state,
+            )
+            local_expected = full_layer_reference_from_inputs(
+                model,
+                inputs,
+                position,
+                args.max_seq_len,
+            )
+            hidden_buf = XRTTensor.from_torch(inputs["hidden"])
+            weights_buf = XRTTensor.from_torch(pack_full_layer_weights(inputs))
+            rope_angles_buf = XRTTensor.from_torch(inputs["rope_angles"])
+            packed_outputs_buf = XRTTensor(
+                (op.packed_outputs_size,),
+                dtype=hidden_buf.dtype,
+            )
+            packed_cache_buf = XRTTensor.from_torch(inputs["initial_cache"].clone())
+            result = op_func(
+                hidden_buf,
+                weights_buf,
+                rope_angles_buf,
+                packed_outputs_buf,
+                packed_cache_buf,
+            )
+            total_npu_time += result.npu_time
+            packed_outputs_buf.device = "npu"
+            packed_cache_buf.device = "npu"
+            packed_outputs = packed_outputs_buf.to_torch()
+            packed_cache = packed_cache_buf.to_torch()
+            actual = unpack_full_layer_outputs(op, packed_outputs)
+
+            keys_cache = packed_cache[: op.cache_half_size].view(
+                op.kv_heads, args.max_seq_len, op.head_dim
+            )
+            values_cache = packed_cache[op.cache_half_size :].view(
+                op.kv_heads, args.max_seq_len, op.head_dim
+            )
+            actual["keys_cache_current"] = keys_cache[:, position, :].flatten()
+            actual["values_cache_current"] = values_cache[:, position, :].flatten()
+
+            add_expected = (
+                actual["attn_residual"].to(torch.float32)
+                + actual["ffn_out"].to(torch.float32)
+            ).to(dtype=actual["layer_residual"].dtype)
+            add_errors = verify_buffer(
+                actual["layer_residual"],
+                f"layer_{layer_idx}_residual_add",
+                add_expected,
+                rel_tol=0.04,
+                abs_tol=1e-6,
+            )
+            failed = failed or bool(add_errors)
+            print(f"layer_{layer_idx}_npu_time_us: {result.npu_time / 1e3:.3f}")
+            print(f"layer_{layer_idx}_residual_add_errors: {len(add_errors)}")
+
+            for name, abs_tol in {
+                "keys_cache_current": 0.5,
+                "values_cache_current": 0.025,
+            }.items():
+                expected = local_expected[name]
+                errors = verify_buffer(
+                    actual[name],
+                    f"layer_{layer_idx}_{name}",
+                    expected,
+                    rel_tol=0.05,
+                    abs_tol=abs_tol,
+                )
+                diff = (
+                    actual[name].to(torch.float32) - expected.to(torch.float32)
+                ).abs()
+                print(f"layer_{layer_idx}_{name}_max_abs: {float(diff.max()):.6f}")
+                print(f"layer_{layer_idx}_{name}_mean_abs: {float(diff.mean()):.6f}")
+                print(f"layer_{layer_idx}_{name}_errors: {len(errors)}")
+                failed = failed or bool(errors)
+
+            current_hidden = actual["layer_residual"].contiguous()
+
+        final_rel_tol = 0.06
+        final_abs_tol = 0.04 * max(1, args.num_layers)
+        final_errors = verify_buffer(
+            current_hidden,
+            "hidden_after_layers",
+            expected_hidden,
+            rel_tol=final_rel_tol,
+            abs_tol=final_abs_tol,
+        )
+        final_diff = (
+            current_hidden.to(torch.float32) - expected_hidden.to(torch.float32)
+        ).abs()
+        print(f"npu_time_us_total: {total_npu_time / 1e3:.3f}")
+        print(f"hidden_after_layers_max_abs: {float(final_diff.max()):.6f}")
+        print(f"hidden_after_layers_mean_abs: {float(final_diff.mean()):.6f}")
+        print(f"hidden_after_layers_errors: {len(final_errors)}")
+        failed = failed or bool(final_errors)
+
+    return failed
 
 
 def main():
@@ -195,6 +425,18 @@ def main():
             epsilon=model.config.rms_norm_eps,
             context=context,
         )
+    elif args.stage in {FULL_LAYER_STAGE, MULTI_LAYER_FULL_LAYER_STAGE}:
+        op = Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP(
+            hidden_size=model.config.hidden_size,
+            q_size=model.config.num_attention_heads * model.config.head_dim,
+            kv_size=model.config.num_key_value_heads * model.config.head_dim,
+            head_dim=model.config.head_dim,
+            max_seq_len=args.max_seq_len,
+            position=input_ids.shape[1],
+            intermediate_size=model.config.intermediate_size,
+            epsilon=model.config.rms_norm_eps,
+            context=context,
+        )
     else:
         op = Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj(
             hidden_size=model.config.hidden_size,
@@ -223,6 +465,7 @@ def main():
         f"runtime_memrefs={preflight.runtime_memrefs} "
         f"arg_specs={preflight.arg_specs} "
         f"metadata_host_bos={preflight.metadata_host_bos} "
+        f"compute_cores={preflight.compute_cores} "
         f"max_fifo_buffered_bytes={preflight.max_fifo_buffered_bytes} "
         f"max_dma_tasks_per_fifo={preflight.max_dma_tasks_per_fifo} "
         f"max_tile_inputs={preflight.max_compute_tile_inputs} "
@@ -324,6 +567,42 @@ def main():
                 "workers -> silu_worker + mul_worker -> down_matvec_worker -> "
                 "residual_add_worker"
             )
+        elif args.stage == FULL_LAYER_STAGE:
+            print(
+                "dispatch_shape: hidden[1024] + packed attention/MLP weights + "
+                "rope_angles[128] + K/V cache -> attention residual -> "
+                "post RMSNorm -> gate/up -> SiLU/mul -> down/residual"
+            )
+            print(
+                "runtime_bos: hidden[1024], "
+                f"packed_weights[{op.packed_weights_size}], "
+                "rope_angles[128], "
+                f"packed_outputs[{op.packed_outputs_size}], "
+                f"packed_cache[{op.packed_cache_size}]"
+            )
+            print(f"decode_position: {op.position}")
+            print(
+                "worker_graph: Q/K matvec -> packed metadata norm+RoPE, "
+                "attention context/O-proj full residual, then postnorm+gate/up "
+                "-> fused SiLU/mul -> down_proj -> residual add"
+            )
+        elif args.stage == MULTI_LAYER_FULL_LAYER_STAGE:
+            print(
+                "dispatch_shape: one-token decode hidden[1024] through "
+                f"{args.num_layers} sequential full-layer invocations"
+            )
+            print(
+                "runtime_bos_per_layer: hidden[1024], "
+                f"packed_weights[{op.packed_weights_size}], "
+                "rope_angles[128], "
+                f"packed_outputs[{op.packed_outputs_size}], "
+                f"packed_cache[{op.packed_cache_size}]"
+            )
+            print(f"decode_position: {op.position}")
+            print(
+                "worker_graph: reuse the accepted full-layer persistent graph; "
+                "host switches layer weights and per-layer KV cache slices"
+            )
         else:
             print(
                 "dispatch_shape: hidden[1024] + packed QKV/norm weights + "
@@ -351,6 +630,13 @@ def main():
         return
 
     op_func = op.get_callable()
+    if args.stage == MULTI_LAYER_FULL_LAYER_STAGE:
+        failed = run_multi_layer_full_layer(args, model, input_ids, op, op_func)
+        if args.verify and failed:
+            raise SystemExit(1)
+        gc.collect()
+        return
+
     if args.stage == "input-rmsnorm":
         next_token, hidden, weight, expected = build_reference_input(
             model, input_ids, args.max_seq_len
@@ -439,9 +725,17 @@ def main():
         op_args = [hidden_buf, weights_buf, packed_outputs_buf]
         output_buffers = {"packed_outputs": packed_outputs_buf}
     else:
-        next_token, position, inputs, expected_buffers = build_reference_qkv_rope_cache(
-            model, input_ids, args.max_seq_len
-        )
+        if (
+            args.stage
+            == "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
+        ):
+            next_token, position, inputs, expected_buffers = build_reference_full_layer(
+                model, input_ids, args.max_seq_len
+            )
+        else:
+            next_token, position, inputs, expected_buffers = (
+                build_reference_qkv_rope_cache(model, input_ids, args.max_seq_len)
+            )
         if position != op.position:
             raise RuntimeError(
                 f"compiled position {op.position} != reference {position}"
@@ -456,8 +750,23 @@ def main():
             inputs["W_q_norm"].flatten(),
             inputs["W_k_norm"].flatten(),
         ]
-        if args.stage == "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj":
+        if args.stage in {
+            "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
+            "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp",
+        }:
             packed_weight_parts.append(inputs["W_o"].flatten())
+        if (
+            args.stage
+            == "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
+        ):
+            packed_weight_parts.extend(
+                [
+                    inputs["post_norm_weight"].flatten(),
+                    inputs["W_gate"].flatten(),
+                    inputs["W_up"].flatten(),
+                    inputs["W_down"].flatten(),
+                ]
+            )
         packed_weights = torch.cat(packed_weight_parts).contiguous()
         weights_buf = XRTTensor.from_torch(packed_weights)
         rope_angles_buf = XRTTensor.from_torch(inputs["rope_angles"])
@@ -614,6 +923,37 @@ def main():
                 "ffn_out": ffn_out_local.contiguous(),
                 "layer_residual": residual_local.contiguous(),
             }
+        elif (
+            args.stage
+            == "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
+        ):
+            packed_outputs_buf.device = "npu"
+            packed_cache_buf.device = "npu"
+            packed_outputs = packed_outputs_buf.to_torch()
+            actual_buffers = {
+                "attn_residual": packed_outputs[
+                    op.attn_residual_output_base : op.mlp_x_norm_output_base
+                ],
+                "ffn_hidden": packed_outputs[
+                    op.ffn_hidden_output_base : op.ffn_out_output_base
+                ],
+                "ffn_out": packed_outputs[
+                    op.ffn_out_output_base : op.layer_residual_output_base
+                ],
+                "layer_residual": packed_outputs[op.layer_residual_output_base :],
+            }
+            ffn_out_local = F.linear(
+                actual_buffers["ffn_hidden"].view(1, 1, -1), inputs["W_down"]
+            ).flatten()
+            layer_residual_local = (
+                actual_buffers["attn_residual"] + actual_buffers["ffn_out"]
+            )
+            local_expected_buffers = {
+                **expected_buffers,
+                "ffn_hidden": expected_buffers["ffn_hidden"].contiguous(),
+                "ffn_out": ffn_out_local.contiguous(),
+                "layer_residual": layer_residual_local.contiguous(),
+            }
         else:
             packed_outputs_buf.device = "npu"
             packed_cache_buf.device = "npu"
@@ -623,14 +963,20 @@ def main():
                 "input-rmsnorm-qkv-rope-cache-scores-softmax",
                 "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
                 "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
+                "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp",
             }
             has_context = args.stage in {
                 "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
                 "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
+                "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp",
             }
-            has_o_proj = (
+            has_o_proj = args.stage in {
+                "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
+                "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp",
+            }
+            has_full_mlp = (
                 args.stage
-                == "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj"
+                == "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
             )
             q_rope_end = (
                 op.qk_pair_output_base if has_scores_softmax else op.packed_outputs_size
@@ -711,9 +1057,27 @@ def main():
                         actual_buffers["attn_o_proj"] = packed_outputs[
                             op.attn_o_proj_output_base : op.attn_residual_output_base
                         ]
+                        attn_residual_end = (
+                            op.mlp_x_norm_output_base
+                            if has_full_mlp
+                            else op.packed_outputs_size
+                        )
                         actual_buffers["attn_residual"] = packed_outputs[
-                            op.attn_residual_output_base :
+                            op.attn_residual_output_base : attn_residual_end
                         ]
+                        if has_full_mlp:
+                            actual_buffers["mlp_x_norm"] = packed_outputs[
+                                op.mlp_x_norm_output_base : op.ffn_gate_output_base
+                            ]
+                            actual_buffers["ffn_hidden"] = packed_outputs[
+                                op.ffn_hidden_output_base : op.ffn_out_output_base
+                            ]
+                            actual_buffers["ffn_out"] = packed_outputs[
+                                op.ffn_out_output_base : op.layer_residual_output_base
+                            ]
+                            actual_buffers["layer_residual"] = packed_outputs[
+                                op.layer_residual_output_base :
+                            ]
             q_raw_local = F.linear(
                 actual_buffers["x_norm"].view(1, 1, -1), inputs["W_q"]
             ).flatten()
@@ -841,6 +1205,30 @@ def main():
                                 "attn_residual": residual_local.contiguous(),
                             }
                         )
+                        if has_full_mlp:
+                            mlp_x_norm_local = rms_norm(
+                                actual_buffers["attn_residual"].view(1, 1, -1),
+                                inputs["post_norm_weight"],
+                                model.config.rms_norm_eps,
+                            ).flatten()
+                            ffn_out_local = F.linear(
+                                actual_buffers["ffn_hidden"].view(1, 1, -1),
+                                inputs["W_down"],
+                            ).flatten()
+                            layer_residual_local = (
+                                actual_buffers["attn_residual"]
+                                + actual_buffers["ffn_out"]
+                            )
+                            context_expected_buffers.update(
+                                {
+                                    "mlp_x_norm": mlp_x_norm_local.contiguous(),
+                                    "ffn_hidden": expected_buffers[
+                                        "ffn_hidden"
+                                    ].contiguous(),
+                                    "ffn_out": ffn_out_local.contiguous(),
+                                    "layer_residual": layer_residual_local.contiguous(),
+                                }
+                            )
                 score_expected_buffers = {
                     "qk_pair": qk_pair,
                     "attn_scores": padded_scores.flatten().contiguous(),
@@ -898,6 +1286,7 @@ def main():
                     "input-rmsnorm-qkv-rope-cache-scores-softmax",
                     "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
                     "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
+                    "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp",
                     "post-attn-rmsnorm-mlp-gate-up",
                     "post-attn-mlp-down-residual",
                     "post-attn-rmsnorm-full-mlp",

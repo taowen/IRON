@@ -63,6 +63,52 @@ Observed recheck:
 64 passed
 ```
 
+## Pytest Cannot Import pyxrt
+
+Symptom:
+
+```text
+ImportError: Cannot import pyxrt (err=No module named 'pyxrt')... is XRT installed?
+```
+
+Diagnostic:
+
+```bash
+.venv/bin/python - <<'PY'
+import os
+print(os.environ.get("XILINX_XRT"))
+print(os.environ.get("PYTHONPATH"))
+PY
+```
+
+Then rerun with XRT sourced:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+.venv/bin/pytest iron/applications/qwen3_0_6b/test.py -q -m 'not extensive'
+```
+
+Evidence found:
+
+```text
+The same pytest command failed before sourcing XRT and passed after
+source /opt/xilinx/xrt/setup.sh.
+```
+
+Root cause:
+
+```text
+The Python environment was correct, but the shell did not include XRT's Python
+bindings in PYTHONPATH.
+```
+
+Fix:
+
+```text
+Source /opt/xilinx/xrt/setup.sh before pytest, operator runs, and persistent
+bring-up scripts.
+```
+
 ## Clean Graph Edits Appear To Do Nothing
 
 Symptom:
@@ -248,4 +294,3 @@ iteration 0: npu_next_token=11853 text='imize'
 iteration 1: npu_next_token=11853 text='imize'
 iteration 2: npu_next_token=11853 text='imize'
 ```
-

@@ -188,7 +188,7 @@ class Qwen3CachedReference:
         return logits, state
 
     @torch.inference_mode()
-    def decode(
+    def decode_hidden(
         self, token_id: int, state: Qwen3DecodeState
     ) -> tuple[torch.Tensor, Qwen3DecodeState]:
         cfg = self.config
@@ -213,7 +213,15 @@ class Qwen3CachedReference:
             )
             x = residual + self._mlp(x_norm, layer_idx)
 
+        state.position += 1
+        return x, state
+
+    @torch.inference_mode()
+    def decode(
+        self, token_id: int, state: Qwen3DecodeState
+    ) -> tuple[torch.Tensor, Qwen3DecodeState]:
+        x, state = self.decode_hidden(token_id, state)
+        cfg = self.config
         x = rms_norm(x, self.model.w("model.norm.weight"), cfg.rms_norm_eps)
         logits = F.linear(x, self.model.w("model.embed_tokens.weight"))
-        state.position += 1
         return logits, state

@@ -39,6 +39,7 @@ class PersistentPreflightResult:
     runtime_memrefs: int
     arg_specs: int
     metadata_host_bos: int | None
+    compute_cores: int
     max_fifo_buffered_bytes: int
     max_dma_tasks_per_fifo: int
     max_compute_tile_inputs: int
@@ -253,6 +254,7 @@ def run_persistent_artifact_preflight(
     max_l1_fifo_buffered_bytes: int = 64 * 1024,
     max_compute_tile_input_fifos: int = 2,
     max_compute_tile_output_fifos: int = 2,
+    max_compute_cores: int = 32,
     max_dma_tasks_per_fifo: int = 32,
 ) -> PersistentPreflightResult:
     """Fail before runtime when generated artifacts match known bad patterns."""
@@ -261,6 +263,14 @@ def run_persistent_artifact_preflight(
         raise Qwen3PreflightError(f"MLIR artifact does not exist: {mlir_path}")
 
     mlir_text = mlir_path.read_text()
+    compute_cores = mlir_text.count("aie.core(")
+    if compute_cores > max_compute_cores:
+        raise Qwen3PreflightError(
+            f"Compute worker budget mismatch: MLIR has {compute_cores} aie.core ops, "
+            f"limit={max_compute_cores}. Fuse adjacent stages or drop debug-only "
+            "workers before changing kernel math."
+        )
+
     runtime_memrefs = count_runtime_sequence_memrefs(mlir_text)
     if runtime_memrefs != arg_specs:
         raise Qwen3PreflightError(
@@ -360,6 +370,7 @@ def run_persistent_artifact_preflight(
         runtime_memrefs=runtime_memrefs,
         arg_specs=arg_specs,
         metadata_host_bos=metadata_host_bos,
+        compute_cores=compute_cores,
         max_fifo_buffered_bytes=max(
             (fifo.buffered_bytes or 0 for fifo in fifos),
             default=0,

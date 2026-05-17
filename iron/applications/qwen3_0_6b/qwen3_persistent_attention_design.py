@@ -9,7 +9,7 @@ import numpy as np
 import aie.dialects.index as index
 from aie.dialects.aie import T
 from aie.helpers.taplib.tap import TensorAccessPattern
-from aie.iron import Kernel, ObjectFifo, Program, Runtime, Worker
+from aie.iron import Buffer, Kernel, ObjectFifo, Program, Runtime, Worker
 from aie.iron.controlflow import range_
 from aie.iron.placers import SequentialPlacer
 
@@ -26,6 +26,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     tile_size_input,
     tile_size_output,
     trace_size,
+    intermediate_size=3072,
     func_prefix="",
     rms_kernel_object="rms_norm.o",
     gemv_kernel_object="mv.o",
@@ -33,11 +34,16 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     include_scores_softmax=False,
     include_context=False,
     include_o_proj=False,
+    include_full_mlp=False,
     attention_kernel_object="qwen3_attention.o",
     passthrough_kernel_object="passThrough.o",
     softmax_kernel_object="softmax.o",
     o_gemv_kernel_object="mv_o_proj.o",
     add_kernel_object="add.o",
+    mlp_gemv_kernel_object="mv_mlp.o",
+    silu_kernel_object="silu.o",
+    mul_kernel_object="mul.o",
+    down_gemv_kernel_object="mv_down.o",
 ):
     """Single-token Qwen3 input RMSNorm, QKV, Q/K norm, RoPE, KV write, and optional softmax."""
     dtype = bfloat16
@@ -48,6 +54,8 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
         raise ValueError("context checkpoint requires scores+softmax")
     if include_o_proj and not include_context:
         raise ValueError("O projection checkpoint requires attention context")
+    if include_full_mlp and not include_o_proj:
+        raise ValueError("full MLP checkpoint requires attention O projection")
     include_k_cache_debug = include_scores_softmax and not include_o_proj
     score_size = q_heads * max_seq_len if include_scores_softmax else 0
     qk_pair_debug_size = kv_heads * 3 * head_dim if include_scores_softmax else 0
@@ -59,12 +67,20 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     context_flat_size = q_size if include_o_proj else 0
     o_proj_size = hidden_size if include_o_proj else 0
     residual_size = hidden_size if include_o_proj else 0
+    mlp_xnorm_size = hidden_size if include_full_mlp else 0
+    mlp_ffn_size = intermediate_size if include_full_mlp else 0
+    mlp_ffn_out_size = hidden_size if include_full_mlp else 0
+    mlp_layer_residual_size = hidden_size if include_full_mlp else 0
+    mlp_weights_size = (
+        hidden_size + 3 * intermediate_size * hidden_size if include_full_mlp else 0
+    )
     weights_size = (
         hidden_size
         + q_size * hidden_size
         + 2 * kv_size * hidden_size
         + 2 * head_dim
         + (hidden_size * q_size if include_o_proj else 0)
+        + mlp_weights_size
     )
     outputs_size = (
         hidden_size
@@ -81,6 +97,10 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
         + context_flat_size
         + o_proj_size
         + residual_size
+        + mlp_xnorm_size
+        + 4 * mlp_ffn_size
+        + mlp_ffn_out_size
+        + mlp_layer_residual_size
     )
     cache_size = 2 * kv_size * max_seq_len
 
@@ -92,6 +112,8 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     tile_ty = np.ndarray[(hidden_size,), np.dtype[dtype]]
     hidden_weight_ty = np.ndarray[(hidden_size,), np.dtype[dtype]]
     head_ty = np.ndarray[(head_dim,), np.dtype[dtype]]
+    qk_norm_weight_ty = np.ndarray[(2 * head_dim,), np.dtype[dtype]]
+    ffn_ty = np.ndarray[(intermediate_size,), np.dtype[dtype]]
     qk_pair_ty = np.ndarray[(3 * head_dim,), np.dtype[dtype]]
     score_ty = np.ndarray[(max_seq_len,), np.dtype[dtype]]
     k_cache_block_ty = np.ndarray[(cache_block_seq, head_dim), np.dtype[dtype]]
@@ -99,6 +121,8 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     gemv_a_ty = np.ndarray[(tile_size_input, hidden_size), np.dtype[dtype]]
     context_flat_ty = np.ndarray[(q_size,), np.dtype[dtype]]
     o_gemv_a_ty = np.ndarray[(tile_size_input, q_size), np.dtype[dtype]]
+    mlp_gemv_a_ty = np.ndarray[(tile_size_input, hidden_size), np.dtype[dtype]]
+    down_gemv_a_ty = np.ndarray[(tile_size_input, intermediate_size), np.dtype[dtype]]
 
     if q_size % head_dim != 0 or kv_size % head_dim != 0:
         raise ValueError("Q/KV sizes must be divisible by head_dim")
@@ -120,6 +144,12 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
         raise ValueError("scores+softmax checkpoint expects Qwen3-0.6B GQA repeat=2")
     if include_scores_softmax and max_seq_len % cache_block_seq != 0:
         raise ValueError("max_seq_len must be divisible by cache_block_seq")
+    if include_full_mlp and num_columns != 1:
+        raise ValueError("full-layer checkpoint is currently single-column only")
+    if include_full_mlp and hidden_size != 1024:
+        raise ValueError("full-layer checkpoint expects hidden_size=1024")
+    if include_full_mlp and intermediate_size != 3072:
+        raise ValueError("full-layer checkpoint expects intermediate_size=3072")
 
     in_hidden = ObjectFifo(tile_ty, name="qwen3_rc_hidden_in", depth=2)
     in_weight = ObjectFifo(hidden_weight_ty, name="qwen3_rc_input_norm_weight", depth=2)
@@ -128,6 +158,11 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
 
     q_norm_weight = ObjectFifo(head_ty, name="qwen3_rc_q_norm_weight", depth=2)
     k_norm_weight = ObjectFifo(head_ty, name="qwen3_rc_k_norm_weight", depth=2)
+    qk_norm_weight = (
+        ObjectFifo(qk_norm_weight_ty, name="qwen3_rc_qk_norm_weight", depth=2)
+        if include_full_mlp
+        else None
+    )
     rope_angles = ObjectFifo(head_ty, name="qwen3_rc_rope_angles", depth=2)
 
     q_weight_fifos = [
@@ -154,14 +189,22 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
         ObjectFifo(head_ty, name=f"qwen3_rc_v_{col}", depth=2)
         for col in range(num_columns)
     ]
-    q_norm_fifos = [
-        ObjectFifo(head_ty, name=f"qwen3_rc_q_norm_{col}", depth=2)
-        for col in range(num_columns)
-    ]
-    k_norm_fifos = [
-        ObjectFifo(head_ty, name=f"qwen3_rc_k_norm_{col}", depth=2)
-        for col in range(num_columns)
-    ]
+    q_norm_fifos = (
+        []
+        if include_full_mlp
+        else [
+            ObjectFifo(head_ty, name=f"qwen3_rc_q_norm_{col}", depth=2)
+            for col in range(num_columns)
+        ]
+    )
+    k_norm_fifos = (
+        []
+        if include_full_mlp
+        else [
+            ObjectFifo(head_ty, name=f"qwen3_rc_k_norm_{col}", depth=2)
+            for col in range(num_columns)
+        ]
+    )
     q_rope_fifos = [
         ObjectFifo(head_ty, name=f"qwen3_rc_q_rope_{col}", depth=2)
         for col in range(num_columns)
@@ -174,6 +217,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     k_cache_debug_in_fifos = []
     k_cache_debug_out_fifos = []
     qk_pair_fifos = []
+    qk_rope_meta = None
     qk_pair_debug_fifos = []
     attn_score_debug_fifos = []
     attn_score_softmax_fifos = []
@@ -187,7 +231,19 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     o_proj_fifos = []
     residual_hidden_fifos = []
     residual_out_fifos = []
+    mlp_gate_up_weight_rows = None
+    mlp_down_weight = None
+    mlp_xnorm = None
+    ffn_gate = None
+    ffn_up = None
+    ffn_hidden = None
+    ffn_out = None
+    layer_residual = None
     if include_scores_softmax:
+        if include_full_mlp:
+            qk_rope_meta = ObjectFifo(
+                qk_pair_ty, name="qwen3_rc_qk_rope_metadata", depth=2
+            )
         qk_pair_fifos = [
             ObjectFifo(qk_pair_ty, name=f"qwen3_rc_qk_pair_{col}", depth=2)
             for col in range(num_columns)
@@ -271,18 +327,37 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
             ObjectFifo(o_gemv_a_ty, name=f"qwen3_rc_o_weight_{col}", depth=2)
             for col in range(num_columns)
         ]
+        o_proj_ty = tile_ty if include_full_mlp else head_ty
+        o_proj_depth = 1 if include_full_mlp else 2
         o_proj_fifos = [
-            ObjectFifo(head_ty, name=f"qwen3_rc_attn_o_proj_{col}", depth=2)
+            ObjectFifo(
+                o_proj_ty, name=f"qwen3_rc_attn_o_proj_{col}", depth=o_proj_depth
+            )
             for col in range(num_columns)
         ]
-        residual_hidden_fifos = [
-            ObjectFifo(head_ty, name=f"qwen3_rc_residual_hidden_{col}", depth=2)
-            for col in range(num_columns)
-        ]
+        if not include_full_mlp:
+            residual_hidden_fifos = [
+                ObjectFifo(head_ty, name=f"qwen3_rc_residual_hidden_{col}", depth=2)
+                for col in range(num_columns)
+            ]
+        residual_ty = tile_ty if include_full_mlp else head_ty
         residual_out_fifos = [
-            ObjectFifo(head_ty, name=f"qwen3_rc_attn_residual_{col}", depth=2)
+            ObjectFifo(residual_ty, name=f"qwen3_rc_attn_residual_{col}", depth=2)
             for col in range(num_columns)
         ]
+    if include_full_mlp:
+        mlp_gate_up_weight_rows = ObjectFifo(
+            hidden_weight_ty, name="qwen3_full_layer_mlp_gate_up_weight_rows", depth=4
+        )
+        mlp_down_weight = ObjectFifo(
+            down_gemv_a_ty, name="qwen3_full_layer_mlp_down_weight", depth=1
+        )
+        mlp_xnorm = ObjectFifo(tile_ty, name="qwen3_full_layer_mlp_xnorm", depth=2)
+        ffn_gate = ObjectFifo(ffn_ty, name="qwen3_full_layer_ffn_gate", depth=2)
+        ffn_up = ObjectFifo(ffn_ty, name="qwen3_full_layer_ffn_up", depth=2)
+        ffn_hidden = ObjectFifo(ffn_ty, name="qwen3_full_layer_ffn_hidden", depth=2)
+        ffn_out = ObjectFifo(tile_ty, name="qwen3_full_layer_ffn_out", depth=2)
+        layer_residual = ObjectFifo(tile_ty, name="qwen3_full_layer_residual", depth=2)
 
     rms_norm_kernel = Kernel(
         f"{func_prefix}rms_norm_bf16_vector",
@@ -319,6 +394,18 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     pack_context_head = None
     o_matvec = None
     add_kernel = None
+    add_hidden_tile_to_full = None
+    add_full_slice = None
+    norm_rope_with_weight_offset = None
+    pack_qk_rope_metadata = None
+    norm_rope_with_metadata = None
+    mlp_weighted_rms_norm = None
+    mlp_matvec = None
+    mlp_matvec4_rows = None
+    silu = None
+    eltwise_mul = None
+    silu_mul = None
+    down_matvec = None
     if include_scores_softmax:
         pack_qk_pair = Kernel(
             f"{func_prefix}qwen3_pack_qk_pair_bf16",
@@ -370,15 +457,103 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
             f"{func_prefix}{attention_kernel_object}",
             [head_ty, context_flat_ty, np.int32],
         )
+        o_matvec_out_ty = tile_ty if include_full_mlp else head_ty
         o_matvec = Kernel(
             f"{func_prefix}qwen3_o_proj_matvec_vectorized_bf16_bf16",
             f"{func_prefix}{o_gemv_kernel_object}",
-            [np.int32, np.int32, o_gemv_a_ty, context_flat_ty, head_ty],
+            [np.int32, np.int32, o_gemv_a_ty, context_flat_ty, o_matvec_out_ty],
         )
-        add_kernel = Kernel(
-            f"{func_prefix}eltwise_add_bf16_vector",
-            f"{func_prefix}{add_kernel_object}",
-            [head_ty, head_ty, head_ty, np.int32],
+        if include_full_mlp:
+            add_hidden_tile_to_full = Kernel(
+                f"{func_prefix}qwen3_add_hidden_tile_to_full_bf16",
+                f"{func_prefix}{attention_kernel_object}",
+                [head_ty, tile_ty, tile_ty, np.int32, np.int32],
+            )
+        else:
+            add_kernel = Kernel(
+                f"{func_prefix}eltwise_add_bf16_vector",
+                f"{func_prefix}{add_kernel_object}",
+                [head_ty, head_ty, head_ty, np.int32],
+            )
+    if include_full_mlp:
+        norm_rope_with_weight_offset = Kernel(
+            f"{func_prefix}qwen3_norm_rope_with_weight_offset_bf16",
+            f"{func_prefix}{attention_kernel_object}",
+            [
+                head_ty,
+                qk_norm_weight_ty,
+                head_ty,
+                head_ty,
+                head_ty,
+                np.int32,
+                np.int32,
+            ],
+        )
+        pack_qk_rope_metadata = Kernel(
+            f"{func_prefix}qwen3_pack_qk_rope_metadata_bf16",
+            f"{func_prefix}{attention_kernel_object}",
+            [qk_norm_weight_ty, head_ty, qk_pair_ty, np.int32],
+        )
+        norm_rope_with_metadata = Kernel(
+            f"{func_prefix}qwen3_norm_rope_with_metadata_bf16",
+            f"{func_prefix}{attention_kernel_object}",
+            [
+                head_ty,
+                qk_pair_ty,
+                head_ty,
+                head_ty,
+                np.int32,
+                np.int32,
+            ],
+        )
+        mlp_weighted_rms_norm = Kernel(
+            f"{func_prefix}qwen3_weighted_rms_norm_bf16",
+            f"{func_prefix}{attention_kernel_object}",
+            [tile_ty, hidden_weight_ty, tile_ty, np.int32],
+        )
+        mlp_matvec = Kernel(
+            f"{func_prefix}qwen3_mlp_matvec_vectorized_bf16_bf16",
+            f"{func_prefix}{mlp_gemv_kernel_object}",
+            [np.int32, np.int32, mlp_gemv_a_ty, tile_ty, ffn_ty],
+        )
+        mlp_matvec4_rows = Kernel(
+            f"{func_prefix}qwen3_mlp_matvec4_rows_bf16",
+            f"{func_prefix}{attention_kernel_object}",
+            [
+                np.int32,
+                np.int32,
+                hidden_weight_ty,
+                hidden_weight_ty,
+                hidden_weight_ty,
+                hidden_weight_ty,
+                tile_ty,
+                ffn_ty,
+            ],
+        )
+        silu = Kernel(
+            f"{func_prefix}silu_bf16",
+            f"{func_prefix}{silu_kernel_object}",
+            [ffn_ty, ffn_ty, np.int32],
+        )
+        eltwise_mul = Kernel(
+            f"{func_prefix}eltwise_mul_bf16_vector",
+            f"{func_prefix}{mul_kernel_object}",
+            [ffn_ty, ffn_ty, ffn_ty, np.int32],
+        )
+        silu_mul = Kernel(
+            f"{func_prefix}qwen3_silu_mul_bf16",
+            f"{func_prefix}{attention_kernel_object}",
+            [ffn_ty, ffn_ty, ffn_ty, np.int32],
+        )
+        down_matvec = Kernel(
+            f"{func_prefix}qwen3_down_proj_matvec_vectorized_bf16_bf16",
+            f"{func_prefix}{down_gemv_kernel_object}",
+            [np.int32, np.int32, down_gemv_a_ty, ffn_ty, tile_ty],
+        )
+        add_full_slice = Kernel(
+            f"{func_prefix}qwen3_add_full_slice_bf16",
+            f"{func_prefix}{attention_kernel_object}",
+            [tile_ty, tile_ty, tile_ty, np.int32, np.int32],
         )
 
     def rmsnorm_worker(of_in, of_out, rms_norm):
@@ -487,6 +662,177 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
             in_fifo.release(1)
             out_fifo.release(1)
         angles_fifo.release(1)
+
+    def q_project_norm_rope_worker(
+        weight_fifo,
+        x_fifo,
+        norm_weight_fifo,
+        angles_fifo,
+        raw_fifo,
+        norm_fifo,
+        rope_fifo,
+        matvec_kernel,
+        norm_rope_kernel,
+    ):
+        x = x_fifo.acquire(1)
+        norm_weights = norm_weight_fifo.acquire(1)
+        angles = angles_fifo.acquire(1)
+        for _ in range_(q_heads // num_columns):
+            raw = raw_fifo.acquire(1)
+            norm = norm_fifo.acquire(1)
+            rope_out = rope_fifo.acquire(1)
+            for j_idx in range_(tile_size_output // tile_size_input):
+                j_i32 = index.casts(T.i32(), j_idx)
+                output_row_offset = j_i32 * tile_size_input
+                w = weight_fifo.acquire(1)
+                matvec_kernel(tile_size_input, output_row_offset, w, x, raw)
+                weight_fifo.release(1)
+            norm_rope_kernel(raw, norm_weights, angles, norm, rope_out, 0, head_dim)
+            raw_fifo.release(1)
+            norm_fifo.release(1)
+            rope_fifo.release(1)
+        angles_fifo.release(1)
+        norm_weight_fifo.release(1)
+        x_fifo.release(1)
+
+    def k_project_norm_rope_worker(
+        weight_fifo,
+        x_fifo,
+        norm_weight_fifo,
+        angles_fifo,
+        raw_fifo,
+        norm_fifo,
+        rope_fifo,
+        matvec_kernel,
+        norm_rope_kernel,
+    ):
+        x = x_fifo.acquire(1)
+        norm_weights = norm_weight_fifo.acquire(1)
+        angles = angles_fifo.acquire(1)
+        for _ in range_(kv_heads // num_columns):
+            raw = raw_fifo.acquire(1)
+            norm = norm_fifo.acquire(1)
+            rope_out = rope_fifo.acquire(1)
+            for j_idx in range_(tile_size_output // tile_size_input):
+                j_i32 = index.casts(T.i32(), j_idx)
+                output_row_offset = j_i32 * tile_size_input
+                w = weight_fifo.acquire(1)
+                matvec_kernel(tile_size_input, output_row_offset, w, x, raw)
+                weight_fifo.release(1)
+            norm_rope_kernel(
+                raw, norm_weights, angles, norm, rope_out, head_dim, head_dim
+            )
+            raw_fifo.release(1)
+            norm_fifo.release(1)
+            rope_fifo.release(1)
+        angles_fifo.release(1)
+        norm_weight_fifo.release(1)
+        x_fifo.release(1)
+
+    def q_project_norm_rope_buffered_worker(
+        weight_fifo,
+        x_fifo,
+        norm_weight_fifo,
+        angles_fifo,
+        rope_fifo,
+        matvec_kernel,
+        norm_rope_kernel,
+        raw_buffer,
+        norm_buffer,
+    ):
+        x = x_fifo.acquire(1)
+        norm_weights = norm_weight_fifo.acquire(1)
+        angles = angles_fifo.acquire(1)
+        for _ in range_(q_heads // num_columns):
+            rope_out = rope_fifo.acquire(1)
+            for j_idx in range_(tile_size_output // tile_size_input):
+                j_i32 = index.casts(T.i32(), j_idx)
+                output_row_offset = j_i32 * tile_size_input
+                w = weight_fifo.acquire(1)
+                matvec_kernel(tile_size_input, output_row_offset, w, x, raw_buffer)
+                weight_fifo.release(1)
+            norm_rope_kernel(
+                raw_buffer, norm_weights, angles, norm_buffer, rope_out, 0, head_dim
+            )
+            rope_fifo.release(1)
+        angles_fifo.release(1)
+        norm_weight_fifo.release(1)
+        x_fifo.release(1)
+
+    def k_project_norm_rope_buffered_worker(
+        weight_fifo,
+        x_fifo,
+        norm_weight_fifo,
+        angles_fifo,
+        rope_fifo,
+        matvec_kernel,
+        norm_rope_kernel,
+        raw_buffer,
+        norm_buffer,
+    ):
+        x = x_fifo.acquire(1)
+        norm_weights = norm_weight_fifo.acquire(1)
+        angles = angles_fifo.acquire(1)
+        for _ in range_(kv_heads // num_columns):
+            rope_out = rope_fifo.acquire(1)
+            for j_idx in range_(tile_size_output // tile_size_input):
+                j_i32 = index.casts(T.i32(), j_idx)
+                output_row_offset = j_i32 * tile_size_input
+                w = weight_fifo.acquire(1)
+                matvec_kernel(tile_size_input, output_row_offset, w, x, raw_buffer)
+                weight_fifo.release(1)
+            norm_rope_kernel(
+                raw_buffer,
+                norm_weights,
+                angles,
+                norm_buffer,
+                rope_out,
+                head_dim,
+                head_dim,
+            )
+            rope_fifo.release(1)
+        angles_fifo.release(1)
+        norm_weight_fifo.release(1)
+        x_fifo.release(1)
+
+    def qk_rope_metadata_worker(norm_weight_fifo, angles_fifo, meta_fifo, pack_kernel):
+        norm_weights = norm_weight_fifo.acquire(1)
+        angles = angles_fifo.acquire(1)
+        meta = meta_fifo.acquire(1)
+        pack_kernel(norm_weights, angles, meta, head_dim)
+        meta_fifo.release(1)
+        angles_fifo.release(1)
+        norm_weight_fifo.release(1)
+
+    def q_norm_rope_metadata_worker(
+        raw_fifo,
+        meta_fifo,
+        rope_fifo,
+        norm_rope_kernel,
+    ):
+        meta = meta_fifo.acquire(1)
+        for _ in range_(q_heads // num_columns):
+            raw = raw_fifo.acquire(1)
+            rope_out = rope_fifo.acquire(1)
+            norm_rope_kernel(raw, meta, raw, rope_out, 0, head_dim)
+            rope_fifo.release(1)
+            raw_fifo.release(1)
+        meta_fifo.release(1)
+
+    def k_norm_rope_metadata_worker(
+        raw_fifo,
+        meta_fifo,
+        rope_fifo,
+        norm_rope_kernel,
+    ):
+        meta = meta_fifo.acquire(1)
+        for _ in range_(kv_heads // num_columns):
+            raw = raw_fifo.acquire(1)
+            rope_out = rope_fifo.acquire(1)
+            norm_rope_kernel(raw, meta, raw, rope_out, head_dim, head_dim)
+            rope_fifo.release(1)
+            raw_fifo.release(1)
+        meta_fifo.release(1)
 
     def qk_pair_worker(q_fifo, current_k_fifo, pair_fifo, pair_debug_fifo, pack_kernel):
         for _ in range_(kv_heads // num_columns):
@@ -649,6 +995,22 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
             out_fifo.release(1)
         context_fifo.release(1)
 
+    def o_matvec_full_worker(weight_fifo, context_fifo, out_fifo, matvec_kernel):
+        context = context_fifo.acquire(1)
+        out = out_fifo.acquire(1)
+        for tile_idx in range_(hidden_size // tile_size_output // num_columns):
+            tile_i32 = index.casts(T.i32(), tile_idx)
+            for j_idx in range_(tile_size_output // tile_size_input):
+                j_i32 = index.casts(T.i32(), j_idx)
+                output_row_offset = (
+                    tile_i32 * tile_size_output + j_i32 * tile_size_input
+                )
+                w = weight_fifo.acquire(1)
+                matvec_kernel(tile_size_input, output_row_offset, w, context, out)
+                weight_fifo.release(1)
+        out_fifo.release(1)
+        context_fifo.release(1)
+
     def residual_add_worker(hidden_fifo, o_proj_fifo, out_fifo, add):
         for _ in range_(hidden_size // tile_size_output // num_columns):
             hidden = hidden_fifo.acquire(1)
@@ -658,6 +1020,113 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
             hidden_fifo.release(1)
             o_proj_fifo.release(1)
             out_fifo.release(1)
+
+    def residual_add_full_worker(hidden_fifo, o_proj_fifo, out_fifo, add):
+        hidden = hidden_fifo.acquire(1)
+        o_proj = o_proj_fifo.acquire(1)
+        out = out_fifo.acquire(1)
+        for tile_idx in range_(hidden_size // tile_size_output // num_columns):
+            tile_i32 = index.casts(T.i32(), tile_idx)
+            row_offset = tile_i32 * tile_size_output
+            add(hidden, o_proj, out, row_offset, tile_size_output)
+        out_fifo.release(1)
+        o_proj_fifo.release(1)
+        hidden_fifo.release(1)
+
+    def mlp_postnorm_gate_up_worker(
+        residual_fifo,
+        gate_up_weight_rows_fifo,
+        gate_fifo,
+        up_fifo,
+        norm_kernel,
+        matvec4_rows_kernel,
+        xnorm_buffer,
+    ):
+        residual = residual_fifo.acquire(1)
+        post_norm = gate_up_weight_rows_fifo.acquire(1)
+        gate_out = gate_fifo.acquire(1)
+        up_out = up_fifo.acquire(1)
+        norm_kernel(residual, post_norm, xnorm_buffer, hidden_size)
+        gate_up_weight_rows_fifo.release(1)
+        for j_idx in range_(intermediate_size // tile_size_input):
+            j_i32 = index.casts(T.i32(), j_idx)
+            output_row_offset = j_i32 * tile_size_input
+            rows = gate_up_weight_rows_fifo.acquire(tile_size_input)
+            matvec4_rows_kernel(
+                tile_size_input,
+                output_row_offset,
+                rows[0],
+                rows[1],
+                rows[2],
+                rows[3],
+                xnorm_buffer,
+                gate_out,
+            )
+            gate_up_weight_rows_fifo.release(tile_size_input)
+        for j_idx in range_(intermediate_size // tile_size_input):
+            j_i32 = index.casts(T.i32(), j_idx)
+            output_row_offset = j_i32 * tile_size_input
+            rows = gate_up_weight_rows_fifo.acquire(tile_size_input)
+            matvec4_rows_kernel(
+                tile_size_input,
+                output_row_offset,
+                rows[0],
+                rows[1],
+                rows[2],
+                rows[3],
+                xnorm_buffer,
+                up_out,
+            )
+            gate_up_weight_rows_fifo.release(tile_size_input)
+        up_fifo.release(1)
+        gate_fifo.release(1)
+        residual_fifo.release(1)
+
+    def mlp_silu_mul_worker(gate_fifo, up_fifo, hidden_fifo, silu_mul_kernel):
+        gate = gate_fifo.acquire(1)
+        up = up_fifo.acquire(1)
+        hidden_out = hidden_fifo.acquire(1)
+        silu_mul_kernel(gate, up, hidden_out, intermediate_size)
+        hidden_fifo.release(1)
+        up_fifo.release(1)
+        gate_fifo.release(1)
+
+    def mlp_down_worker(
+        hidden_fifo,
+        down_weight_fifo,
+        ffn_out_fifo,
+        matvec_kernel,
+    ):
+        hidden = hidden_fifo.acquire(1)
+        ffn = ffn_out_fifo.acquire(1)
+        for tile_idx in range_(hidden_size // tile_size_output // num_columns):
+            tile_i32 = index.casts(T.i32(), tile_idx)
+            row_offset = tile_i32 * tile_size_output
+            for j_idx in range_(tile_size_output // tile_size_input):
+                j_i32 = index.casts(T.i32(), j_idx)
+                output_row_offset = row_offset + j_i32 * tile_size_input
+                w = down_weight_fifo.acquire(1)
+                matvec_kernel(tile_size_input, output_row_offset, w, hidden, ffn)
+                down_weight_fifo.release(1)
+        ffn_out_fifo.release(1)
+        hidden_fifo.release(1)
+
+    def mlp_layer_residual_worker(
+        ffn_out_fifo,
+        residual_fifo,
+        layer_residual_fifo,
+        add_kernel,
+    ):
+        ffn = ffn_out_fifo.acquire(1)
+        residual = residual_fifo.acquire(1)
+        out = layer_residual_fifo.acquire(1)
+        for tile_idx in range_(hidden_size // tile_size_output // num_columns):
+            tile_i32 = index.casts(T.i32(), tile_idx)
+            row_offset = tile_i32 * tile_size_output
+            add_kernel(residual, ffn, out, row_offset, tile_size_output)
+        layer_residual_fifo.release(1)
+        residual_fifo.release(1)
+        ffn_out_fifo.release(1)
 
     workers = [
         Worker(
@@ -678,74 +1147,137 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
             ],
         ),
     ]
+    if include_full_mlp:
+        workers.append(
+            Worker(
+                qk_rope_metadata_worker,
+                [
+                    qk_norm_weight.cons(),
+                    rope_angles.cons(),
+                    qk_rope_meta.prod(),
+                    pack_qk_rope_metadata,
+                ],
+            )
+        )
     for col in range(num_columns):
-        q_workers = [
-            Worker(
-                q_matvec_worker,
-                [
-                    q_weight_fifos[col].cons(),
-                    xnorm.cons(),
-                    q_raw_fifos[col].prod(),
-                    matvec,
-                ],
-            ),
-            Worker(
-                q_head_norm_worker,
-                [
-                    q_raw_fifos[col].cons(),
-                    q_norm_weight.cons(),
-                    q_norm_fifos[col].prod(),
-                    weighted_rms_norm,
-                ],
-            ),
-            Worker(
-                q_rope_worker,
-                [
-                    q_norm_fifos[col].cons(),
-                    rope_angles.cons(),
-                    q_rope_fifos[col].prod(),
-                    rope,
-                ],
-            ),
-        ]
-        kv_workers = [
-            Worker(
-                kv_matvec_worker,
-                [
-                    k_weight_fifos[col].cons(),
-                    xnorm.cons(),
-                    k_raw_fifos[col].prod(),
-                    matvec,
-                ],
-            ),
-            Worker(
-                kv_matvec_worker,
-                [
-                    v_weight_fifos[col].cons(),
-                    xnorm.cons(),
-                    v_fifos[col].prod(),
-                    matvec,
-                ],
-            ),
-            Worker(
-                k_head_norm_worker,
-                [
-                    k_raw_fifos[col].cons(),
-                    k_norm_weight.cons(),
-                    k_norm_fifos[col].prod(),
-                    weighted_rms_norm,
-                ],
-            ),
-            Worker(
-                k_rope_worker,
-                [
-                    k_norm_fifos[col].cons(),
-                    rope_angles.cons(),
-                    k_rope_fifos[col].prod(),
-                    rope,
-                ],
-            ),
-        ]
+        if include_full_mlp:
+            q_workers = [
+                Worker(
+                    q_matvec_worker,
+                    [
+                        q_weight_fifos[col].cons(),
+                        xnorm.cons(),
+                        q_raw_fifos[col].prod(),
+                        matvec,
+                    ],
+                ),
+                Worker(
+                    q_norm_rope_metadata_worker,
+                    [
+                        q_raw_fifos[col].cons(),
+                        qk_rope_meta.cons(),
+                        q_rope_fifos[col].prod(),
+                        norm_rope_with_metadata,
+                    ],
+                ),
+            ]
+            kv_workers = [
+                Worker(
+                    kv_matvec_worker,
+                    [
+                        k_weight_fifos[col].cons(),
+                        xnorm.cons(),
+                        k_raw_fifos[col].prod(),
+                        matvec,
+                    ],
+                ),
+                Worker(
+                    k_norm_rope_metadata_worker,
+                    [
+                        k_raw_fifos[col].cons(),
+                        qk_rope_meta.cons(),
+                        k_rope_fifos[col].prod(),
+                        norm_rope_with_metadata,
+                    ],
+                ),
+                Worker(
+                    kv_matvec_worker,
+                    [
+                        v_weight_fifos[col].cons(),
+                        xnorm.cons(),
+                        v_fifos[col].prod(),
+                        matvec,
+                    ],
+                ),
+            ]
+        else:
+            q_workers = [
+                Worker(
+                    q_matvec_worker,
+                    [
+                        q_weight_fifos[col].cons(),
+                        xnorm.cons(),
+                        q_raw_fifos[col].prod(),
+                        matvec,
+                    ],
+                ),
+                Worker(
+                    q_head_norm_worker,
+                    [
+                        q_raw_fifos[col].cons(),
+                        q_norm_weight.cons(),
+                        q_norm_fifos[col].prod(),
+                        weighted_rms_norm,
+                    ],
+                ),
+                Worker(
+                    q_rope_worker,
+                    [
+                        q_norm_fifos[col].cons(),
+                        rope_angles.cons(),
+                        q_rope_fifos[col].prod(),
+                        rope,
+                    ],
+                ),
+            ]
+            kv_workers = [
+                Worker(
+                    kv_matvec_worker,
+                    [
+                        k_weight_fifos[col].cons(),
+                        xnorm.cons(),
+                        k_raw_fifos[col].prod(),
+                        matvec,
+                    ],
+                ),
+                Worker(
+                    kv_matvec_worker,
+                    [
+                        v_weight_fifos[col].cons(),
+                        xnorm.cons(),
+                        v_fifos[col].prod(),
+                        matvec,
+                    ],
+                ),
+                Worker(
+                    k_head_norm_worker,
+                    [
+                        k_raw_fifos[col].cons(),
+                        k_norm_weight.cons(),
+                        k_norm_fifos[col].prod(),
+                        weighted_rms_norm,
+                    ],
+                ),
+                Worker(
+                    k_rope_worker,
+                    [
+                        k_norm_fifos[col].cons(),
+                        rope_angles.cons(),
+                        k_rope_fifos[col].prod(),
+                        rope,
+                    ],
+                ),
+            ]
         workers.extend(q_workers + kv_workers)
         if include_scores_softmax:
             score_workers = [
@@ -833,28 +1365,97 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
                 )
             workers.extend(context_workers)
         if include_o_proj:
-            workers.extend(
-                [
-                    Worker(
-                        o_matvec_worker,
-                        [
-                            o_weight_fifos[col].cons(),
-                            attn_context_flat_fifos[col].cons(),
-                            o_proj_fifos[col].prod(),
-                            o_matvec,
-                        ],
-                    ),
-                    Worker(
-                        residual_add_worker,
-                        [
-                            residual_hidden_fifos[col].cons(),
-                            o_proj_fifos[col].cons(),
-                            residual_out_fifos[col].prod(),
-                            add_kernel,
-                        ],
-                    ),
-                ]
-            )
+            if include_full_mlp:
+                workers.extend(
+                    [
+                        Worker(
+                            o_matvec_full_worker,
+                            [
+                                o_weight_fifos[col].cons(),
+                                attn_context_flat_fifos[col].cons(),
+                                o_proj_fifos[col].prod(),
+                                o_matvec,
+                            ],
+                        ),
+                        Worker(
+                            residual_add_full_worker,
+                            [
+                                in_hidden.cons(),
+                                o_proj_fifos[col].cons(),
+                                residual_out_fifos[col].prod(),
+                                add_full_slice,
+                            ],
+                        ),
+                    ]
+                )
+            else:
+                workers.extend(
+                    [
+                        Worker(
+                            o_matvec_worker,
+                            [
+                                o_weight_fifos[col].cons(),
+                                attn_context_flat_fifos[col].cons(),
+                                o_proj_fifos[col].prod(),
+                                o_matvec,
+                            ],
+                        ),
+                        Worker(
+                            residual_add_worker,
+                            [
+                                residual_hidden_fifos[col].cons(),
+                                o_proj_fifos[col].cons(),
+                                residual_out_fifos[col].prod(),
+                                add_kernel,
+                            ],
+                        ),
+                    ]
+                )
+
+    if include_full_mlp:
+        workers.extend(
+            [
+                Worker(
+                    mlp_postnorm_gate_up_worker,
+                    [
+                        residual_out_fifos[0].cons(),
+                        mlp_gate_up_weight_rows.cons(),
+                        ffn_gate.prod(),
+                        ffn_up.prod(),
+                        mlp_weighted_rms_norm,
+                        mlp_matvec4_rows,
+                        Buffer(type=tile_ty, name="qwen3_full_layer_mlp_xnorm_buf"),
+                    ],
+                ),
+                Worker(
+                    mlp_silu_mul_worker,
+                    [
+                        ffn_gate.cons(),
+                        ffn_up.cons(),
+                        ffn_hidden.prod(),
+                        silu_mul,
+                    ],
+                ),
+                Worker(
+                    mlp_down_worker,
+                    [
+                        ffn_hidden.cons(),
+                        mlp_down_weight.cons(),
+                        ffn_out.prod(),
+                        down_matvec,
+                    ],
+                ),
+                Worker(
+                    mlp_layer_residual_worker,
+                    [
+                        ffn_out.cons(),
+                        residual_out_fifos[0].cons(),
+                        layer_residual.prod(),
+                        add_full_slice,
+                    ],
+                ),
+            ]
+        )
 
     hidden_tap = TensorAccessPattern(
         (1, hidden_size),
@@ -874,6 +1475,12 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     q_norm_weight_base = v_weight_base + kv_size * hidden_size
     k_norm_weight_base = q_norm_weight_base + head_dim
     o_weight_base = k_norm_weight_base + head_dim
+    mlp_post_norm_weight_base = o_weight_base + (
+        hidden_size * q_size if include_o_proj else 0
+    )
+    mlp_gate_weight_base = mlp_post_norm_weight_base + hidden_size
+    mlp_up_weight_base = mlp_gate_weight_base + intermediate_size * hidden_size
+    mlp_down_weight_base = mlp_up_weight_base + intermediate_size * hidden_size
 
     def weight_taps_for_k(total_rows, k_size, base_offset):
         return [
@@ -901,6 +1508,16 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
         [1, 1, 1, head_dim],
         [0, 0, 0, 1],
     )
+    qk_norm_weight_tap = (
+        TensorAccessPattern(
+            (weights_size,),
+            q_norm_weight_base,
+            [1, 1, 1, 2 * head_dim],
+            [0, 0, 0, 1],
+        )
+        if include_full_mlp
+        else None
+    )
     rope_angles_tap = TensorAccessPattern(
         (1, head_dim),
         0,
@@ -923,6 +1540,13 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     attn_context_flat_output_base = attn_context_output_base + context_size
     attn_o_proj_output_base = attn_context_flat_output_base + context_flat_size
     attn_residual_output_base = attn_o_proj_output_base + o_proj_size
+    mlp_xnorm_output_base = attn_residual_output_base + residual_size
+    ffn_gate_output_base = mlp_xnorm_output_base + mlp_xnorm_size
+    ffn_up_output_base = ffn_gate_output_base + mlp_ffn_size
+    ffn_gate_silu_output_base = ffn_up_output_base + mlp_ffn_size
+    ffn_hidden_output_base = ffn_gate_silu_output_base + mlp_ffn_size
+    ffn_out_output_base = ffn_hidden_output_base + mlp_ffn_size
+    layer_residual_output_base = ffn_out_output_base + mlp_ffn_out_size
 
     xnorm_output_tap = TensorAccessPattern(
         (outputs_size,),
@@ -1028,7 +1652,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
             )
             for col in range(num_columns)
         ]
-        if include_o_proj
+        if include_o_proj and not include_full_mlp
         else []
     )
     o_proj_output_taps = (
@@ -1036,6 +1660,96 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     )
     residual_output_taps = (
         out_taps(residual_size, attn_residual_output_base) if include_o_proj else []
+    )
+    mlp_gate_up_weight_rows_tap = (
+        TensorAccessPattern(
+            (weights_size,),
+            mlp_post_norm_weight_base,
+            [1, 1, 1, hidden_size + 2 * intermediate_size * hidden_size],
+            [0, 0, 0, 1],
+        )
+        if include_full_mlp
+        else None
+    )
+    mlp_down_weight_tap = (
+        TensorAccessPattern(
+            (weights_size,),
+            mlp_down_weight_base,
+            [1, 1, 1, hidden_size * intermediate_size],
+            [0, 0, 0, 1],
+        )
+        if include_full_mlp
+        else None
+    )
+    mlp_xnorm_output_tap = (
+        TensorAccessPattern(
+            (outputs_size,),
+            mlp_xnorm_output_base,
+            [1, 1, 1, hidden_size],
+            [0, 0, 0, 1],
+        )
+        if include_full_mlp
+        else None
+    )
+    ffn_gate_output_tap = (
+        TensorAccessPattern(
+            (outputs_size,),
+            ffn_gate_output_base,
+            [1, 1, 1, intermediate_size],
+            [0, 0, 0, 1],
+        )
+        if include_full_mlp
+        else None
+    )
+    ffn_up_output_tap = (
+        TensorAccessPattern(
+            (outputs_size,),
+            ffn_up_output_base,
+            [1, 1, 1, intermediate_size],
+            [0, 0, 0, 1],
+        )
+        if include_full_mlp
+        else None
+    )
+    ffn_gate_silu_output_tap = (
+        TensorAccessPattern(
+            (outputs_size,),
+            ffn_gate_silu_output_base,
+            [1, 1, 1, intermediate_size],
+            [0, 0, 0, 1],
+        )
+        if include_full_mlp
+        else None
+    )
+    ffn_hidden_output_tap = (
+        TensorAccessPattern(
+            (outputs_size,),
+            ffn_hidden_output_base,
+            [1, 1, 1, intermediate_size],
+            [0, 0, 0, 1],
+        )
+        if include_full_mlp
+        else None
+    )
+    ffn_out_output_tap = (
+        TensorAccessPattern(
+            (outputs_size,),
+            ffn_out_output_base,
+            [1, 1, 1, hidden_size],
+            [0, 0, 0, 1],
+        )
+        if include_full_mlp
+        else None
+    )
+    layer_residual_output_tap = (
+        TensorAccessPattern(
+            (outputs_size,),
+            layer_residual_output_base,
+            [1, 1, 1, hidden_size],
+            [0, 0, 0, 1],
+        )
+        if include_full_mlp
+        else None
     )
 
     rt = Runtime()
@@ -1050,8 +1764,16 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
         tg = rt.task_group()
         rt.fill(in_hidden.prod(), hidden, hidden_tap, task_group=tg)
         rt.fill(in_weight.prod(), weights, norm_weight_tap, task_group=tg)
-        rt.fill(q_norm_weight.prod(), weights, q_norm_weight_tap, task_group=tg)
-        rt.fill(k_norm_weight.prod(), weights, k_norm_weight_tap, task_group=tg)
+        if include_full_mlp:
+            rt.fill(
+                qk_norm_weight.prod(),
+                weights,
+                qk_norm_weight_tap,
+                task_group=tg,
+            )
+        else:
+            rt.fill(q_norm_weight.prod(), weights, q_norm_weight_tap, task_group=tg)
+            rt.fill(k_norm_weight.prod(), weights, k_norm_weight_tap, task_group=tg)
         rt.fill(rope_angles.prod(), angles, rope_angles_tap, task_group=tg)
         for col in range(num_columns):
             rt.fill(
@@ -1079,12 +1801,26 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
                     o_weight_taps[col],
                     task_group=tg,
                 )
-                rt.fill(
-                    residual_hidden_fifos[col].prod(),
-                    hidden,
-                    residual_hidden_taps[col],
-                    task_group=tg,
-                )
+                if not include_full_mlp:
+                    rt.fill(
+                        residual_hidden_fifos[col].prod(),
+                        hidden,
+                        residual_hidden_taps[col],
+                        task_group=tg,
+                    )
+        if include_full_mlp:
+            rt.fill(
+                mlp_gate_up_weight_rows.prod(),
+                weights,
+                mlp_gate_up_weight_rows_tap,
+                task_group=tg,
+            )
+            rt.fill(
+                mlp_down_weight.prod(),
+                weights,
+                mlp_down_weight_tap,
+                task_group=tg,
+            )
         if include_scores_softmax:
             for col in range(num_columns):
                 rt.fill(
@@ -1107,49 +1843,51 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
                         cache_value_blocks_tap,
                         task_group=tg,
                     )
-            rt.drain(
-                xnorm.cons(),
-                outputs,
-                xnorm_output_tap,
-                wait=True,
-                task_group=tg,
-            )
+            if not include_full_mlp:
+                rt.drain(
+                    xnorm.cons(),
+                    outputs,
+                    xnorm_output_tap,
+                    wait=True,
+                    task_group=tg,
+                )
             for col in range(num_columns):
-                rt.drain(
-                    q_raw_fifos[col].cons(),
-                    outputs,
-                    q_raw_output_taps[col],
-                    wait=True,
-                    task_group=tg,
-                )
-                rt.drain(
-                    k_raw_fifos[col].cons(),
-                    outputs,
-                    k_raw_output_taps[col],
-                    wait=True,
-                    task_group=tg,
-                )
-                rt.drain(
-                    q_norm_fifos[col].cons(),
-                    outputs,
-                    q_norm_output_taps[col],
-                    wait=True,
-                    task_group=tg,
-                )
-                rt.drain(
-                    k_norm_fifos[col].cons(),
-                    outputs,
-                    k_norm_output_taps[col],
-                    wait=True,
-                    task_group=tg,
-                )
-                rt.drain(
-                    q_rope_fifos[col].cons(),
-                    outputs,
-                    q_rope_output_taps[col],
-                    wait=True,
-                    task_group=tg,
-                )
+                if not include_full_mlp:
+                    rt.drain(
+                        q_raw_fifos[col].cons(),
+                        outputs,
+                        q_raw_output_taps[col],
+                        wait=True,
+                        task_group=tg,
+                    )
+                    rt.drain(
+                        k_raw_fifos[col].cons(),
+                        outputs,
+                        k_raw_output_taps[col],
+                        wait=True,
+                        task_group=tg,
+                    )
+                    rt.drain(
+                        q_norm_fifos[col].cons(),
+                        outputs,
+                        q_norm_output_taps[col],
+                        wait=True,
+                        task_group=tg,
+                    )
+                    rt.drain(
+                        k_norm_fifos[col].cons(),
+                        outputs,
+                        k_norm_output_taps[col],
+                        wait=True,
+                        task_group=tg,
+                    )
+                    rt.drain(
+                        q_rope_fifos[col].cons(),
+                        outputs,
+                        q_rope_output_taps[col],
+                        wait=True,
+                        task_group=tg,
+                    )
                 rt.drain(
                     qk_pair_debug_fifos[col].cons(),
                     outputs,
@@ -1172,13 +1910,14 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
                     wait=True,
                     task_group=tg,
                 )
-                rt.drain(
-                    attn_weight_fifos[col].cons(),
-                    outputs,
-                    attn_weight_output_taps[col],
-                    wait=True,
-                    task_group=tg,
-                )
+                if not include_full_mlp:
+                    rt.drain(
+                        attn_weight_fifos[col].cons(),
+                        outputs,
+                        attn_weight_output_taps[col],
+                        wait=True,
+                        task_group=tg,
+                    )
                 if include_context:
                     rt.drain(
                         v_context_debug_fifos[col].cons(),
@@ -1195,20 +1934,21 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
                         task_group=tg,
                     )
                     if include_o_proj:
-                        rt.drain(
-                            attn_context_flat_fifos[col].cons(),
-                            outputs,
-                            attn_context_flat_output_taps[col],
-                            wait=True,
-                            task_group=tg,
-                        )
-                        rt.drain(
-                            o_proj_fifos[col].cons(),
-                            outputs,
-                            o_proj_output_taps[col],
-                            wait=True,
-                            task_group=tg,
-                        )
+                        if not include_full_mlp:
+                            rt.drain(
+                                attn_context_flat_fifos[col].cons(),
+                                outputs,
+                                attn_context_flat_output_taps[col],
+                                wait=True,
+                                task_group=tg,
+                            )
+                            rt.drain(
+                                o_proj_fifos[col].cons(),
+                                outputs,
+                                o_proj_output_taps[col],
+                                wait=True,
+                                task_group=tg,
+                            )
                         rt.drain(
                             residual_out_fifos[col].cons(),
                             outputs,
@@ -1216,6 +1956,28 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
                             wait=True,
                             task_group=tg,
                         )
+                        if include_full_mlp:
+                            rt.drain(
+                                ffn_hidden.cons(),
+                                outputs,
+                                ffn_hidden_output_tap,
+                                wait=True,
+                                task_group=tg,
+                            )
+                            rt.drain(
+                                ffn_out.cons(),
+                                outputs,
+                                ffn_out_output_tap,
+                                wait=True,
+                                task_group=tg,
+                            )
+                            rt.drain(
+                                layer_residual.cons(),
+                                outputs,
+                                layer_residual_output_tap,
+                                wait=True,
+                                task_group=tg,
+                            )
                 rt.drain(
                     k_rope_fifos[col].cons(),
                     cache,
@@ -1467,4 +2229,65 @@ def qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax_context_o_proj(
         softmax_kernel_object=softmax_kernel_object,
         o_gemv_kernel_object=o_gemv_kernel_object,
         add_kernel_object=add_kernel_object,
+    )
+
+
+def qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax_context_o_proj_full_mlp(
+    dev,
+    hidden_size,
+    q_size,
+    kv_size,
+    head_dim,
+    max_seq_len,
+    position,
+    intermediate_size,
+    num_columns,
+    tile_size_input,
+    tile_size_output,
+    trace_size,
+    func_prefix="",
+    rms_kernel_object="rms_norm.o",
+    gemv_kernel_object="mv.o",
+    rope_kernel_object="rope.o",
+    attention_kernel_object="qwen3_attention.o",
+    passthrough_kernel_object="passThrough.o",
+    softmax_kernel_object="softmax.o",
+    o_gemv_kernel_object="mv_o_proj.o",
+    add_kernel_object="add.o",
+    mlp_gemv_kernel_object="mv_mlp.o",
+    silu_kernel_object="silu.o",
+    mul_kernel_object="mul.o",
+    down_gemv_kernel_object="mv_down.o",
+):
+    """Single-token Qwen3 persistent stage through attention and full MLP."""
+    return _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
+        dev,
+        hidden_size,
+        q_size,
+        kv_size,
+        head_dim,
+        max_seq_len,
+        position,
+        num_columns,
+        tile_size_input,
+        tile_size_output,
+        trace_size,
+        intermediate_size=intermediate_size,
+        func_prefix=func_prefix,
+        rms_kernel_object=rms_kernel_object,
+        gemv_kernel_object=gemv_kernel_object,
+        rope_kernel_object=rope_kernel_object,
+        include_scores_softmax=True,
+        include_context=True,
+        include_o_proj=True,
+        include_full_mlp=True,
+        attention_kernel_object=attention_kernel_object,
+        passthrough_kernel_object=passthrough_kernel_object,
+        softmax_kernel_object=softmax_kernel_object,
+        o_gemv_kernel_object=o_gemv_kernel_object,
+        add_kernel_object=add_kernel_object,
+        mlp_gemv_kernel_object=mlp_gemv_kernel_object,
+        silu_kernel_object=silu_kernel_object,
+        mul_kernel_object=mul_kernel_object,
+        down_gemv_kernel_object=down_gemv_kernel_object,
     )

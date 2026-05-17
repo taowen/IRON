@@ -239,6 +239,60 @@ keys_cache_prefix_errors: 0
 values_cache_prefix_errors: 0
 ```
 
+## Full-Layer Attention Residual Fails Strict Full-Reference Tolerance
+
+Symptom:
+
+```text
+attn_residual_max_abs: 0.011719
+attn_residual_mean_abs: 0.002365
+attn_residual_errors: 106
+```
+
+Diagnostic:
+
+```text
+Run the accepted O-projection checkpoint on the same prompt/position and compare
+its full-reference drift before changing the full-layer kernels.
+```
+
+Evidence found:
+
+```text
+O-proj checkpoint:
+attn_residual_full_ref_max_abs: 0.015625
+attn_residual_errors: 0
+
+Full-layer checkpoint:
+attn_residual_full_ref_max_abs: 0.011719
+```
+
+Root cause:
+
+```text
+The full-layer checkpoint no longer drains attn_o_proj, so the verifier cannot
+construct the local reference attn_residual = actual_hidden + actual_o_proj.
+It was comparing directly against the full PyTorch reference with abs_tol=1e-6,
+which is stricter than the already accepted bf16 O-projection full-reference
+drift.
+```
+
+Fix:
+
+```text
+Use the measured O-projection bf16 boundary tolerance for full-layer
+attn_residual: rel_tol=0.04, abs_tol=0.016.
+```
+
+Accepted recheck:
+
+```text
+attn_residual_errors: 0
+ffn_hidden_errors: 0
+ffn_out_errors: 0
+layer_residual_errors: 0
+```
+
 ## MLP Gate/Up Fails Full Reference But Passes Local Boundary
 
 Symptom:
@@ -311,3 +365,67 @@ ffn_gate_silu_errors: 0
 ffn_hidden_errors: 0
 ```
 
+## Full-Depth Multi-Layer Hidden Fails After Short Ladder Passes
+
+Symptom:
+
+```text
+multi-layer-full-layer --num-layers 1  -> hidden_after_layers_errors: 0
+multi-layer-full-layer --num-layers 2  -> hidden_after_layers_errors: 0
+multi-layer-full-layer --num-layers 4  -> hidden_after_layers_errors: 0
+multi-layer-full-layer --num-layers 28 -> hidden_after_layers_errors: 51
+```
+
+Diagnostic:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+PYTHONUNBUFFERED=1 .venv/bin/python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+  --model Qwen/Qwen3-0.6B \
+  --stage multi-layer-full-layer \
+  --num-layers 28 \
+  --verify \
+  --build-dir build_qwen3_persistent_multilayer
+```
+
+Use `PYTHONUNBUFFERED=1` when a long run exits abruptly; otherwise the last
+printed phase can be lost to stdout buffering.
+
+Evidence found:
+
+```text
+preflight: ok
+layer_0..layer_27 residual_add_errors: 0
+layer_0..layer_16 values_cache_current_errors: 0
+layer_17 values_cache_current_errors: 14
+...
+hidden_after_layers_max_abs: 12.000000
+hidden_after_layers_mean_abs: 0.535055
+hidden_after_layers_errors: 51
+```
+
+Interpretation:
+
+```text
+This is not evidence of a new ObjectFifo or placement failure. The layer-local
+residual add invariant continues to pass through all 28 layers, and the short
+1/2/4-layer ladder passes. The failing check is a full PyTorch boundary check
+after many approximate/bf16 NPU layers.
+```
+
+False lead checked:
+
+```text
+Trying to rebuild the cache-current reference from the full-layer x_norm debug
+slice produced impossible layer-0 references, so that slice is not currently a
+trusted boundary in the composed full-layer checkpoint.
+```
+
+Next diagnostic step:
+
+```text
+Add an explicit accepted local boundary for the composed full-layer checkpoint
+before treating full-depth hidden drift as a kernel-dataflow bug. Candidate
+boundaries are attn_residual, ffn_hidden, ffn_out, and layer_residual per layer.
+Only after those pass should final RMSNorm/LM-head accuracy be judged.
+```

@@ -40,6 +40,8 @@ input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj
 post-attn-rmsnorm-mlp-gate-up
 post-attn-mlp-down-residual
 post-attn-rmsnorm-full-mlp
+input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp
+multi-layer-full-layer
 ```
 
 Score/softmax root cause that was fixed:
@@ -132,6 +134,46 @@ ffn_gate_silu_errors: 0
 ffn_hidden_errors: 0
 ffn_out_errors: 0
 layer_residual_errors: 0
+```
+
+Attention + full MLP checkpoint status:
+
+```text
+The composed attention/O-projection/full-MLP checkpoint compiled, passed
+preflight, and verified on NPU2. This is not a final performance placement, but
+it proves one decode-token layer can keep attention residual, full MLP hidden,
+down projection, and layer residual in one IRON Program.
+
+Accepted evidence:
+runtime_memrefs: 5
+arg_specs: 5
+compute_cores: 19
+max_fifo_buffered_bytes: 32768
+max_tile_inputs: 2
+max_tile_outputs: 2
+non_advancing_acquires: 0
+attn_residual_errors: 0
+ffn_hidden_errors: 0
+ffn_out_errors: 0
+layer_residual_errors: 0
+```
+
+Multi-layer full-layer reuse status:
+
+```text
+The accepted full-layer Program is now reused as a single-layer decode
+primitive. The host switches layer weights and the per-layer KV cache slice,
+then feeds each layer_residual into the next invocation.
+
+This checkpoint still stops before final RMSNorm, LM head, token selection, and
+multi-token decode. It exists to prove layer-by-layer reuse before building a
+larger persistent state machine.
+
+Accepted evidence:
+num_layers=1 hidden_after_layers_errors: 0
+num_layers=2 hidden_after_layers_errors: 0
+num_layers=4 hidden_after_layers_errors: 0
+num_layers=4 hidden_after_layers_max_abs: 0.125000
 ```
 
 Do not debug from final logits first. Start from the symptom, prove the failing

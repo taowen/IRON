@@ -436,3 +436,51 @@ def test_qwen3_persistent_post_attn_rmsnorm_full_mlp():
         "1",
     ]
     subprocess.run(command, check=True)
+
+
+@pytest.mark.extensive
+def test_qwen3_persistent_full_layer():
+    model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
+    if model is None:
+        pytest.skip(
+            "Set IRON_QWEN3_0_6B_MODEL to run the Qwen3-0.6B persistent full-layer bring-up test"
+        )
+
+    test_dir = Path(__file__).parent
+    command = [
+        sys.executable,
+        str(test_dir / "qwen3_persistent.py"),
+        "--model",
+        model,
+        "--stage",
+        "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp",
+        "--verify",
+        "--verify-repeat",
+        "1",
+    ]
+    subprocess.run(command, check=True)
+
+
+@pytest.mark.extensive
+def test_qwen3_persistent_multi_layer_full_layer():
+    model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
+    if model is None:
+        pytest.skip(
+            "Set IRON_QWEN3_0_6B_MODEL to run the Qwen3-0.6B persistent multi-layer bring-up test"
+        )
+
+    test_dir = Path(__file__).parent
+    command = [
+        sys.executable,
+        str(test_dir / "qwen3_persistent.py"),
+        "--model",
+        model,
+        "--stage",
+        "multi-layer-full-layer",
+        "--num-layers",
+        "2",
+        "--verify",
+        "--verify-repeat",
+        "1",
+    ]
+    subprocess.run(command, check=True)

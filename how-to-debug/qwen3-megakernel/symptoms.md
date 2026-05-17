@@ -13,6 +13,7 @@ were used in this repository. Detailed entries are split by failure class.
 ### Runtime
 
 - [Full-ELF Runtime APIs Are Missing](symptoms-runtime.md#full-elf-runtime-apis-are-missing)
+- [Pytest Cannot Import pyxrt](symptoms-runtime.md#pytest-cannot-import-pyxrt)
 - [Clean Graph Edits Appear To Do Nothing](symptoms-runtime.md#clean-graph-edits-appear-to-do-nothing)
 - [Host Buffer Assignment TypeError](symptoms-runtime.md#host-buffer-assignment-typeerror)
 - [Runtime Segfaults In XRT BO Validation](symptoms-runtime.md#runtime-segfaults-in-xrt-bo-validation)
@@ -24,8 +25,10 @@ were used in this repository. Detailed entries are split by failure class.
 - [Layout-Only Changes Move The Token](symptoms-numeric.md#layout-only-changes-move-the-token)
 - [QKV Numeric Errors Appear After Runtime Packing](symptoms-numeric.md#qkv-numeric-errors-appear-after-runtime-packing)
 - [RoPE Outputs Fail Under GEMV Tolerance](symptoms-numeric.md#rope-outputs-fail-under-gemv-tolerance)
+- [Full-Layer Attention Residual Fails Strict Full-Reference Tolerance](symptoms-numeric.md#full-layer-attention-residual-fails-strict-full-reference-tolerance)
 - [MLP Gate/Up Fails Full Reference But Passes Local Boundary](symptoms-numeric.md#mlp-gateup-fails-full-reference-but-passes-local-boundary)
 - [SiLU Negative Inputs Exceed The Positive-Only Operator Tolerance](symptoms-numeric.md#silu-negative-inputs-exceed-the-positive-only-operator-tolerance)
+- [Full-Depth Multi-Layer Hidden Fails After Short Ladder Passes](symptoms-numeric.md#full-depth-multi-layer-hidden-fails-after-short-ladder-passes)
 
 ### Resources
 
@@ -35,6 +38,11 @@ were used in this repository. Detailed entries are split by failure class.
 - [K Cache Matrix Does Not Fit In L1](symptoms-resources.md#k-cache-matrix-does-not-fit-in-l1)
 - [Debug Pass-Through FIFO Exceeds L1](symptoms-resources.md#debug-pass-through-fifo-exceeds-l1)
 - [K Cache Block DMA Exhausts BD IDs](symptoms-resources.md#k-cache-block-dma-exhausts-bd-ids)
+- [Full-Layer MLP Worker Exceeds Input DMA Channels](symptoms-resources.md#full-layer-mlp-worker-exceeds-input-dma-channels)
+- [Full-Layer K Project Exceeds Output DMA Channels](symptoms-resources.md#full-layer-k-project-exceeds-output-dma-channels)
+- [Full-Layer Q/K Project Exceeds Input DMA Channels](symptoms-resources.md#full-layer-qk-project-exceeds-input-dma-channels)
+- [Full-Layer MLP Debug Output Exceeds Output DMA Channels](symptoms-resources.md#full-layer-mlp-debug-output-exceeds-output-dma-channels)
+- [Full-Layer Down Projection Exceeds L1](symptoms-resources.md#full-layer-down-projection-exceeds-l1)
 - [Multidimensional TAP Is Legal But NPU BD Rejects It](symptoms-resources.md#multidimensional-tap-is-legal-but-npu-bd-rejects-it)
 - [New Stage Exceeds SequentialPlacer Worker Capacity](symptoms-resources.md#new-stage-exceeds-sequentialplacer-worker-capacity)
 
