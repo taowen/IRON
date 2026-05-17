@@ -124,3 +124,54 @@ source /opt/xilinx/xrt/setup.sh
 source .venv/bin/activate
 pytest iron/operators/sage_attention/test.py --iterations 3 -s -v
 ```
+
+## Case 4: Fewer Host Dispatches Did Not Improve Qwen3 Decode Yet
+
+### Symptom
+
+A two-layer persistent Qwen3 chunk reduced the number of full-layer NPU calls,
+but did not reduce steady-state decode time.
+
+Measured on the same prompt, runtime-packed weights, and `max_new_tokens=3`:
+
+```text
+chunk=1 token 1: npu_layer_time_us_total=251371.797 decode_s=0.259349
+chunk=1 token 2: npu_layer_time_us_total=248143.551 decode_s=0.254117
+
+chunk=2 token 1: npu_layer_time_us_total=254985.202 decode_s=0.259366
+chunk=2 token 2: npu_layer_time_us_total=261342.450 decode_s=0.266101
+```
+
+### Cause
+
+The bottleneck is still NPU-side layer work, not Python dispatch. The two-layer
+graph adds hidden feedback/final routing and emits two rounds of DMA tasks
+inside one runtime sequence. That saves host calls, but the saved host overhead
+is currently too small to beat the extra NPU/dataflow cost.
+
+### Fix Used
+
+Keep the two-layer path only as a correctness-validated chunking checkpoint and
+avoid extra setup overhead:
+
+```text
+do not compile the single-layer op for chunk=2 when the model has an even layer count
+do not allocate duplicate single-layer weight/cache XRT buffers for chunk=2
+use weight_pair and cache_pair BOs so preflight stays at five runtime memrefs
+```
+
+Accepted correctness evidence:
+
+```text
+two-layer-full-layer: two_layer_hidden_errors=0
+generate --fast-generate --layer-chunk-size 2: token_match=True
+```
+
+Current conclusion:
+
+```text
+Layer chunking is structurally useful for reducing host dispatch count, but it
+is not yet a throughput win. The next performance work should reduce NPU work
+inside a layer, especially debug-free/full-output-free single-layer dispatch,
+weight/cache DMA volume, or a deeper persistent token loop.
+```

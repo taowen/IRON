@@ -38,6 +38,19 @@
 
 extern "C" {
 
+void qwen3_copy_bf16(const bfloat16 *__restrict input,
+                     bfloat16 *__restrict output,
+                     int32_t size)
+{
+    event0();
+
+    for (int32_t i = 0; i < size; i++) {
+        output[i] = input[i];
+    }
+
+    event1();
+}
+
 void qwen3_pack_qk_pair_bf16(const bfloat16 *__restrict q,
                              const bfloat16 *__restrict current_k,
                              bfloat16 *__restrict qk_pair,

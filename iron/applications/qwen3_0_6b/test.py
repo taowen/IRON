@@ -5,16 +5,146 @@
 
 import os
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import torch
 
+from iron.applications.qwen3_0_6b.persistent.layout import (
+    PACKED_WEIGHTS_BIN,
+    PACKED_WEIGHTS_MANIFEST,
+    load_packed_weight_tensor,
+    pack_full_layer_weights_for_layer,
+    packed_weight_layer_slice,
+    validate_packed_weight_artifact,
+    write_packed_weight_artifact,
+)
 from iron.applications.qwen3_0_6b.qwen3_preflight import (
     Qwen3PreflightError,
     run_persistent_artifact_preflight,
 )
+
+
+def _fake_qwen3_model(num_layers=3):
+    config = SimpleNamespace(
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=num_layers,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=16,
+        rms_norm_eps=1e-6,
+        rope_theta=1000000.0,
+        vocab_size=128,
+        tie_word_embeddings=True,
+        torch_dtype="bfloat16",
+    )
+    weights = {}
+    counter = 0
+
+    def make(shape):
+        nonlocal counter
+        numel = math.prod(shape)
+        tensor = (
+            torch.arange(counter, counter + numel, dtype=torch.float32)
+            .reshape(shape)
+            .to(torch.bfloat16)
+        )
+        counter += numel + 17
+        return tensor
+
+    for layer_idx in range(num_layers):
+        layer = f"model.layers.{layer_idx}"
+        attn = f"{layer}.self_attn"
+        mlp = f"{layer}.mlp"
+        weights[f"{layer}.input_layernorm.weight"] = make((config.hidden_size,))
+        weights[f"{attn}.q_proj.weight"] = make(
+            (config.num_attention_heads * config.head_dim, config.hidden_size)
+        )
+        weights[f"{attn}.k_proj.weight"] = make(
+            (config.num_key_value_heads * config.head_dim, config.hidden_size)
+        )
+        weights[f"{attn}.v_proj.weight"] = make(
+            (config.num_key_value_heads * config.head_dim, config.hidden_size)
+        )
+        weights[f"{attn}.o_proj.weight"] = make(
+            (config.hidden_size, config.num_attention_heads * config.head_dim)
+        )
+        weights[f"{attn}.q_norm.weight"] = make((config.head_dim,))
+        weights[f"{attn}.k_norm.weight"] = make((config.head_dim,))
+        weights[f"{layer}.post_attention_layernorm.weight"] = make(
+            (config.hidden_size,)
+        )
+        weights[f"{mlp}.gate_proj.weight"] = make(
+            (config.intermediate_size, config.hidden_size)
+        )
+        weights[f"{mlp}.up_proj.weight"] = make(
+            (config.intermediate_size, config.hidden_size)
+        )
+        weights[f"{mlp}.down_proj.weight"] = make(
+            (config.hidden_size, config.intermediate_size)
+        )
+
+    class FakeModel:
+        def __init__(self):
+            self.config = config
+            self.dtype = torch.bfloat16
+
+        def w(self, name):
+            return weights[name]
+
+    return FakeModel()
+
+
+def test_qwen3_packed_weight_artifact_roundtrip(tmp_path):
+    model = _fake_qwen3_model(num_layers=3)
+    expected_per_layer = pack_full_layer_weights_for_layer(model, 0).numel()
+    manifest = write_packed_weight_artifact(
+        model,
+        tmp_path,
+        expected_per_layer_numel=expected_per_layer,
+    )
+
+    assert (tmp_path / PACKED_WEIGHTS_BIN).exists()
+    assert (tmp_path / PACKED_WEIGHTS_MANIFEST).exists()
+    assert manifest["per_layer_numel"] == expected_per_layer
+    assert (
+        manifest["total_numel"] == expected_per_layer * model.config.num_hidden_layers
+    )
+
+    loaded_manifest = validate_packed_weight_artifact(
+        model,
+        tmp_path,
+        expected_per_layer_numel=expected_per_layer,
+    )
+    packed = load_packed_weight_tensor(tmp_path, loaded_manifest)
+    for layer_idx in range(model.config.num_hidden_layers):
+        actual = packed_weight_layer_slice(packed, loaded_manifest, layer_idx)
+        expected = pack_full_layer_weights_for_layer(model, layer_idx)
+        assert torch.equal(actual, expected)
+
+
+def test_qwen3_packed_weight_manifest_fails_fast(tmp_path):
+    model = _fake_qwen3_model(num_layers=2)
+    expected_per_layer = pack_full_layer_weights_for_layer(model, 0).numel()
+    manifest = write_packed_weight_artifact(
+        model,
+        tmp_path,
+        expected_per_layer_numel=expected_per_layer,
+    )
+    manifest["weight_order"] = list(reversed(manifest["weight_order"]))
+    (tmp_path / PACKED_WEIGHTS_MANIFEST).write_text(json.dumps(manifest))
+
+    with pytest.raises(RuntimeError, match="weight order"):
+        validate_packed_weight_artifact(
+            model,
+            tmp_path,
+            expected_per_layer_numel=expected_per_layer,
+        )
 
 
 @pytest.mark.extensive
@@ -487,7 +617,30 @@ def test_qwen3_persistent_multi_layer_full_layer():
 
 
 @pytest.mark.extensive
-def test_qwen3_persistent_fast_generate():
+def test_qwen3_persistent_two_layer_full_layer():
+    model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
+    if model is None:
+        pytest.skip(
+            "Set IRON_QWEN3_0_6B_MODEL to run the Qwen3-0.6B persistent two-layer bring-up test"
+        )
+
+    test_dir = Path(__file__).parent
+    command = [
+        sys.executable,
+        str(test_dir / "persistent" / "main.py"),
+        "--model",
+        model,
+        "--stage",
+        "two-layer-full-layer",
+        "--verify",
+        "--verify-repeat",
+        "1",
+    ]
+    subprocess.run(command, check=True)
+
+
+@pytest.mark.extensive
+def test_qwen3_persistent_fast_generate(tmp_path):
     model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
     if model is None:
         pytest.skip(
@@ -495,6 +648,18 @@ def test_qwen3_persistent_fast_generate():
         )
 
     test_dir = Path(__file__).parent
+    packed_dir = tmp_path / "qwen3_iron_packed"
+    prepare_command = [
+        sys.executable,
+        str(test_dir / "persistent" / "main.py"),
+        "--model",
+        model,
+        "--prepare-weights",
+        "--packed-weights-dir",
+        str(packed_dir),
+    ]
+    subprocess.run(prepare_command, check=True)
+
     command = [
         sys.executable,
         str(test_dir / "persistent" / "main.py"),
@@ -506,5 +671,8 @@ def test_qwen3_persistent_fast_generate():
         "--verify-generate",
         "--max-new-tokens",
         "2",
+        "--packed-weights-dir",
+        str(packed_dir),
+        "--require-packed-weights",
     ]
     subprocess.run(command, check=True)

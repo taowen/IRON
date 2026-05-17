@@ -245,6 +245,39 @@ aie.runtime_sequence(
 The metadata still exposes `bo0` through `bo4`, so three runtime BOs are within
 the available host argument range.
 
+Second occurrence diagnosed during two-layer persistent chunking:
+
+```text
+Qwen3PreflightError: Runtime BO metadata mismatch:
+MLIR runtime_sequence has 7 memref arguments
+main_kernels.json exposes only 5 HOST bo* arguments
+```
+
+Root cause:
+
+```text
+The two-layer Program had one memref each for hidden, weights0, weights1,
+angles, outputs, cache0, cache1. The generated xclbin metadata still exposed
+only five host BO slots, so the runtime ABI was invalid even though aiecc
+produced artifacts.
+```
+
+Fix:
+
+```text
+Pack adjacent layer weights into weight_pair[2 * packed_weights_size] and
+adjacent layer KV caches into cache_pair[2 * packed_cache_size]. Use TAP base
+offsets to access layer 0 and layer 1 inside those pair buffers.
+```
+
+Accepted recheck:
+
+```text
+stage: two-layer-full-layer
+preflight: ok runtime_memrefs=5 arg_specs=5 metadata_host_bos=5
+compute_cores=21 max_dma_tasks_per_fifo=2 non_advancing_acquires=0
+```
+
 ## First Iteration Is Zero, Later Iterations Improve
 
 Symptom:
@@ -362,6 +395,17 @@ decode_s: 0.256877
 token_match: True
 ```
 
+Evidence after switching fast-generate to a disk packed artifact:
+
+```text
+fast_generate_weight_source: packed_artifact
+fast_generate_weight_pack_s: 0.000000
+fast_generate_weight_disk_load_s: 0.220869
+fast_generate_weight_xrt_s: 0.292092
+fast_op_call_s: 0.245879
+token_match: True
+```
+
 Root cause:
 
 ```text
@@ -376,6 +420,9 @@ Fix:
 Add --fast-generate: pack weights once, reuse each layer's weight XRTTensor,
 keep each layer's KV cache in an XRT inout buffer across decode positions, and
 drain only the layer residual needed for the host-driven layer loop.
+
+Then add --prepare-weights and --require-packed-weights so fast-generate uses
+one disk-backed global packed-weight BO with per-layer XRT sub-buffers.
 ```
 
 Accepted recheck:

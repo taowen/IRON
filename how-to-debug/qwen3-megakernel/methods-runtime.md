@@ -238,6 +238,7 @@ Break the wall time into these buckets before changing the graph:
 
 ```text
 weight_pack_s
+weight_disk_load_s
 weight_xrt_s
 cache_xrt_s
 hidden_sync_s
@@ -256,3 +257,36 @@ matches against the cached CPU reference.
 Do this before moving math into a larger megakernel. If wall time is dominated
 by Python/XRT setup, changing the external kernel arithmetic will not address
 the observed problem.
+
+## 33. Prove Packed Weight BO Slices With Token Match
+
+Use after introducing a global packed weight artifact. The first runtime proof
+should still use the known-good single-layer Program, but each layer's weight
+argument should be an XRT sub-buffer of one parent packed-weight BO.
+
+Diagnostic command used:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+.venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
+  --stage generate \
+  --fast-generate \
+  --require-packed-weights \
+  --verify-generate \
+  --max-new-tokens 3 \
+  --packed-weights-dir build_qwen3_packed_weights_test \
+  --build-dir build_qwen3_persistent_generate \
+  --prompt 'Count from one to five.' \
+  --raw-prompt
+```
+
+Accepted evidence:
+
+```text
+fast_generate_weight_source: packed_artifact
+fast_generate_weight_pack_s: 0.000000
+token_match: True for positions 6 and 7
+```
+
+If this fails while manifest exact-slice tests pass, inspect XRT sub-buffer
+offsets and sync state before changing AIE kernels.

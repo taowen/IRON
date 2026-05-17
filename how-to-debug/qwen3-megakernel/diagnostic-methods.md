@@ -27,6 +27,7 @@ methods are split by diagnostic boundary.
 | Multi-layer tensor handoff or diagnostic serialization crash | 31 |
 | Composed checkpoint fails but standalone producer may pass | 30 |
 | Decode is correct but much slower than NPU time suggests | 32 |
+| Packed weight artifact, offset, or XRT sub-buffer risk | 33, 34 |
 
 ### Runtime
 
@@ -39,6 +40,7 @@ methods are split by diagnostic boundary.
 - [17. Treat Runtime Phase Assumptions As Suspect](methods-runtime.md#17-treat-runtime-phase-assumptions-as-suspect)
 - [31. Clone XRT Tensor Views Before Crossing Debug Boundaries](methods-runtime.md#31-clone-xrt-tensor-views-before-crossing-debug-boundaries)
 - [32. Split Wall Time From NPU Time](methods-runtime.md#32-split-wall-time-from-npu-time)
+- [33. Prove Packed Weight BO Slices With Token Match](methods-runtime.md#33-prove-packed-weight-bo-slices-with-token-match)
 
 ### Static
 
@@ -53,6 +55,7 @@ methods are split by diagnostic boundary.
 - [23. Check Producer Endpoints Before Reading Placer Errors As Resource Errors](methods-static.md#23-check-producer-endpoints-before-reading-placer-errors-as-resource-errors)
 - [24. Count Workers Against The Actual Placer Budget](methods-static.md#24-count-workers-against-the-actual-placer-budget)
 - [25. Optional Debug Streams Need One Boolean](methods-static.md#25-optional-debug-streams-need-one-boolean)
+- [34. Validate Packed Weight Artifact Before Runtime](methods-static.md#34-validate-packed-weight-artifact-before-runtime)
 
 ### Numeric
 

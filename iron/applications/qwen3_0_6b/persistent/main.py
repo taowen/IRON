@@ -42,13 +42,17 @@ from iron.applications.qwen3_0_6b.persistent.diagnostics import (  # noqa: E402
 )
 from iron.applications.qwen3_0_6b.persistent.layout import (  # noqa: E402
     build_full_layer_inputs_for_layer,
+    default_packed_weights_dir,
     host_owned_tensor,
     pack_full_layer_weights,
+    validate_packed_weight_artifact,
+    write_packed_weight_artifact,
     unpack_full_layer_outputs,
 )
 from iron.applications.qwen3_0_6b.persistent.generate import (  # noqa: E402
     prepare_fast_generate_buffers,
     run_full_layer_decode_hidden_fast,
+    run_full_layer_decode_hidden_fast_chunked,
 )
 from iron.applications.qwen3_0_6b.persistent.ops import (  # noqa: E402
     Qwen3PersistentInputRMSNorm,
@@ -58,6 +62,7 @@ from iron.applications.qwen3_0_6b.persistent.ops import (  # noqa: E402
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContext,
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj,
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP,
+    Qwen3PersistentTwoLayerFullLayer,
     Qwen3PersistentPostAttnMLPDownResidual,
     Qwen3PersistentPostAttnRMSNormFullMLP,
     Qwen3PersistentPostAttnRMSNormMLPGateUp,
@@ -85,6 +90,7 @@ from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor  # noqa: E402
 
 FULL_LAYER_STAGE = "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
 MULTI_LAYER_FULL_LAYER_STAGE = "multi-layer-full-layer"
+TWO_LAYER_FULL_LAYER_STAGE = "two-layer-full-layer"
 GENERATE_STAGE = "generate"
 
 
@@ -107,6 +113,28 @@ def parse_args():
     parser.add_argument("--build-dir", default="build_qwen3_persistent")
     parser.add_argument("--clean-build", action="store_true")
     parser.add_argument(
+        "--prepare-weights",
+        action="store_true",
+        help=(
+            "Prepack HF Qwen3 weights into a persistent bf16 artifact and exit. "
+            "The default output is <model_dir>/qwen3_iron_packed."
+        ),
+    )
+    parser.add_argument(
+        "--packed-weights-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Directory containing weights.bf16.bin and manifest.json, or the "
+            "output directory for --prepare-weights."
+        ),
+    )
+    parser.add_argument(
+        "--require-packed-weights",
+        action="store_true",
+        help="Require --fast-generate to load prepacked weights instead of runtime packing.",
+    )
+    parser.add_argument(
         "--stage",
         choices=[
             "input-rmsnorm",
@@ -117,6 +145,7 @@ def parse_args():
             "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
             FULL_LAYER_STAGE,
             MULTI_LAYER_FULL_LAYER_STAGE,
+            TWO_LAYER_FULL_LAYER_STAGE,
             GENERATE_STAGE,
             "post-attn-rmsnorm-mlp-gate-up",
             "post-attn-mlp-down-residual",
@@ -146,6 +175,13 @@ def parse_args():
         type=int,
         default=2,
         help="Number of new tokens to produce for --stage generate",
+    )
+    parser.add_argument(
+        "--layer-chunk-size",
+        type=int,
+        choices=[1, 2],
+        default=1,
+        help="Number of full layers per persistent fast-generate invocation",
     )
     parser.add_argument(
         "--num-layers",
@@ -418,6 +454,128 @@ def run_multi_layer_full_layer(
     return failed
 
 
+def run_two_layer_full_layer(
+    args,
+    model: Qwen3ForCausalLM,
+    input_ids: torch.Tensor,
+    op,
+    op_func,
+) -> bool:
+    (
+        next_token,
+        position,
+        initial_hidden,
+        initial_state,
+        expected_hidden,
+        expected_state,
+    ) = build_reference_multi_layer_full_layer(
+        model,
+        input_ids,
+        args.max_seq_len,
+        num_layers=2,
+        prefill_num_layers=2,
+    )
+    if position != op.position:
+        raise RuntimeError(f"compiled position {op.position} != reference {position}")
+
+    inputs0 = build_full_layer_inputs_for_layer(
+        model,
+        0,
+        initial_hidden,
+        initial_state,
+    )
+    inputs1 = build_full_layer_inputs_for_layer(
+        model,
+        1,
+        initial_hidden,
+        initial_state,
+    )
+    hidden_buf = XRTTensor.from_torch(initial_hidden)
+    packed_weight_pair = torch.cat(
+        [
+            pack_full_layer_weights(inputs0),
+            pack_full_layer_weights(inputs1),
+        ]
+    ).contiguous()
+    weights_buf = XRTTensor.from_torch(packed_weight_pair)
+    rope_angles_buf = XRTTensor.from_torch(inputs0["rope_angles"])
+
+    failed = False
+    repeat_count = max(1, args.verify_repeat)
+    for iteration in range(repeat_count):
+        output_buf = XRTTensor((op.packed_outputs_size,), dtype=hidden_buf.dtype)
+        packed_cache_pair = torch.cat(
+            [
+                inputs0["initial_cache"].clone(),
+                inputs1["initial_cache"].clone(),
+            ]
+        ).contiguous()
+        cache_buf = XRTTensor.from_torch(packed_cache_pair)
+        result = op_func(
+            hidden_buf,
+            weights_buf,
+            rope_angles_buf,
+            output_buf,
+            cache_buf,
+        )
+        print(f"iteration: {iteration}")
+        print(f"prompt_next_token: {next_token}")
+        print(f"decode_position: {position}")
+        print(f"npu_time_us: {result.npu_time / 1e3:.3f}")
+
+        output_buf.device = "npu"
+        cache_buf.device = "npu"
+        actual_hidden = output_buf.to_torch()
+        cache_pair = cache_buf.to_torch()
+        cache0 = cache_pair[: op.packed_cache_size]
+        cache1 = cache_pair[op.packed_cache_size :]
+        actual_keys0 = cache0[: op.cache_half_size].view(
+            op.kv_heads, args.max_seq_len, op.head_dim
+        )
+        actual_values0 = cache0[op.cache_half_size :].view(
+            op.kv_heads, args.max_seq_len, op.head_dim
+        )
+        actual_keys1 = cache1[: op.cache_half_size].view(
+            op.kv_heads, args.max_seq_len, op.head_dim
+        )
+        actual_values1 = cache1[op.cache_half_size :].view(
+            op.kv_heads, args.max_seq_len, op.head_dim
+        )
+
+        checks = {
+            "two_layer_hidden": (actual_hidden, expected_hidden, 0.06, 0.08),
+            "layer0_keys_cache_current": (
+                actual_keys0[:, position, :].flatten(),
+                expected_state.keys[0][:, position, :].flatten(),
+                0.05,
+                0.5,
+            ),
+            "layer0_values_cache_current": (
+                actual_values0[:, position, :].flatten(),
+                expected_state.values[0][:, position, :].flatten(),
+                0.05,
+                0.025,
+            ),
+            "layer1_keys_cache_current": (
+                actual_keys1[:, position, :].flatten(),
+                expected_state.keys[1][:, position, :].flatten(),
+                0.05,
+                0.5,
+            ),
+            "layer1_values_cache_current": (
+                actual_values1[:, position, :].flatten(),
+                expected_state.values[1][:, position, :].flatten(),
+                0.05,
+                0.025,
+            ),
+        }
+        for name, (actual, expected, rel_tol, abs_tol) in checks.items():
+            errors = print_tensor_check(name, actual, expected, rel_tol, abs_tol)
+            failed = failed or bool(errors)
+
+    return failed
+
+
 def make_full_layer_op_for_position(
     args,
     model: Qwen3ForCausalLM,
@@ -425,6 +583,25 @@ def make_full_layer_op_for_position(
     position: int,
 ):
     return Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP(
+        hidden_size=model.config.hidden_size,
+        q_size=model.config.num_attention_heads * model.config.head_dim,
+        kv_size=model.config.num_key_value_heads * model.config.head_dim,
+        head_dim=model.config.head_dim,
+        max_seq_len=args.max_seq_len,
+        position=position,
+        intermediate_size=model.config.intermediate_size,
+        epsilon=model.config.rms_norm_eps,
+        context=context,
+    )
+
+
+def make_two_layer_op_for_position(
+    args,
+    model: Qwen3ForCausalLM,
+    context: AIEContext,
+    position: int,
+):
+    return Qwen3PersistentTwoLayerFullLayer(
         hidden_size=model.config.hidden_size,
         q_size=model.config.num_attention_heads * model.config.head_dim,
         kv_size=model.config.num_key_value_heads * model.config.head_dim,
@@ -457,6 +634,39 @@ def compile_full_layer_op_for_position(
     )
     print(
         f"generate_position_{position}_preflight: ok "
+        f"runtime_memrefs={preflight.runtime_memrefs} "
+        f"arg_specs={preflight.arg_specs} "
+        f"metadata_host_bos={preflight.metadata_host_bos} "
+        f"compute_cores={preflight.compute_cores} "
+        f"max_fifo_buffered_bytes={preflight.max_fifo_buffered_bytes} "
+        f"max_dma_tasks_per_fifo={preflight.max_dma_tasks_per_fifo} "
+        f"max_tile_inputs={preflight.max_compute_tile_inputs} "
+        f"max_tile_outputs={preflight.max_compute_tile_outputs} "
+        f"non_advancing_acquires={preflight.non_advancing_acquires}"
+    )
+    return op, op.get_callable()
+
+
+def compile_two_layer_op_for_position(
+    args,
+    model: Qwen3ForCausalLM,
+    context: AIEContext,
+    position: int,
+):
+    op = make_two_layer_op_for_position(args, model, context, position)
+    start = time.perf_counter()
+    op.compile()
+    compile_s = time.perf_counter() - start
+    preflight = run_persistent_artifact_preflight(
+        mlir_path=Path(op.xclbin_artifact.mlir_input.filename),
+        arg_specs=len(op.get_arg_spec()),
+    )
+    print(
+        f"generate_position_{position}_two_layer_compile_s: {compile_s:.3f} "
+        f"operator_name={op.name}"
+    )
+    print(
+        f"generate_position_{position}_two_layer_preflight: ok "
         f"runtime_memrefs={preflight.runtime_memrefs} "
         f"arg_specs={preflight.arg_specs} "
         f"metadata_host_bos={preflight.metadata_host_bos} "
@@ -554,6 +764,8 @@ def run_generate(
     input_ids: torch.Tensor,
     context: AIEContext,
 ) -> bool:
+    if args.layer_chunk_size != 1 and not args.fast_generate:
+        raise ValueError("--layer-chunk-size 2 requires --fast-generate")
     if args.max_new_tokens < 1:
         raise ValueError(f"max_new_tokens must be positive, got {args.max_new_tokens}")
     if input_ids.shape[1] + args.max_new_tokens > args.max_seq_len:
@@ -580,9 +792,11 @@ def run_generate(
         print("implementation: persistent full-layer decode + CPU final norm/lm head")
     print(f"prompt_len: {input_ids.shape[1]}")
     print(f"max_new_tokens: {args.max_new_tokens}")
+    print(f"layer_chunk_size: {args.layer_chunk_size}")
     print(f"prompt_next_token: {first_token} text={first_text!r}")
 
     op_cache = {}
+    two_layer_op_cache = {}
 
     def get_position_op(position: int):
         if position not in op_cache:
@@ -594,8 +808,23 @@ def run_generate(
             )
         return op_cache[position]
 
+    def get_position_two_layer_op(position: int):
+        if position not in two_layer_op_cache:
+            two_layer_op_cache[position] = compile_two_layer_op_for_position(
+                args,
+                model,
+                context,
+                position,
+            )
+        return two_layer_op_cache[position]
+
     if args.compile_only:
-        get_position_op(prefill_state.position)
+        if args.layer_chunk_size == 2:
+            get_position_two_layer_op(prefill_state.position)
+            if model.config.num_hidden_layers % 2:
+                get_position_op(prefill_state.position)
+        else:
+            get_position_op(prefill_state.position)
         return False
 
     generated_tokens = [first_token]
@@ -603,17 +832,34 @@ def run_generate(
     ref_state = clone_decode_state(prefill_state)
     fast_buffers = None
     if args.fast_generate:
-        first_op, _first_op_func = get_position_op(prefill_state.position)
+        if args.layer_chunk_size == 2:
+            first_two_layer_op, _first_two_layer_op_func = get_position_two_layer_op(
+                prefill_state.position
+            )
+            first_op = first_two_layer_op
+            if model.config.num_hidden_layers % 2:
+                first_op, _first_op_func = get_position_op(prefill_state.position)
+        else:
+            first_op, _first_op_func = get_position_op(prefill_state.position)
+            first_two_layer_op = None
         setup_start = time.perf_counter()
         fast_buffers = prepare_fast_generate_buffers(
             model,
             prefill_state,
             first_op,
+            packed_weights_dir=args.packed_weights_dir,
+            require_packed_weights=args.require_packed_weights,
+            layer_chunk_size=args.layer_chunk_size,
+            two_layer_op=first_two_layer_op,
         )
         setup_s = time.perf_counter() - setup_start
         setup_timing = fast_buffers.timing
         print(f"fast_generate_setup_s: {setup_s:.6f}")
+        print(f"fast_generate_weight_source: {setup_timing.weight_source}")
         print(f"fast_generate_weight_pack_s: {setup_timing.weight_pack_s:.6f}")
+        print(
+            f"fast_generate_weight_disk_load_s: {setup_timing.weight_disk_load_s:.6f}"
+        )
         print(f"fast_generate_weight_xrt_s: {setup_timing.weight_xrt_s:.6f}")
         print(f"fast_generate_cache_xrt_s: {setup_timing.cache_xrt_s:.6f}")
     failed = False
@@ -621,18 +867,41 @@ def run_generate(
     for token_idx in range(1, args.max_new_tokens):
         current_token = generated_tokens[-1]
         position = npu_state.position
-        op, op_func = get_position_op(position)
+        op = None
+        op_func = None
+        two_layer_op = None
+        two_layer_op_func = None
+        if args.fast_generate and args.layer_chunk_size == 2:
+            two_layer_op, two_layer_op_func = get_position_two_layer_op(position)
+            if model.config.num_hidden_layers % 2:
+                op, op_func = get_position_op(position)
+        else:
+            op, op_func = get_position_op(position)
         start = time.perf_counter()
         fast_timing = None
         if args.fast_generate:
-            npu_hidden, npu_time, fast_timing = run_full_layer_decode_hidden_fast(
-                model,
-                current_token,
-                position,
-                op,
-                op_func,
-                fast_buffers,
-            )
+            if args.layer_chunk_size == 2:
+                npu_hidden, npu_time, fast_timing = (
+                    run_full_layer_decode_hidden_fast_chunked(
+                        model,
+                        current_token,
+                        position,
+                        op,
+                        op_func,
+                        two_layer_op,
+                        two_layer_op_func,
+                        fast_buffers,
+                    )
+                )
+            else:
+                npu_hidden, npu_time, fast_timing = run_full_layer_decode_hidden_fast(
+                    model,
+                    current_token,
+                    position,
+                    op,
+                    op_func,
+                    fast_buffers,
+                )
             npu_state.position += 1
         else:
             npu_hidden, npu_time = run_full_layer_decode_hidden(
@@ -710,13 +979,6 @@ def main():
         shutil.rmtree(args.build_dir, ignore_errors=True)
 
     model_dir = resolve_model_dir(args.model, args.revision)
-    tokenizer = AutoTokenizer.from_pretrained(model_dir)
-    input_ids = encode_prompt(
-        tokenizer,
-        args.prompt,
-        raw_prompt=args.raw_prompt,
-        enable_thinking=args.enable_thinking,
-    )
     model = Qwen3ForCausalLM(model_dir)
     if model.config.hidden_size != 1024:
         raise ValueError(
@@ -729,6 +991,54 @@ def main():
         )
     if args.max_seq_len < 256:
         raise ValueError("max_seq_len must be at least 256")
+    if args.packed_weights_dir is None:
+        args.packed_weights_dir = default_packed_weights_dir(model_dir)
+
+    if args.prepare_weights:
+        op_for_layout = make_full_layer_op_for_position(
+            args,
+            model,
+            AIEContext(build_dir=args.build_dir),
+            position=0,
+        )
+        start = time.perf_counter()
+        manifest = write_packed_weight_artifact(
+            model,
+            args.packed_weights_dir,
+            expected_per_layer_numel=op_for_layout.packed_weights_size,
+        )
+        elapsed = time.perf_counter() - start
+        print("stage: prepare-weights")
+        print(f"packed_weights_dir: {args.packed_weights_dir}")
+        print(f"packed_weights_file: {args.packed_weights_dir / 'weights.bf16.bin'}")
+        print(f"packed_manifest_file: {args.packed_weights_dir / 'manifest.json'}")
+        print(f"packed_layers: {manifest['num_layers']}")
+        print(f"packed_per_layer_numel: {manifest['per_layer_numel']}")
+        print(f"packed_total_bytes: {manifest['total_bytes']}")
+        print(f"prepare_weights_s: {elapsed:.6f}")
+        return
+
+    if args.require_packed_weights:
+        validate_packed_weight_artifact(
+            model,
+            args.packed_weights_dir,
+            expected_per_layer_numel=make_full_layer_op_for_position(
+                args,
+                model,
+                AIEContext(build_dir=args.build_dir),
+                position=0,
+            ).packed_weights_size,
+        )
+        if not args.fast_generate:
+            raise ValueError("--require-packed-weights is only used by --fast-generate")
+
+    tokenizer = AutoTokenizer.from_pretrained(model_dir)
+    input_ids = encode_prompt(
+        tokenizer,
+        args.prompt,
+        raw_prompt=args.raw_prompt,
+        enable_thinking=args.enable_thinking,
+    )
     if not args.compile_only:
         assert_standard_runtime_available()
 
@@ -808,6 +1118,18 @@ def main():
     elif args.stage == "post-attn-rmsnorm-full-mlp":
         op = Qwen3PersistentPostAttnRMSNormFullMLP(
             hidden_size=model.config.hidden_size,
+            intermediate_size=model.config.intermediate_size,
+            epsilon=model.config.rms_norm_eps,
+            context=context,
+        )
+    elif args.stage == TWO_LAYER_FULL_LAYER_STAGE:
+        op = Qwen3PersistentTwoLayerFullLayer(
+            hidden_size=model.config.hidden_size,
+            q_size=model.config.num_attention_heads * model.config.head_dim,
+            kv_size=model.config.num_key_value_heads * model.config.head_dim,
+            head_dim=model.config.head_dim,
+            max_seq_len=args.max_seq_len,
+            position=input_ids.shape[1],
             intermediate_size=model.config.intermediate_size,
             epsilon=model.config.rms_norm_eps,
             context=context,
@@ -990,6 +1312,24 @@ def main():
                 "worker_graph: reuse the accepted full-layer persistent graph; "
                 "host switches layer weights and per-layer KV cache slices"
             )
+        elif args.stage == TWO_LAYER_FULL_LAYER_STAGE:
+            print(
+                "dispatch_shape: hidden[1024] through layers 0 and 1 in one "
+                "persistent invocation"
+            )
+            print(
+                "runtime_bos: hidden[1024], "
+                f"weight_pair[{op.packed_weight_pair_size}], "
+                "rope_angles[128], "
+                f"final_hidden[{op.packed_outputs_size}], "
+                f"cache_pair[{op.packed_cache_pair_size}]"
+            )
+            print(f"decode_position: {op.position}")
+            print(
+                "worker_graph: one full-layer worker graph loops twice; "
+                "layer0 residual is routed back as layer1 hidden, and only "
+                "the final residual is drained to host"
+            )
         else:
             print(
                 "dispatch_shape: hidden[1024] + packed QKV/norm weights + "
@@ -1019,6 +1359,12 @@ def main():
     op_func = op.get_callable()
     if args.stage == MULTI_LAYER_FULL_LAYER_STAGE:
         failed = run_multi_layer_full_layer(args, model, input_ids, op, op_func)
+        if args.verify and failed:
+            raise SystemExit(1)
+        gc.collect()
+        return
+    if args.stage == TWO_LAYER_FULL_LAYER_STAGE:
+        failed = run_two_layer_full_layer(args, model, input_ids, op, op_func)
         if args.verify and failed:
             raise SystemExit(1)
         gc.collect()

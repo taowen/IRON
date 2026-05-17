@@ -3,9 +3,10 @@
 
 # Qwen3-0.6B Inference
 
-This directory contains a correctness-first Qwen3-0.6B inference path. It loads
-the original Hugging Face safetensors directly and does not require converting
-weights into a block-f16 format before running.
+This directory contains a correctness-first Qwen3-0.6B inference path. It can
+load the original Hugging Face safetensors directly, and the persistent
+performance path can also use a prepacked bf16 weight artifact generated from
+those safetensors. Block-f16 conversion is not required for the current path.
 
 The current implementation is a PyTorch CPU reference for the dense Qwen3 model
 used to validate architecture details before moving the graph onto IRON
@@ -357,8 +358,49 @@ Full-depth `num_layers=28` is intentionally not marked accepted yet:
 layer-local residual-add checks still pass, but the final hidden full-reference
 check exceeds the current tolerance after accumulated bf16/approximation drift.
 
-Placement scaling, runtime position patching, final norm/LM head, and
-multi-token decode are still future persistent stages.
+The first chunked persistent checkpoint runs two adjacent full layers inside one
+runtime sequence:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+python iron/applications/qwen3_0_6b/persistent/main.py \
+  --model Qwen/Qwen3-0.6B \
+  --stage two-layer-full-layer \
+  --verify \
+  --prompt "Count from one to five." \
+  --raw-prompt \
+  --build-dir build_qwen3_persistent_two_layer
+```
+
+This stage keeps the runtime ABI at five BOs by packing adjacent layer weights
+and KV caches into `weight_pair` and `cache_pair` buffers, then using TAP
+offsets for layer 0 and layer 1. It loops the same full-layer worker graph
+twice, routes layer-0 residual back as layer-1 hidden, and drains only the final
+hidden. On the current NPU2 environment it passes hidden and current-cache
+checks; preflight reports `runtime_memrefs=5`, `metadata_host_bos=5`, and
+`compute_cores=21`.
+
+Fast generate can use this checkpoint with `--layer-chunk-size 2`:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+python iron/applications/qwen3_0_6b/persistent/main.py \
+  --model Qwen/Qwen3-0.6B \
+  --stage generate \
+  --fast-generate \
+  --layer-chunk-size 2 \
+  --verify-generate \
+  --max-new-tokens 2
+```
+
+Current measurement: chunking reduces host dispatch count but is not yet a
+steady-state throughput win. On the same prompt, chunk=2 still matches the CPU
+reference token, but decode time remains around 0.256s per NPU-decoded token,
+similar to chunk=1.
+
+Placement scaling, deeper persistent token loops, final norm/LM head, and
+removing the remaining per-position recompiles are still future persistent
+stages.
 
 ## Weight Format Decision
 
@@ -367,6 +409,38 @@ The existing IRON GEMM/GEMV APIs accept ordinary contiguous bf16/fp16 tensors
 or simple transposed/padded views; block-f16 conversion is therefore not needed
 to validate Qwen3 correctness.
 
-A later NPU performance path should cache prepacked per-operator weights and a
-manifest, but that is a performance artifact rather than the canonical model
-format.
+The persistent performance path can cache prepacked bf16 weights on disk:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+python iron/applications/qwen3_0_6b/persistent/main.py \
+  --model Qwen/Qwen3-0.6B \
+  --prepare-weights
+```
+
+The default output directory is `<model_dir>/qwen3_iron_packed/`. Override it
+with `--packed-weights-dir`. The artifact is:
+
+```text
+weights.bf16.bin   contiguous raw bf16 full-layer weights for all layers
+manifest.json      format/config/offset/shape table for every layer segment
+```
+
+Use the artifact during fast generate:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+python iron/applications/qwen3_0_6b/persistent/main.py \
+  --model Qwen/Qwen3-0.6B \
+  --stage generate \
+  --fast-generate \
+  --require-packed-weights \
+  --verify-generate \
+  --max-new-tokens 3
+```
+
+By default, the runtime still executes one full-layer Program per layer. With
+`--layer-chunk-size 2`, it executes one two-layer Program per adjacent layer
+pair. The packed artifact removes runtime weight packing and establishes a
+global weight buffer plus per-layer offset manifest; final norm/LM head still
+run on the CPU.

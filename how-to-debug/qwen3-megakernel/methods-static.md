@@ -31,6 +31,38 @@ MLIR: 3 runtime memrefs
 metadata: bo0..bo4
 ```
 
+The same method caught the first two-layer persistent chunk:
+
+```text
+MLIR: 7 runtime memrefs
+operator arg spec: 7
+main_kernels.json: bo0..bo4 only
+```
+
+The correct fix was to reduce the runtime ABI, not to bypass preflight:
+
+```text
+hidden
+weight_pair = layer0 weights || layer1 weights
+rope_angles
+final_hidden
+cache_pair = layer0 KV cache || layer1 KV cache
+```
+
+Then prove the generated TAP offsets point inside the packed pair buffers:
+
+```bash
+rg -n "aie.runtime_sequence|dma_bd\\(%arg" build_qwen3_persistent_two_layer/*.mlir
+```
+
+Accepted evidence:
+
+```text
+aie.runtime_sequence(%arg0 hidden, %arg1 weight_pair, %arg2 angles,
+                     %arg3 final_hidden, %arg4 cache_pair)
+preflight: ok runtime_memrefs=5 arg_specs=5 metadata_host_bos=5
+```
+
 ## 9. Read aiecc Resource Errors As Graph Errors
 
 Use when a persistent Program fails during placement or allocation.
@@ -165,6 +197,42 @@ iron/applications/qwen3_0_6b/qwen3_preflight.py
 
 The persistent CLI now prints a `preflight: ok ...` summary immediately after
 compile when these checks pass.
+
+## 34. Validate Packed Weight Artifact Before Runtime
+
+Use when a persistent generate path starts from preprocessed weights on disk.
+
+Diagnostic command used:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+.venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
+  --model Qwen/Qwen3-0.6B \
+  --prepare-weights \
+  --packed-weights-dir build_qwen3_packed_weights_test
+```
+
+The manifest must prove these facts before any NPU run:
+
+```text
+format == qwen3_iron_packed_weights_v1
+dtype == bfloat16
+weight_order matches pack_full_layer_weights()
+num_layers matches config
+per_layer_numel matches the compiled op
+total file bytes == manifest total_bytes
+each layer offset == layer_id * per_layer_numel
+each layer byte offset is 64B aligned
+```
+
+Recheck with exact slicing:
+
+```text
+packed_weight_layer_slice(layer_i) == pack_full_layer_weights_for_layer(model, i)
+```
+
+This catches wrong packed offsets as a Python error instead of letting a legal
+but wrong DMA stream corrupt later layer numerics.
 
 ## 20. Inspect Repeated ObjectFIFO Acquire Lowering
 
