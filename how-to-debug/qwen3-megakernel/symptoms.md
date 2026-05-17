@@ -19,6 +19,7 @@ were used in this repository. Detailed entries are split by failure class.
 - [Runtime Segfaults In XRT BO Validation](symptoms-runtime.md#runtime-segfaults-in-xrt-bo-validation)
 - [First Iteration Is Zero, Later Iterations Improve](symptoms-runtime.md#first-iteration-is-zero-later-iterations-improve)
 - [Diagnostic Bundle Crashes While Serializing A Layer Tensor](symptoms-runtime.md#diagnostic-bundle-crashes-while-serializing-a-layer-tensor)
+- [Decode Wall Time Is Much Larger Than NPU Time](symptoms-runtime.md#decode-wall-time-is-much-larger-than-npu-time)
 
 ### Numeric
 

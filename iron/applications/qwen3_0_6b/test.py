@@ -484,3 +484,27 @@ def test_qwen3_persistent_multi_layer_full_layer():
         "1",
     ]
     subprocess.run(command, check=True)
+
+
+@pytest.mark.extensive
+def test_qwen3_persistent_fast_generate():
+    model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
+    if model is None:
+        pytest.skip(
+            "Set IRON_QWEN3_0_6B_MODEL to run the Qwen3-0.6B fast generate test"
+        )
+
+    test_dir = Path(__file__).parent
+    command = [
+        sys.executable,
+        str(test_dir / "qwen3_persistent.py"),
+        "--model",
+        model,
+        "--stage",
+        "generate",
+        "--fast-generate",
+        "--verify-generate",
+        "--max-new-tokens",
+        "2",
+    ]
+    subprocess.run(command, check=True)

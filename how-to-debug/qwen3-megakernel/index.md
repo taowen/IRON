@@ -176,5 +176,22 @@ num_layers=4 hidden_after_layers_errors: 0
 num_layers=4 hidden_after_layers_max_abs: 0.125000
 ```
 
+Persistent generate status:
+
+```text
+The default generate path remains the debug flow: host switches layer weights,
+drains the updated KV cache, and refills it for the next invocation.
+
+The accepted fast-generate path keeps the same full-layer Program but reuses
+packed weight XRT buffers and keeps each layer's KV cache resident in its XRT
+inout buffer across decode positions. It still drains the layer residual after
+each layer because the layer loop is host-driven.
+
+Accepted evidence:
+--fast-generate --verify-generate --max-new-tokens 4
+token_match: True for positions 6, 7, and 8
+decode_s: 0.249-0.257 per NPU-decoded token
+```
+
 Do not debug from final logits first. Start from the symptom, prove the failing
 boundary, and only then change code.

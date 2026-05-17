@@ -26,6 +26,7 @@ methods are split by diagnostic boundary.
 | PV/context compile or numeric failure | 14, 21, 22 |
 | Multi-layer tensor handoff or diagnostic serialization crash | 31 |
 | Composed checkpoint fails but standalone producer may pass | 30 |
+| Decode is correct but much slower than NPU time suggests | 32 |
 
 ### Runtime
 
@@ -37,6 +38,7 @@ methods are split by diagnostic boundary.
 - [7. Repeat The Same Input](methods-runtime.md#7-repeat-the-same-input)
 - [17. Treat Runtime Phase Assumptions As Suspect](methods-runtime.md#17-treat-runtime-phase-assumptions-as-suspect)
 - [31. Clone XRT Tensor Views Before Crossing Debug Boundaries](methods-runtime.md#31-clone-xrt-tensor-views-before-crossing-debug-boundaries)
+- [32. Split Wall Time From NPU Time](methods-runtime.md#32-split-wall-time-from-npu-time)
 
 ### Static
 

@@ -11,7 +11,6 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 from transformers import AutoTokenizer
@@ -32,6 +31,24 @@ from iron.applications.qwen3_0_6b.qwen3_cpu import (  # noqa: E402
 from iron.applications.qwen3_0_6b.qwen3_decode_reference import (  # noqa: E402
     Qwen3CachedReference,
     clone_decode_state,
+)
+from iron.applications.qwen3_0_6b.qwen3_persistent_checks import (  # noqa: E402
+    full_layer_local_invariants,
+    print_tensor_check,
+)
+from iron.applications.qwen3_0_6b.qwen3_persistent_diagnostics import (  # noqa: E402
+    run_qkv_diagnostic_bundle,
+    write_qkv_boundary_diagnostic_bundle,
+)
+from iron.applications.qwen3_0_6b.qwen3_persistent_layout import (  # noqa: E402
+    build_full_layer_inputs_for_layer,
+    host_owned_tensor,
+    pack_full_layer_weights,
+    unpack_full_layer_outputs,
+)
+from iron.applications.qwen3_0_6b.qwen3_persistent_generate import (  # noqa: E402
+    prepare_fast_generate_buffers,
+    run_full_layer_decode_hidden_fast,
 )
 from iron.applications.qwen3_0_6b.qwen3_persistent_ops import (  # noqa: E402
     Qwen3PersistentInputRMSNorm,
@@ -58,7 +75,6 @@ from iron.applications.qwen3_0_6b.qwen3_persistent_refs import (  # noqa: E402
     build_reference_qkv_rope_cache,
     full_layer_reference_from_inputs,
     print_structured_attention_error,
-    rope_lut_for_position,
 )
 from iron.applications.qwen3_0_6b.qwen3_preflight import (  # noqa: E402
     run_persistent_artifact_preflight,
@@ -116,6 +132,14 @@ def parse_args():
         action="store_true",
         help="Compare generated tokens against the cached CPU decode reference",
     )
+    parser.add_argument(
+        "--fast-generate",
+        action="store_true",
+        help=(
+            "Reuse packed weight/cache XRT buffers for --stage generate. "
+            "The default generate path keeps the older host round-trip debug flow."
+        ),
+    )
     parser.add_argument("--verify-repeat", type=int, default=1)
     parser.add_argument(
         "--max-new-tokens",
@@ -151,383 +175,6 @@ def parse_args():
     )
     parser.add_argument("--dump-proof", action="store_true")
     return parser.parse_args()
-
-
-def pack_full_layer_weights(inputs: dict[str, torch.Tensor]) -> torch.Tensor:
-    return torch.cat(
-        [
-            inputs["input_norm_weight"].flatten(),
-            inputs["W_q"].flatten(),
-            inputs["W_k"].flatten(),
-            inputs["W_v"].flatten(),
-            inputs["W_q_norm"].flatten(),
-            inputs["W_k_norm"].flatten(),
-            inputs["W_o"].flatten(),
-            inputs["post_norm_weight"].flatten(),
-            inputs["W_gate"].flatten(),
-            inputs["W_up"].flatten(),
-            inputs["W_down"].flatten(),
-        ]
-    ).contiguous()
-
-
-def build_full_layer_inputs_for_layer(
-    model: Qwen3ForCausalLM,
-    layer_idx: int,
-    hidden: torch.Tensor,
-    state,
-) -> dict[str, torch.Tensor]:
-    layer = f"model.layers.{layer_idx}"
-    attn = f"{layer}.self_attn"
-    mlp = f"{layer}.mlp"
-    initial_cache = torch.cat(
-        [state.keys[layer_idx].flatten(), state.values[layer_idx].flatten()]
-    ).contiguous()
-    return {
-        "hidden": hidden.flatten().contiguous(),
-        "input_norm_weight": model.w(f"{layer}.input_layernorm.weight")
-        .flatten()
-        .contiguous(),
-        "W_q": model.w(f"{attn}.q_proj.weight").contiguous(),
-        "W_k": model.w(f"{attn}.k_proj.weight").contiguous(),
-        "W_v": model.w(f"{attn}.v_proj.weight").contiguous(),
-        "W_o": model.w(f"{attn}.o_proj.weight").contiguous(),
-        "W_q_norm": model.w(f"{attn}.q_norm.weight").flatten().contiguous(),
-        "W_k_norm": model.w(f"{attn}.k_norm.weight").flatten().contiguous(),
-        "rope_angles": rope_lut_for_position(
-            model.config.head_dim,
-            model.config.rope_theta,
-            state.position,
-        ),
-        "initial_cache": initial_cache,
-        "initial_keys_cache": state.keys[layer_idx].contiguous(),
-        "initial_values_cache": state.values[layer_idx].contiguous(),
-        "post_norm_weight": model.w(f"{layer}.post_attention_layernorm.weight")
-        .flatten()
-        .contiguous(),
-        "W_gate": model.w(f"{mlp}.gate_proj.weight").contiguous(),
-        "W_up": model.w(f"{mlp}.up_proj.weight").contiguous(),
-        "W_down": model.w(f"{mlp}.down_proj.weight").contiguous(),
-    }
-
-
-def unpack_full_layer_outputs(
-    op, packed_outputs: torch.Tensor
-) -> dict[str, torch.Tensor]:
-    return {
-        "v_context_stream": packed_outputs[
-            op.v_context_stream_output_base : op.attn_context_output_base
-        ],
-        "attn_context": packed_outputs[
-            op.attn_context_output_base : op.attn_context_flat_output_base
-        ],
-        "attn_residual": packed_outputs[
-            op.attn_residual_output_base : op.mlp_x_norm_output_base
-        ],
-        "ffn_hidden": packed_outputs[
-            op.ffn_hidden_output_base : op.ffn_out_output_base
-        ],
-        "ffn_out": packed_outputs[
-            op.ffn_out_output_base : op.layer_residual_output_base
-        ],
-        "layer_residual": packed_outputs[op.layer_residual_output_base :],
-    }
-
-
-def tensor_error_stats(
-    output: torch.Tensor,
-    expected: torch.Tensor,
-    rel_tol: float,
-    abs_tol: float,
-) -> tuple[int, float, float, int | None, float | None, float | None]:
-    output_f = output.flatten().to(torch.float32)
-    expected_f = expected.flatten().to(torch.float32)
-    compare_len = min(output_f.numel(), expected_f.numel())
-    if output_f.numel() != expected_f.numel():
-        first = compare_len
-        errors = abs(output_f.numel() - expected_f.numel())
-        return errors, float("inf"), float("inf"), first, None, None
-    if compare_len == 0:
-        return 0, 0.0, 0.0, None, None, None
-
-    diff = (output_f[:compare_len] - expected_f[:compare_len]).abs()
-    norm = (output_f[:compare_len].abs() + expected_f[:compare_len].abs()).clamp(
-        max=torch.finfo(torch.float32).max
-    )
-    mask = diff >= torch.maximum(
-        torch.tensor(abs_tol, dtype=torch.float32),
-        rel_tol * norm,
-    )
-    errors = int(mask.sum().item())
-    if errors:
-        first = int(mask.nonzero(as_tuple=False)[0].item())
-        first_expected = float(expected_f[first])
-        first_output = float(output_f[first])
-    else:
-        first = None
-        first_expected = None
-        first_output = None
-    return (
-        errors,
-        float(diff.max().item()),
-        float(diff.mean().item()),
-        first,
-        first_expected,
-        first_output,
-    )
-
-
-def print_tensor_check(
-    label: str,
-    output: torch.Tensor,
-    expected: torch.Tensor,
-    rel_tol: float,
-    abs_tol: float,
-) -> int:
-    errors, max_abs, mean_abs, first, first_expected, first_output = tensor_error_stats(
-        output,
-        expected,
-        rel_tol,
-        abs_tol,
-    )
-    print(f"{label}_max_abs: {max_abs:.6f}")
-    print(f"{label}_mean_abs: {mean_abs:.6f}")
-    print(f"{label}_errors: {errors}")
-    if first is not None:
-        if first_expected is None or first_output is None:
-            print(f"{label}_first_error: index={first} shape_mismatch")
-        else:
-            print(
-                f"{label}_first_error: index={first} "
-                f"expected={first_expected:.6f} got={first_output:.6f}"
-            )
-    return errors
-
-
-def host_owned_tensor(tensor: torch.Tensor) -> torch.Tensor:
-    return tensor.detach().clone().contiguous()
-
-
-def full_layer_local_invariants(
-    inputs: dict[str, torch.Tensor],
-    actual: dict[str, torch.Tensor],
-) -> dict[str, torch.Tensor]:
-    ffn_out_local = F.linear(
-        actual["ffn_hidden"].view(1, 1, -1),
-        inputs["W_down"],
-    ).flatten()
-    return {
-        "ffn_out_local": ffn_out_local.contiguous(),
-        "layer_residual_local": (
-            actual["attn_residual"].to(torch.float32)
-            + actual["ffn_out"].to(torch.float32)
-        )
-        .to(dtype=actual["layer_residual"].dtype)
-        .contiguous(),
-    }
-
-
-def run_qkv_boundary_diagnostic(
-    *,
-    model: Qwen3ForCausalLM,
-    qkv_op: Qwen3PersistentInputRMSNormQKV,
-    qkv_op_func,
-    layer_idx: int,
-    inputs: dict[str, torch.Tensor],
-    full_layer_v: torch.Tensor,
-) -> dict[str, int]:
-    hidden_buf = XRTTensor.from_torch(inputs["hidden"].contiguous())
-    packed_weights = torch.cat(
-        [
-            inputs["input_norm_weight"].flatten(),
-            inputs["W_q"].flatten(),
-            inputs["W_k"].flatten(),
-            inputs["W_v"].flatten(),
-        ]
-    ).contiguous()
-    weights_buf = XRTTensor.from_torch(packed_weights)
-    packed_outputs_buf = XRTTensor(
-        (qkv_op.packed_outputs_size,),
-        dtype=hidden_buf.dtype,
-    )
-    result = qkv_op_func(hidden_buf, weights_buf, packed_outputs_buf)
-    packed_outputs_buf.device = "npu"
-    packed_outputs = packed_outputs_buf.to_torch()
-
-    x_norm = packed_outputs[: qkv_op.q_output_base]
-    values = packed_outputs[qkv_op.v_output_base :]
-    x_norm_expected = rms_norm(
-        inputs["hidden"].view(1, 1, -1),
-        inputs["input_norm_weight"],
-        model.config.rms_norm_eps,
-    ).flatten()
-    values_local = F.linear(
-        x_norm.view(1, 1, -1),
-        inputs["W_v"],
-    ).flatten()
-    values_py_ref = F.linear(
-        x_norm_expected.view(1, 1, -1),
-        inputs["W_v"],
-    ).flatten()
-
-    print(f"layer_{layer_idx}_diag_qkv_npu_time_us: {result.npu_time / 1e3:.3f}")
-    return {
-        "x_norm": print_tensor_check(
-            f"layer_{layer_idx}_diag_qkv_x_norm",
-            x_norm,
-            x_norm_expected,
-            rel_tol=0.04,
-            abs_tol=1e-6,
-        ),
-        "values_local": print_tensor_check(
-            f"layer_{layer_idx}_diag_qkv_values_local",
-            values,
-            values_local,
-            rel_tol=0.04,
-            abs_tol=1e-6,
-        ),
-        "full_v_vs_qkv": print_tensor_check(
-            f"layer_{layer_idx}_diag_full_v_vs_qkv_values",
-            full_layer_v,
-            values,
-            rel_tol=0.05,
-            abs_tol=0.025,
-        ),
-        "full_v_vs_py_ref": print_tensor_check(
-            f"layer_{layer_idx}_diag_full_v_vs_py_ref_values",
-            full_layer_v,
-            values_py_ref,
-            rel_tol=0.05,
-            abs_tol=0.025,
-        ),
-    }
-
-
-def write_qkv_boundary_diagnostic_bundle(
-    *,
-    args,
-    layer_idx: int,
-    inputs: dict[str, torch.Tensor],
-    full_layer_v: torch.Tensor,
-) -> Path:
-    def as_float32_array(tensor: torch.Tensor) -> np.ndarray:
-        host_tensor = host_owned_tensor(tensor)
-        return host_tensor.to(torch.float32).cpu().numpy().copy()
-
-    diag_dir = Path(args.build_dir) / "diagnostics"
-    diag_dir.mkdir(parents=True, exist_ok=True)
-    path = diag_dir / f"qkv_boundary_layer_{layer_idx}.npz"
-    print(f"layer_{layer_idx}_qkv_diagnostic_bundle_begin: {path}")
-    sys.stdout.flush()
-    arrays = {"layer_idx": np.array(layer_idx, dtype=np.int64)}
-    tensors = {
-        "hidden": inputs["hidden"],
-        "input_norm_weight": inputs["input_norm_weight"],
-        "W_q": inputs["W_q"],
-        "W_k": inputs["W_k"],
-        "W_v": inputs["W_v"],
-        "full_layer_v": full_layer_v,
-    }
-    for name, tensor in tensors.items():
-        print(f"layer_{layer_idx}_qkv_diagnostic_bundle_tensor_begin: {name}")
-        sys.stdout.flush()
-        arrays[name] = as_float32_array(tensor)
-        print(
-            f"layer_{layer_idx}_qkv_diagnostic_bundle_tensor_done: "
-            f"{name} shape={arrays[name].shape}"
-        )
-        sys.stdout.flush()
-    np.savez(
-        path,
-        **arrays,
-    )
-    print(f"layer_{layer_idx}_qkv_diagnostic_bundle: {path}")
-    sys.stdout.flush()
-    return path
-
-
-def run_qkv_diagnostic_bundle(
-    args, model: Qwen3ForCausalLM, context: AIEContext
-) -> bool:
-    def bf16_from_float32(array: np.ndarray, shape: tuple[int, ...]) -> torch.Tensor:
-        return torch.from_numpy(array.copy()).reshape(shape).to(torch.bfloat16)
-
-    bundle = np.load(args.qkv_diagnostic_bundle)
-    qkv_op = Qwen3PersistentInputRMSNormQKV(
-        hidden_size=model.config.hidden_size,
-        q_size=model.config.num_attention_heads * model.config.head_dim,
-        kv_size=model.config.num_key_value_heads * model.config.head_dim,
-        epsilon=model.config.rms_norm_eps,
-        context=context,
-    )
-    start = time.perf_counter()
-    qkv_op.compile()
-    print("stage: qkv-diagnostic-bundle")
-    print(f"bundle: {args.qkv_diagnostic_bundle}")
-    print(f"diagnostic_qkv_compile_s: {time.perf_counter() - start:.3f}")
-    qkv_diag_preflight = run_persistent_artifact_preflight(
-        mlir_path=Path(qkv_op.xclbin_artifact.mlir_input.filename),
-        arg_specs=len(qkv_op.get_arg_spec()),
-    )
-    print(
-        "diagnostic_qkv_preflight: ok "
-        f"runtime_memrefs={qkv_diag_preflight.runtime_memrefs} "
-        f"arg_specs={qkv_diag_preflight.arg_specs} "
-        f"compute_cores={qkv_diag_preflight.compute_cores} "
-        f"non_advancing_acquires={qkv_diag_preflight.non_advancing_acquires}"
-    )
-    qkv_op_func = qkv_op.get_callable()
-    layer_idx = int(bundle["layer_idx"].item())
-    inputs = {
-        "hidden": bf16_from_float32(bundle["hidden"], (model.config.hidden_size,)),
-        "input_norm_weight": bf16_from_float32(
-            bundle["input_norm_weight"], (model.config.hidden_size,)
-        ),
-        "W_q": bf16_from_float32(
-            bundle["W_q"],
-            (
-                model.config.num_attention_heads * model.config.head_dim,
-                model.config.hidden_size,
-            ),
-        ),
-        "W_k": bf16_from_float32(
-            bundle["W_k"],
-            (
-                model.config.num_key_value_heads * model.config.head_dim,
-                model.config.hidden_size,
-            ),
-        ),
-        "W_v": bf16_from_float32(
-            bundle["W_v"],
-            (
-                model.config.num_key_value_heads * model.config.head_dim,
-                model.config.hidden_size,
-            ),
-        ),
-    }
-    full_layer_v = bf16_from_float32(
-        bundle["full_layer_v"],
-        (model.config.num_key_value_heads * model.config.head_dim,),
-    )
-    errors = run_qkv_boundary_diagnostic(
-        model=model,
-        qkv_op=qkv_op,
-        qkv_op_func=qkv_op_func,
-        layer_idx=layer_idx,
-        inputs=inputs,
-        full_layer_v=full_layer_v,
-    )
-    if errors["x_norm"]:
-        print(f"qkv_diagnostic_result: layer_{layer_idx}_diag_qkv_x_norm")
-    elif errors["values_local"]:
-        print(f"qkv_diagnostic_result: layer_{layer_idx}_diag_qkv_values_local")
-    elif errors["full_v_vs_qkv"]:
-        print(f"qkv_diagnostic_result: layer_{layer_idx}_diag_full_v_vs_qkv_values")
-    elif errors["full_v_vs_py_ref"]:
-        print(f"qkv_diagnostic_result: layer_{layer_idx}_diag_py_ref_drift")
-    else:
-        print(f"qkv_diagnostic_result: layer_{layer_idx}_diag_qkv_passed")
-    return bool(errors["x_norm"] or errors["values_local"] or errors["full_v_vs_qkv"])
 
 
 def run_multi_layer_full_layer(
@@ -732,7 +379,7 @@ def run_multi_layer_full_layer(
             if pending_v_diagnostic:
                 full_layer_v = host_owned_tensor(actual["v_context_stream_current"])
                 bundle_path = write_qkv_boundary_diagnostic_bundle(
-                    args=args,
+                    build_dir=args.build_dir,
                     layer_idx=layer_idx,
                     inputs=inputs,
                     full_layer_v=full_layer_v,
@@ -924,7 +571,13 @@ def run_generate(
     first_token = int(torch.argmax(prefill_logits[:, -1, :], dim=-1).item())
     first_text = tokenizer.decode([first_token], skip_special_tokens=True)
     print("stage: generate")
-    print("implementation: persistent full-layer decode + CPU final norm/lm head")
+    if args.fast_generate:
+        print(
+            "implementation: persistent full-layer decode with cached XRT "
+            "weights/cache + CPU final norm/lm head"
+        )
+    else:
+        print("implementation: persistent full-layer decode + CPU final norm/lm head")
     print(f"prompt_len: {input_ids.shape[1]}")
     print(f"max_new_tokens: {args.max_new_tokens}")
     print(f"prompt_next_token: {first_token} text={first_text!r}")
@@ -948,6 +601,21 @@ def run_generate(
     generated_tokens = [first_token]
     npu_state = clone_decode_state(prefill_state)
     ref_state = clone_decode_state(prefill_state)
+    fast_buffers = None
+    if args.fast_generate:
+        first_op, _first_op_func = get_position_op(prefill_state.position)
+        setup_start = time.perf_counter()
+        fast_buffers = prepare_fast_generate_buffers(
+            model,
+            prefill_state,
+            first_op,
+        )
+        setup_s = time.perf_counter() - setup_start
+        setup_timing = fast_buffers.timing
+        print(f"fast_generate_setup_s: {setup_s:.6f}")
+        print(f"fast_generate_weight_pack_s: {setup_timing.weight_pack_s:.6f}")
+        print(f"fast_generate_weight_xrt_s: {setup_timing.weight_xrt_s:.6f}")
+        print(f"fast_generate_cache_xrt_s: {setup_timing.cache_xrt_s:.6f}")
     failed = False
 
     for token_idx in range(1, args.max_new_tokens):
@@ -955,16 +623,30 @@ def run_generate(
         position = npu_state.position
         op, op_func = get_position_op(position)
         start = time.perf_counter()
-        npu_hidden, npu_time = run_full_layer_decode_hidden(
-            args,
-            model,
-            npu_state,
-            current_token,
-            op,
-            op_func,
-        )
+        fast_timing = None
+        if args.fast_generate:
+            npu_hidden, npu_time, fast_timing = run_full_layer_decode_hidden_fast(
+                model,
+                current_token,
+                position,
+                op,
+                op_func,
+                fast_buffers,
+            )
+            npu_state.position += 1
+        else:
+            npu_hidden, npu_time = run_full_layer_decode_hidden(
+                args,
+                model,
+                npu_state,
+                current_token,
+                op,
+                op_func,
+            )
         decode_s = time.perf_counter() - start
+        final_start = time.perf_counter()
         npu_logits = final_logits_from_hidden(model, npu_hidden)
+        final_s = time.perf_counter() - final_start
         npu_next = int(torch.argmax(npu_logits[:, -1, :], dim=-1).item())
         npu_text = tokenizer.decode([npu_next], skip_special_tokens=True)
         generated_tokens.append(npu_next)
@@ -973,6 +655,16 @@ def run_generate(
         print(f"decode_position: {position}")
         print(f"npu_layer_time_us_total: {npu_time / 1e3:.3f}")
         print(f"decode_s: {decode_s:.6f}")
+        print(f"cpu_final_lm_head_s: {final_s:.6f}")
+        if fast_timing is not None:
+            print(f"fast_hidden_sync_s: {fast_timing.hidden_sync_s:.6f}")
+            print(f"fast_rope_sync_s: {fast_timing.rope_sync_s:.6f}")
+            print(f"fast_op_call_s: {fast_timing.op_call_s:.6f}")
+            print(f"fast_output_drain_s: {fast_timing.output_drain_s:.6f}")
+            print(
+                "fast_layer_residual_clone_s: "
+                f"{fast_timing.layer_residual_clone_s:.6f}"
+            )
         print(f"npu_next_token: {npu_next} text={npu_text!r}")
 
         if args.verify_generate:
@@ -1042,7 +734,7 @@ def main():
 
     context = AIEContext(build_dir=args.build_dir)
     if args.qkv_diagnostic_bundle is not None:
-        failed = run_qkv_diagnostic_bundle(args, model, context)
+        failed = run_qkv_diagnostic_bundle(args.qkv_diagnostic_bundle, model, context)
         if failed:
             raise SystemExit(1)
         return

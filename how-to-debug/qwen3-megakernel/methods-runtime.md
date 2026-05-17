@@ -210,3 +210,49 @@ layer_17_qkv_diagnostic_bundle: build_qwen3_persistent_multilayer/diagnostics/qk
 ```
 
 Do this before interpreting a serialization crash as an NPU dataflow failure.
+
+## 32. Split Wall Time From NPU Time
+
+Use when decode is numerically correct but throughput is far worse than the
+sum of AIE kernel times suggests.
+
+Diagnostic command used:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+.venv/bin/python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+  --stage generate \
+  --fast-generate \
+  --verify-generate \
+  --max-new-tokens 4 \
+  --build-dir build_qwen3_persistent_generate \
+  --prompt 'Count from one to five.' \
+  --raw-prompt
+```
+
+Before the fast path, persistent generate spent about 1.3-1.6 s of wall time
+per decoded token while the reported NPU layer time was about 250 ms. That gap
+was too large to explain with compute kernels.
+
+Break the wall time into these buckets before changing the graph:
+
+```text
+weight_pack_s
+weight_xrt_s
+cache_xrt_s
+hidden_sync_s
+rope_sync_s
+op_call_s
+output_drain_s
+cpu_final_lm_head_s
+```
+
+The diagnosed bottleneck was repeated host/runtime work: per-token, per-layer
+weight packing, `XRTTensor` creation, and full KV-cache drain/fill. Reusing
+packed weight BOs and keeping each layer's cache as an XRT inout buffer changed
+the measured decode wall time to about 0.25-0.27 s/token while preserving token
+matches against the cached CPU reference.
+
+Do this before moving math into a larger megakernel. If wall time is dominated
+by Python/XRT setup, changing the external kernel arithmetic will not address
+the observed problem.

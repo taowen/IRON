@@ -332,3 +332,56 @@ Accepted recheck:
 layer_17_qkv_diagnostic_bundle_tensor_done: hidden shape=(1024,)
 layer_17_qkv_diagnostic_bundle: build_qwen3_persistent_multilayer/diagnostics/qkv_boundary_layer_17.npz
 ```
+
+## Decode Wall Time Is Much Larger Than NPU Time
+
+Symptom:
+
+```text
+npu_layer_time_us_total: about 250000
+decode_s: about 1.3-1.6
+```
+
+Diagnostic:
+
+```text
+Print separate setup, sync, call, drain, and CPU final-head timers. Compare
+`decode_s` with `npu_layer_time_us_total` before changing AIE kernels.
+```
+
+Evidence found after adding the split:
+
+```text
+fast_generate_setup_s: 0.493570
+fast_generate_weight_pack_s: 0.121498
+fast_generate_weight_xrt_s: 0.301134
+fast_generate_cache_xrt_s: 0.024689
+fast_op_call_s: 0.250842
+fast_output_drain_s: 0.001958
+decode_s: 0.256877
+token_match: True
+```
+
+Root cause:
+
+```text
+The slow path rebuilt per-layer weight BOs and copied the full KV cache through
+host memory on every decoded token. The external kernels were not the primary
+wall-time bottleneck.
+```
+
+Fix:
+
+```text
+Add --fast-generate: pack weights once, reuse each layer's weight XRTTensor,
+keep each layer's KV cache in an XRT inout buffer across decode positions, and
+drain only the layer residual needed for the host-driven layer loop.
+```
+
+Accepted recheck:
+
+```text
+--fast-generate --verify-generate --max-new-tokens 4
+token_match: True for positions 6, 7, and 8
+decode_s: 0.249-0.257 per NPU-decoded token
+```
