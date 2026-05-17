@@ -8,7 +8,7 @@ from __future__ import annotations
 import torch
 
 from iron.applications.qwen3_0_6b.qwen3_cpu import Qwen3ForCausalLM
-from iron.applications.qwen3_0_6b.qwen3_persistent_refs import rope_lut_for_position
+from iron.applications.qwen3_0_6b.persistent.refs import rope_lut_for_position
 
 
 def host_owned_tensor(tensor: torch.Tensor) -> torch.Tensor:

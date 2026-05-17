@@ -194,7 +194,7 @@ def test_qwen3_megakernel_lint():
     test_dir = Path(__file__).parent
     command = [
         sys.executable,
-        str(test_dir / "qwen3_megakernel.py"),
+        str(test_dir / "full_elf" / "main.py"),
         "--model",
         model,
         "--num-layers",
@@ -217,7 +217,7 @@ def test_qwen3_megakernel_one_step_decode():
     test_dir = Path(__file__).parent
     command = [
         sys.executable,
-        str(test_dir / "qwen3_megakernel.py"),
+        str(test_dir / "full_elf" / "main.py"),
         "--model",
         model,
         "--num-layers",
@@ -242,7 +242,7 @@ def test_qwen3_persistent_input_rmsnorm():
     test_dir = Path(__file__).parent
     command = [
         sys.executable,
-        str(test_dir / "qwen3_persistent.py"),
+        str(test_dir / "persistent" / "main.py"),
         "--model",
         model,
         "--stage",
@@ -265,7 +265,7 @@ def test_qwen3_persistent_input_rmsnorm_qkv():
     test_dir = Path(__file__).parent
     command = [
         sys.executable,
-        str(test_dir / "qwen3_persistent.py"),
+        str(test_dir / "persistent" / "main.py"),
         "--model",
         model,
         "--stage",
@@ -288,7 +288,7 @@ def test_qwen3_persistent_input_rmsnorm_qkv_rope_cache():
     test_dir = Path(__file__).parent
     command = [
         sys.executable,
-        str(test_dir / "qwen3_persistent.py"),
+        str(test_dir / "persistent" / "main.py"),
         "--model",
         model,
         "--stage",
@@ -311,7 +311,7 @@ def test_qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax():
     test_dir = Path(__file__).parent
     command = [
         sys.executable,
-        str(test_dir / "qwen3_persistent.py"),
+        str(test_dir / "persistent" / "main.py"),
         "--model",
         model,
         "--stage",
@@ -334,7 +334,7 @@ def test_qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax_context():
     test_dir = Path(__file__).parent
     command = [
         sys.executable,
-        str(test_dir / "qwen3_persistent.py"),
+        str(test_dir / "persistent" / "main.py"),
         "--model",
         model,
         "--stage",
@@ -357,7 +357,7 @@ def test_qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax_context_o_
     test_dir = Path(__file__).parent
     command = [
         sys.executable,
-        str(test_dir / "qwen3_persistent.py"),
+        str(test_dir / "persistent" / "main.py"),
         "--model",
         model,
         "--stage",
@@ -380,7 +380,7 @@ def test_qwen3_persistent_post_attn_rmsnorm_mlp_gate_up():
     test_dir = Path(__file__).parent
     command = [
         sys.executable,
-        str(test_dir / "qwen3_persistent.py"),
+        str(test_dir / "persistent" / "main.py"),
         "--model",
         model,
         "--stage",
@@ -403,7 +403,7 @@ def test_qwen3_persistent_post_attn_mlp_down_residual():
     test_dir = Path(__file__).parent
     command = [
         sys.executable,
-        str(test_dir / "qwen3_persistent.py"),
+        str(test_dir / "persistent" / "main.py"),
         "--model",
         model,
         "--stage",
@@ -426,7 +426,7 @@ def test_qwen3_persistent_post_attn_rmsnorm_full_mlp():
     test_dir = Path(__file__).parent
     command = [
         sys.executable,
-        str(test_dir / "qwen3_persistent.py"),
+        str(test_dir / "persistent" / "main.py"),
         "--model",
         model,
         "--stage",
@@ -449,7 +449,7 @@ def test_qwen3_persistent_full_layer():
     test_dir = Path(__file__).parent
     command = [
         sys.executable,
-        str(test_dir / "qwen3_persistent.py"),
+        str(test_dir / "persistent" / "main.py"),
         "--model",
         model,
         "--stage",
@@ -472,7 +472,7 @@ def test_qwen3_persistent_multi_layer_full_layer():
     test_dir = Path(__file__).parent
     command = [
         sys.executable,
-        str(test_dir / "qwen3_persistent.py"),
+        str(test_dir / "persistent" / "main.py"),
         "--model",
         model,
         "--stage",
@@ -497,7 +497,7 @@ def test_qwen3_persistent_fast_generate():
     test_dir = Path(__file__).parent
     command = [
         sys.executable,
-        str(test_dir / "qwen3_persistent.py"),
+        str(test_dir / "persistent" / "main.py"),
         "--model",
         model,
         "--stage",

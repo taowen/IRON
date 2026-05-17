@@ -381,7 +381,7 @@ Diagnostic:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-PYTHONUNBUFFERED=1 .venv/bin/python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+PYTHONUNBUFFERED=1 .venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage multi-layer-full-layer \
   --num-layers 18 \
@@ -411,7 +411,7 @@ Then run the emitted QKV bundle in a separate process:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-PYTHONUNBUFFERED=1 .venv/bin/python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+PYTHONUNBUFFERED=1 .venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --qkv-diagnostic-bundle build_qwen3_persistent_multilayer/diagnostics/qkv_boundary_layer_17.npz \
   --build-dir build_qwen3_persistent_multilayer

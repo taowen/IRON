@@ -15,7 +15,7 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoTokenizer
 
-repo_root = Path(__file__).resolve().parents[3]
+repo_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(repo_root))
 
 from iron.applications.qwen3_0_6b.qwen3_cpu import (  # noqa: E402
@@ -32,25 +32,25 @@ from iron.applications.qwen3_0_6b.qwen3_decode_reference import (  # noqa: E402
     Qwen3CachedReference,
     clone_decode_state,
 )
-from iron.applications.qwen3_0_6b.qwen3_persistent_checks import (  # noqa: E402
+from iron.applications.qwen3_0_6b.persistent.checks import (  # noqa: E402
     full_layer_local_invariants,
     print_tensor_check,
 )
-from iron.applications.qwen3_0_6b.qwen3_persistent_diagnostics import (  # noqa: E402
+from iron.applications.qwen3_0_6b.persistent.diagnostics import (  # noqa: E402
     run_qkv_diagnostic_bundle,
     write_qkv_boundary_diagnostic_bundle,
 )
-from iron.applications.qwen3_0_6b.qwen3_persistent_layout import (  # noqa: E402
+from iron.applications.qwen3_0_6b.persistent.layout import (  # noqa: E402
     build_full_layer_inputs_for_layer,
     host_owned_tensor,
     pack_full_layer_weights,
     unpack_full_layer_outputs,
 )
-from iron.applications.qwen3_0_6b.qwen3_persistent_generate import (  # noqa: E402
+from iron.applications.qwen3_0_6b.persistent.generate import (  # noqa: E402
     prepare_fast_generate_buffers,
     run_full_layer_decode_hidden_fast,
 )
-from iron.applications.qwen3_0_6b.qwen3_persistent_ops import (  # noqa: E402
+from iron.applications.qwen3_0_6b.persistent.ops import (  # noqa: E402
     Qwen3PersistentInputRMSNorm,
     Qwen3PersistentInputRMSNormQKV,
     Qwen3PersistentInputRMSNormQKVRopeCache,
@@ -63,7 +63,7 @@ from iron.applications.qwen3_0_6b.qwen3_persistent_ops import (  # noqa: E402
     Qwen3PersistentPostAttnRMSNormMLPGateUp,
     verification_tolerance,
 )
-from iron.applications.qwen3_0_6b.qwen3_persistent_refs import (  # noqa: E402
+from iron.applications.qwen3_0_6b.persistent.refs import (  # noqa: E402
     build_reference_multi_layer_full_layer,
     build_qk_pair_reference,
     build_reference_input,

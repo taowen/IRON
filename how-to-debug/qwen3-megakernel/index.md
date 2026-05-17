@@ -17,9 +17,13 @@ Use these notes as a debugging map, not as a chronological log.
 Scope:
 
 ```text
-qwen3_megakernel.py   full-ELF FusedMLIROperator correctness scaffold
-qwen3_persistent.py   hand-authored IRON Program/Worker/ObjectFifo bring-up
+persistent/           supported hand-authored IRON Program/Worker/ObjectFifo path
+full_elf/             experimental full-ELF FusedMLIROperator scaffold
 ```
+
+Use `persistent/` as the active correctness and performance-debug baseline.
+Use `full_elf/` as a reference for fused-buffer and LM-head ideas, not as the
+currently accepted generate path.
 
 The current accepted persistent checkpoints are:
 

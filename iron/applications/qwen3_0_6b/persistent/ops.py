@@ -94,7 +94,7 @@ class Qwen3PersistentInputRMSNorm(MLIROperator):
         return PythonGeneratedMLIRArtifact(
             f"{self.name}.mlir",
             DesignGenerator(
-                self.operator_dir / "qwen3_persistent_design.py",
+                self.operator_dir / "design.py",
                 "qwen3_persistent_input_rmsnorm",
                 (
                     aie_utils.get_current_device(),
@@ -223,7 +223,7 @@ class Qwen3PersistentInputRMSNormQKV(MLIROperator):
         return PythonGeneratedMLIRArtifact(
             f"{self.name}.mlir",
             DesignGenerator(
-                self.operator_dir / "qwen3_persistent_design.py",
+                self.operator_dir / "design.py",
                 "qwen3_persistent_input_rmsnorm_qkv",
                 (
                     aie_utils.get_current_device(),
@@ -390,7 +390,7 @@ class Qwen3PersistentInputRMSNormQKVRopeCache(Qwen3PersistentInputRMSNormQKV):
         return PythonGeneratedMLIRArtifact(
             f"{self.name}.mlir",
             DesignGenerator(
-                self.operator_dir / "qwen3_persistent_attention_design.py",
+                self.operator_dir / "attention_design.py",
                 "qwen3_persistent_input_rmsnorm_qkv_rope_cache",
                 (
                     aie_utils.get_current_device(),
@@ -511,7 +511,7 @@ class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmax(
         return PythonGeneratedMLIRArtifact(
             f"{self.name}.mlir",
             DesignGenerator(
-                self.operator_dir / "qwen3_persistent_attention_design.py",
+                self.operator_dir / "attention_design.py",
                 "qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax",
                 (
                     aie_utils.get_current_device(),
@@ -623,7 +623,7 @@ class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContext(
         return PythonGeneratedMLIRArtifact(
             f"{self.name}.mlir",
             DesignGenerator(
-                self.operator_dir / "qwen3_persistent_attention_design.py",
+                self.operator_dir / "attention_design.py",
                 "qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax_context",
                 (
                     aie_utils.get_current_device(),
@@ -730,7 +730,7 @@ class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj(
         return PythonGeneratedMLIRArtifact(
             f"{self.name}.mlir",
             DesignGenerator(
-                self.operator_dir / "qwen3_persistent_attention_design.py",
+                self.operator_dir / "attention_design.py",
                 "qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax_context_o_proj",
                 (
                     aie_utils.get_current_device(),
@@ -918,7 +918,7 @@ class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP(
         return PythonGeneratedMLIRArtifact(
             f"{self.name}.mlir",
             DesignGenerator(
-                self.operator_dir / "qwen3_persistent_attention_design.py",
+                self.operator_dir / "attention_design.py",
                 "qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax_context_o_proj_full_mlp",
                 (
                     aie_utils.get_current_device(),
@@ -1105,7 +1105,7 @@ class Qwen3PersistentPostAttnRMSNormMLPGateUp(MLIROperator):
         return PythonGeneratedMLIRArtifact(
             f"{self.name}.mlir",
             DesignGenerator(
-                self.operator_dir / "qwen3_persistent_design.py",
+                self.operator_dir / "design.py",
                 "qwen3_persistent_post_attn_rmsnorm_mlp_gate_up",
                 (
                     aie_utils.get_current_device(),
@@ -1259,7 +1259,7 @@ class Qwen3PersistentPostAttnMLPDownResidual(MLIROperator):
         return PythonGeneratedMLIRArtifact(
             f"{self.name}.mlir",
             DesignGenerator(
-                self.operator_dir / "qwen3_persistent_design.py",
+                self.operator_dir / "design.py",
                 "qwen3_persistent_post_attn_mlp_down_residual",
                 (
                     aie_utils.get_current_device(),
@@ -1447,7 +1447,7 @@ class Qwen3PersistentPostAttnRMSNormFullMLP(MLIROperator):
         return PythonGeneratedMLIRArtifact(
             f"{self.name}.mlir",
             DesignGenerator(
-                self.operator_dir / "qwen3_persistent_design.py",
+                self.operator_dir / "design.py",
                 "qwen3_persistent_post_attn_rmsnorm_full_mlp",
                 (
                     aie_utils.get_current_device(),

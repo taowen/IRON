@@ -12,13 +12,13 @@ import torch
 
 from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor
 from iron.applications.qwen3_0_6b.qwen3_cpu import Qwen3ForCausalLM
-from iron.applications.qwen3_0_6b.qwen3_persistent_layout import (
+from iron.applications.qwen3_0_6b.persistent.layout import (
     host_owned_tensor,
     layer_residual_from_packed_output,
     pack_full_layer_weights_for_layer,
     pack_layer_cache,
 )
-from iron.applications.qwen3_0_6b.qwen3_persistent_refs import rope_lut_for_position
+from iron.applications.qwen3_0_6b.persistent.refs import rope_lut_for_position
 
 
 @dataclass

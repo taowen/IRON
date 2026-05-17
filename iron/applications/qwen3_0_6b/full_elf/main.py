@@ -15,7 +15,7 @@ import numpy as np
 import torch
 from transformers import AutoTokenizer
 
-repo_root = Path(__file__).resolve().parents[3]
+repo_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(repo_root))
 
 from iron.applications.qwen3_0_6b.qwen3_cpu import (  # noqa: E402
@@ -30,7 +30,7 @@ from iron.applications.qwen3_0_6b.qwen3_decode_reference import (  # noqa: E402
     Qwen3DecodeState,
     clone_decode_state,
 )
-from iron.applications.qwen3_0_6b.qwen3_megakernel_debug import (  # noqa: E402
+from iron.applications.qwen3_0_6b.full_elf.debug import (  # noqa: E402
     DEBUG_STAGE_OUTPUTS,
     local_reference_tensors,
     one_layer_reference_tensors,

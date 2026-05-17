@@ -250,7 +250,7 @@ producer because the `Runtime.fill()` was added to the wrong Program variant.
 Diagnosis:
 
 ```bash
-rg -n "qwen3_rc_o_weight|rt.fill\\(" iron/applications/qwen3_0_6b/qwen3_persistent_design.py
+rg -n "qwen3_rc_o_weight|rt.fill\\(" iron/applications/qwen3_0_6b/persistent/design.py
 ```
 
 Required invariant:
@@ -306,4 +306,3 @@ Runtime.drain
 TensorAccessPattern creation
 host verifier slices
 ```
-

@@ -110,7 +110,7 @@ First diagnostic:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-.venv/bin/python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+.venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage input-rmsnorm-qkv-rope-cache-scores-softmax \
   --verify \

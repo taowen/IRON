@@ -130,7 +130,7 @@ Command used:
 ```bash
 rm -rf build_qwen3_megakernel
 source /opt/xilinx/xrt/setup.sh
-.venv/bin/python iron/applications/qwen3_0_6b/qwen3_megakernel.py \
+.venv/bin/python iron/applications/qwen3_0_6b/full_elf/main.py \
   --model Qwen/Qwen3-0.6B \
   --num-layers 1 \
   --max-seq-len 256 \
@@ -258,7 +258,7 @@ Diagnostic:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-.venv/bin/python iron/applications/qwen3_0_6b/qwen3_megakernel.py \
+.venv/bin/python iron/applications/qwen3_0_6b/full_elf/main.py \
   --model Qwen/Qwen3-0.6B \
   --num-layers 1 \
   --max-seq-len 256 \

@@ -98,7 +98,7 @@ Command used:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-.venv/bin/python iron/applications/qwen3_0_6b/qwen3_megakernel.py \
+.venv/bin/python iron/applications/qwen3_0_6b/full_elf/main.py \
   --model Qwen/Qwen3-0.6B \
   --num-layers 1 \
   --max-seq-len 256 \
@@ -140,7 +140,7 @@ Use when a single run is wrong but the wrongness may depend on state.
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-.venv/bin/python iron/applications/qwen3_0_6b/qwen3_megakernel.py \
+.venv/bin/python iron/applications/qwen3_0_6b/full_elf/main.py \
   --model Qwen/Qwen3-0.6B \
   --num-layers 1 \
   --max-seq-len 256 \
@@ -220,7 +220,7 @@ Diagnostic command used:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-.venv/bin/python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+.venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
   --stage generate \
   --fast-generate \
   --verify-generate \

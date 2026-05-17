@@ -192,7 +192,7 @@ prefixes of one fixed full-model state.
 The accepted ladder pins the prefill/token/cache reference:
 
 ```bash
-PYTHONUNBUFFERED=1 .venv/bin/python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+PYTHONUNBUFFERED=1 .venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage multi-layer-full-layer \
   --num-layers 16 \
@@ -252,7 +252,7 @@ Do not switch to the smaller xclbin inside the same diagnostic until tensor
 lifetime is proven safe. Export a host-owned bundle, then run a fresh process:
 
 ```bash
-PYTHONUNBUFFERED=1 .venv/bin/python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+PYTHONUNBUFFERED=1 .venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --qkv-diagnostic-bundle build_qwen3_persistent_multilayer/diagnostics/qkv_boundary_layer_17.npz \
   --build-dir build_qwen3_persistent_multilayer

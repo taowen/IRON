@@ -12,6 +12,15 @@ used to validate architecture details before moving the graph onto IRON
 operators. It includes Q/K RMSNorm, Qwen3 RoPE, GQA, SwiGLU, tied embeddings,
 and greedy generation.
 
+Implementation layout:
+
+```text
+qwen3_cpu.py              CPU model/reference runner
+qwen3_decode_reference.py cached CPU decode reference
+persistent/              supported IRON persistent Program path
+full_elf/                experimental full-ELF fused scaffold
+```
+
 ## Run
 
 ```bash
@@ -28,15 +37,18 @@ reuse an existing checkout.
 
 ## Decode Megakernel Bring-Up
 
-`qwen3_megakernel.py` builds a performance-first single-token decode graph using
-IRON full-ELF fusion. It is a decode path, not prefill: prompt/KV-cache creation
-is still handled by the CPU reference, and the fused graph consumes one token,
-updates K/V cache, and produces logits.
+`full_elf/main.py` builds a performance-first single-token decode graph using
+IRON full-ELF fusion. This path is experimental and retained as a higher
+performance scaffold, not the currently supported generate path.
+
+It is a decode path, not prefill: prompt/KV-cache creation is still handled by
+the CPU reference, and the fused graph consumes one token, updates K/V cache,
+and produces logits.
 
 Use the static linter before compiling:
 
 ```bash
-python iron/applications/qwen3_0_6b/qwen3_megakernel.py \
+python iron/applications/qwen3_0_6b/full_elf/main.py \
   --model Qwen/Qwen3-0.6B \
   --num-layers 1 \
   --max-seq-len 256 \
@@ -47,7 +59,7 @@ Compile a layer-limited smoke megakernel:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-python iron/applications/qwen3_0_6b/qwen3_megakernel.py \
+python iron/applications/qwen3_0_6b/full_elf/main.py \
   --model Qwen/Qwen3-0.6B \
   --num-layers 1 \
   --max-seq-len 256 \
@@ -58,7 +70,7 @@ Verify one single-layer decode step against the PyTorch cached reference:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-python iron/applications/qwen3_0_6b/qwen3_megakernel.py \
+python iron/applications/qwen3_0_6b/full_elf/main.py \
   --model Qwen/Qwen3-0.6B \
   --num-layers 1 \
   --max-seq-len 256 \
@@ -80,7 +92,7 @@ Use a separate build directory for debug graphs so debug drains do not share
 cached artifacts with the normal performance path:
 
 ```bash
-python iron/applications/qwen3_0_6b/qwen3_megakernel.py \
+python iron/applications/qwen3_0_6b/full_elf/main.py \
   --model Qwen/Qwen3-0.6B \
   --num-layers 1 \
   --max-seq-len 256 \
@@ -98,15 +110,18 @@ runtime extension.
 
 ## Persistent Megakernel Bring-Up
 
-`qwen3_persistent.py` is the hand-authored IRON path that moves toward the
-AlpinDale-style decode megakernel. It does not use `FusedMLIROperator`; it
-builds an explicit `Program` with `Worker` and `ObjectFifo` stages.
+`persistent/main.py` is the hand-authored IRON path that moves toward the
+AlpinDale-style decode megakernel. It is the currently supported Qwen3 NPU
+bring-up path.
+
+This path does not use `FusedMLIROperator`; it builds an explicit `Program`
+with `Worker` and `ObjectFifo` stages.
 
 The first implemented stage is the layer-0 single-token input RMSNorm:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage input-rmsnorm \
   --verify \
@@ -132,7 +147,7 @@ dataflow boundary:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage input-rmsnorm-qkv \
   --verify \
@@ -158,7 +173,7 @@ The third implemented stage adds Q/K RMSNorm, RoPE, and KV cache write:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage input-rmsnorm-qkv-rope-cache \
   --verify \
@@ -184,7 +199,7 @@ same five runtime BOs:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage input-rmsnorm-qkv-rope-cache-scores-softmax \
   --verify \
@@ -205,7 +220,7 @@ The next checkpoint adds the accurate-version PV/context half of attention:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage input-rmsnorm-qkv-rope-cache-scores-softmax-context \
   --verify \
@@ -228,7 +243,7 @@ The next checkpoint adds attention output projection and residual add:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj \
   --verify \
@@ -253,7 +268,7 @@ it to the already full attention graph:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage post-attn-rmsnorm-mlp-gate-up \
   --verify \
@@ -279,7 +294,7 @@ residual add:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage post-attn-mlp-down-residual \
   --verify \
@@ -297,7 +312,7 @@ persistent full-MLP graph:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage post-attn-rmsnorm-full-mlp \
   --verify \
@@ -322,7 +337,7 @@ as a single-layer decode primitive:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage multi-layer-full-layer \
   --num-layers 4 \

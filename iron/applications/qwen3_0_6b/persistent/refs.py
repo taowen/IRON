@@ -16,7 +16,7 @@ from iron.applications.qwen3_0_6b.qwen3_cpu import (
 )
 from iron.applications.qwen3_0_6b.qwen3_decode_reference import Qwen3CachedReference
 from iron.applications.qwen3_0_6b.qwen3_decode_reference import clone_decode_state
-from iron.applications.qwen3_0_6b.qwen3_megakernel_debug import (
+from iron.applications.qwen3_0_6b.full_elf.debug import (
     one_layer_reference_tensors,
 )
 
