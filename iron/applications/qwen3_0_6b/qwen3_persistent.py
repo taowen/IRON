@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from transformers import AutoTokenizer
@@ -27,6 +28,10 @@ from iron.applications.qwen3_0_6b.qwen3_cpu import (  # noqa: E402
     repeat_kv,
     resolve_model_dir,
     rms_norm,
+)
+from iron.applications.qwen3_0_6b.qwen3_decode_reference import (  # noqa: E402
+    Qwen3CachedReference,
+    clone_decode_state,
 )
 from iron.applications.qwen3_0_6b.qwen3_persistent_ops import (  # noqa: E402
     Qwen3PersistentInputRMSNorm,
@@ -64,6 +69,7 @@ from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor  # noqa: E402
 
 FULL_LAYER_STAGE = "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
 MULTI_LAYER_FULL_LAYER_STAGE = "multi-layer-full-layer"
+GENERATE_STAGE = "generate"
 
 
 def assert_standard_runtime_available():
@@ -95,6 +101,7 @@ def parse_args():
             "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
             FULL_LAYER_STAGE,
             MULTI_LAYER_FULL_LAYER_STAGE,
+            GENERATE_STAGE,
             "post-attn-rmsnorm-mlp-gate-up",
             "post-attn-mlp-down-residual",
             "post-attn-rmsnorm-full-mlp",
@@ -104,12 +111,43 @@ def parse_args():
     )
     parser.add_argument("--compile-only", action="store_true")
     parser.add_argument("--verify", action="store_true")
+    parser.add_argument(
+        "--verify-generate",
+        action="store_true",
+        help="Compare generated tokens against the cached CPU decode reference",
+    )
     parser.add_argument("--verify-repeat", type=int, default=1)
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=2,
+        help="Number of new tokens to produce for --stage generate",
+    )
     parser.add_argument(
         "--num-layers",
         type=int,
         default=2,
         help="Number of transformer layers to run for multi-layer-full-layer",
+    )
+    parser.add_argument(
+        "--diagnose-depth",
+        action="store_true",
+        help="Print per-layer boundary diagnostics for multi-layer-full-layer",
+    )
+    parser.add_argument(
+        "--reference-num-layers",
+        type=int,
+        default=None,
+        help=(
+            "Number of layers used for prefill/token/cache reference in "
+            "multi-layer-full-layer; defaults to --num-layers"
+        ),
+    )
+    parser.add_argument(
+        "--qkv-diagnostic-bundle",
+        type=Path,
+        default=None,
+        help="Run an isolated QKV diagnostic from a bundle emitted by --diagnose-depth",
     )
     parser.add_argument("--dump-proof", action="store_true")
     return parser.parse_args()
@@ -177,6 +215,12 @@ def unpack_full_layer_outputs(
     op, packed_outputs: torch.Tensor
 ) -> dict[str, torch.Tensor]:
     return {
+        "v_context_stream": packed_outputs[
+            op.v_context_stream_output_base : op.attn_context_output_base
+        ],
+        "attn_context": packed_outputs[
+            op.attn_context_output_base : op.attn_context_flat_output_base
+        ],
         "attn_residual": packed_outputs[
             op.attn_residual_output_base : op.mlp_x_norm_output_base
         ],
@@ -188,6 +232,302 @@ def unpack_full_layer_outputs(
         ],
         "layer_residual": packed_outputs[op.layer_residual_output_base :],
     }
+
+
+def tensor_error_stats(
+    output: torch.Tensor,
+    expected: torch.Tensor,
+    rel_tol: float,
+    abs_tol: float,
+) -> tuple[int, float, float, int | None, float | None, float | None]:
+    output_f = output.flatten().to(torch.float32)
+    expected_f = expected.flatten().to(torch.float32)
+    compare_len = min(output_f.numel(), expected_f.numel())
+    if output_f.numel() != expected_f.numel():
+        first = compare_len
+        errors = abs(output_f.numel() - expected_f.numel())
+        return errors, float("inf"), float("inf"), first, None, None
+    if compare_len == 0:
+        return 0, 0.0, 0.0, None, None, None
+
+    diff = (output_f[:compare_len] - expected_f[:compare_len]).abs()
+    norm = (output_f[:compare_len].abs() + expected_f[:compare_len].abs()).clamp(
+        max=torch.finfo(torch.float32).max
+    )
+    mask = diff >= torch.maximum(
+        torch.tensor(abs_tol, dtype=torch.float32),
+        rel_tol * norm,
+    )
+    errors = int(mask.sum().item())
+    if errors:
+        first = int(mask.nonzero(as_tuple=False)[0].item())
+        first_expected = float(expected_f[first])
+        first_output = float(output_f[first])
+    else:
+        first = None
+        first_expected = None
+        first_output = None
+    return (
+        errors,
+        float(diff.max().item()),
+        float(diff.mean().item()),
+        first,
+        first_expected,
+        first_output,
+    )
+
+
+def print_tensor_check(
+    label: str,
+    output: torch.Tensor,
+    expected: torch.Tensor,
+    rel_tol: float,
+    abs_tol: float,
+) -> int:
+    errors, max_abs, mean_abs, first, first_expected, first_output = tensor_error_stats(
+        output,
+        expected,
+        rel_tol,
+        abs_tol,
+    )
+    print(f"{label}_max_abs: {max_abs:.6f}")
+    print(f"{label}_mean_abs: {mean_abs:.6f}")
+    print(f"{label}_errors: {errors}")
+    if first is not None:
+        if first_expected is None or first_output is None:
+            print(f"{label}_first_error: index={first} shape_mismatch")
+        else:
+            print(
+                f"{label}_first_error: index={first} "
+                f"expected={first_expected:.6f} got={first_output:.6f}"
+            )
+    return errors
+
+
+def host_owned_tensor(tensor: torch.Tensor) -> torch.Tensor:
+    return tensor.detach().clone().contiguous()
+
+
+def full_layer_local_invariants(
+    inputs: dict[str, torch.Tensor],
+    actual: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    ffn_out_local = F.linear(
+        actual["ffn_hidden"].view(1, 1, -1),
+        inputs["W_down"],
+    ).flatten()
+    return {
+        "ffn_out_local": ffn_out_local.contiguous(),
+        "layer_residual_local": (
+            actual["attn_residual"].to(torch.float32)
+            + actual["ffn_out"].to(torch.float32)
+        )
+        .to(dtype=actual["layer_residual"].dtype)
+        .contiguous(),
+    }
+
+
+def run_qkv_boundary_diagnostic(
+    *,
+    model: Qwen3ForCausalLM,
+    qkv_op: Qwen3PersistentInputRMSNormQKV,
+    qkv_op_func,
+    layer_idx: int,
+    inputs: dict[str, torch.Tensor],
+    full_layer_v: torch.Tensor,
+) -> dict[str, int]:
+    hidden_buf = XRTTensor.from_torch(inputs["hidden"].contiguous())
+    packed_weights = torch.cat(
+        [
+            inputs["input_norm_weight"].flatten(),
+            inputs["W_q"].flatten(),
+            inputs["W_k"].flatten(),
+            inputs["W_v"].flatten(),
+        ]
+    ).contiguous()
+    weights_buf = XRTTensor.from_torch(packed_weights)
+    packed_outputs_buf = XRTTensor(
+        (qkv_op.packed_outputs_size,),
+        dtype=hidden_buf.dtype,
+    )
+    result = qkv_op_func(hidden_buf, weights_buf, packed_outputs_buf)
+    packed_outputs_buf.device = "npu"
+    packed_outputs = packed_outputs_buf.to_torch()
+
+    x_norm = packed_outputs[: qkv_op.q_output_base]
+    values = packed_outputs[qkv_op.v_output_base :]
+    x_norm_expected = rms_norm(
+        inputs["hidden"].view(1, 1, -1),
+        inputs["input_norm_weight"],
+        model.config.rms_norm_eps,
+    ).flatten()
+    values_local = F.linear(
+        x_norm.view(1, 1, -1),
+        inputs["W_v"],
+    ).flatten()
+    values_py_ref = F.linear(
+        x_norm_expected.view(1, 1, -1),
+        inputs["W_v"],
+    ).flatten()
+
+    print(f"layer_{layer_idx}_diag_qkv_npu_time_us: {result.npu_time / 1e3:.3f}")
+    return {
+        "x_norm": print_tensor_check(
+            f"layer_{layer_idx}_diag_qkv_x_norm",
+            x_norm,
+            x_norm_expected,
+            rel_tol=0.04,
+            abs_tol=1e-6,
+        ),
+        "values_local": print_tensor_check(
+            f"layer_{layer_idx}_diag_qkv_values_local",
+            values,
+            values_local,
+            rel_tol=0.04,
+            abs_tol=1e-6,
+        ),
+        "full_v_vs_qkv": print_tensor_check(
+            f"layer_{layer_idx}_diag_full_v_vs_qkv_values",
+            full_layer_v,
+            values,
+            rel_tol=0.05,
+            abs_tol=0.025,
+        ),
+        "full_v_vs_py_ref": print_tensor_check(
+            f"layer_{layer_idx}_diag_full_v_vs_py_ref_values",
+            full_layer_v,
+            values_py_ref,
+            rel_tol=0.05,
+            abs_tol=0.025,
+        ),
+    }
+
+
+def write_qkv_boundary_diagnostic_bundle(
+    *,
+    args,
+    layer_idx: int,
+    inputs: dict[str, torch.Tensor],
+    full_layer_v: torch.Tensor,
+) -> Path:
+    def as_float32_array(tensor: torch.Tensor) -> np.ndarray:
+        host_tensor = host_owned_tensor(tensor)
+        return host_tensor.to(torch.float32).cpu().numpy().copy()
+
+    diag_dir = Path(args.build_dir) / "diagnostics"
+    diag_dir.mkdir(parents=True, exist_ok=True)
+    path = diag_dir / f"qkv_boundary_layer_{layer_idx}.npz"
+    print(f"layer_{layer_idx}_qkv_diagnostic_bundle_begin: {path}")
+    sys.stdout.flush()
+    arrays = {"layer_idx": np.array(layer_idx, dtype=np.int64)}
+    tensors = {
+        "hidden": inputs["hidden"],
+        "input_norm_weight": inputs["input_norm_weight"],
+        "W_q": inputs["W_q"],
+        "W_k": inputs["W_k"],
+        "W_v": inputs["W_v"],
+        "full_layer_v": full_layer_v,
+    }
+    for name, tensor in tensors.items():
+        print(f"layer_{layer_idx}_qkv_diagnostic_bundle_tensor_begin: {name}")
+        sys.stdout.flush()
+        arrays[name] = as_float32_array(tensor)
+        print(
+            f"layer_{layer_idx}_qkv_diagnostic_bundle_tensor_done: "
+            f"{name} shape={arrays[name].shape}"
+        )
+        sys.stdout.flush()
+    np.savez(
+        path,
+        **arrays,
+    )
+    print(f"layer_{layer_idx}_qkv_diagnostic_bundle: {path}")
+    sys.stdout.flush()
+    return path
+
+
+def run_qkv_diagnostic_bundle(
+    args, model: Qwen3ForCausalLM, context: AIEContext
+) -> bool:
+    def bf16_from_float32(array: np.ndarray, shape: tuple[int, ...]) -> torch.Tensor:
+        return torch.from_numpy(array.copy()).reshape(shape).to(torch.bfloat16)
+
+    bundle = np.load(args.qkv_diagnostic_bundle)
+    qkv_op = Qwen3PersistentInputRMSNormQKV(
+        hidden_size=model.config.hidden_size,
+        q_size=model.config.num_attention_heads * model.config.head_dim,
+        kv_size=model.config.num_key_value_heads * model.config.head_dim,
+        epsilon=model.config.rms_norm_eps,
+        context=context,
+    )
+    start = time.perf_counter()
+    qkv_op.compile()
+    print("stage: qkv-diagnostic-bundle")
+    print(f"bundle: {args.qkv_diagnostic_bundle}")
+    print(f"diagnostic_qkv_compile_s: {time.perf_counter() - start:.3f}")
+    qkv_diag_preflight = run_persistent_artifact_preflight(
+        mlir_path=Path(qkv_op.xclbin_artifact.mlir_input.filename),
+        arg_specs=len(qkv_op.get_arg_spec()),
+    )
+    print(
+        "diagnostic_qkv_preflight: ok "
+        f"runtime_memrefs={qkv_diag_preflight.runtime_memrefs} "
+        f"arg_specs={qkv_diag_preflight.arg_specs} "
+        f"compute_cores={qkv_diag_preflight.compute_cores} "
+        f"non_advancing_acquires={qkv_diag_preflight.non_advancing_acquires}"
+    )
+    qkv_op_func = qkv_op.get_callable()
+    layer_idx = int(bundle["layer_idx"].item())
+    inputs = {
+        "hidden": bf16_from_float32(bundle["hidden"], (model.config.hidden_size,)),
+        "input_norm_weight": bf16_from_float32(
+            bundle["input_norm_weight"], (model.config.hidden_size,)
+        ),
+        "W_q": bf16_from_float32(
+            bundle["W_q"],
+            (
+                model.config.num_attention_heads * model.config.head_dim,
+                model.config.hidden_size,
+            ),
+        ),
+        "W_k": bf16_from_float32(
+            bundle["W_k"],
+            (
+                model.config.num_key_value_heads * model.config.head_dim,
+                model.config.hidden_size,
+            ),
+        ),
+        "W_v": bf16_from_float32(
+            bundle["W_v"],
+            (
+                model.config.num_key_value_heads * model.config.head_dim,
+                model.config.hidden_size,
+            ),
+        ),
+    }
+    full_layer_v = bf16_from_float32(
+        bundle["full_layer_v"],
+        (model.config.num_key_value_heads * model.config.head_dim,),
+    )
+    errors = run_qkv_boundary_diagnostic(
+        model=model,
+        qkv_op=qkv_op,
+        qkv_op_func=qkv_op_func,
+        layer_idx=layer_idx,
+        inputs=inputs,
+        full_layer_v=full_layer_v,
+    )
+    if errors["x_norm"]:
+        print(f"qkv_diagnostic_result: layer_{layer_idx}_diag_qkv_x_norm")
+    elif errors["values_local"]:
+        print(f"qkv_diagnostic_result: layer_{layer_idx}_diag_qkv_values_local")
+    elif errors["full_v_vs_qkv"]:
+        print(f"qkv_diagnostic_result: layer_{layer_idx}_diag_full_v_vs_qkv_values")
+    elif errors["full_v_vs_py_ref"]:
+        print(f"qkv_diagnostic_result: layer_{layer_idx}_diag_py_ref_drift")
+    else:
+        print(f"qkv_diagnostic_result: layer_{layer_idx}_diag_qkv_passed")
+    return bool(errors["x_norm"] or errors["values_local"] or errors["full_v_vs_qkv"])
 
 
 def run_multi_layer_full_layer(
@@ -202,6 +542,17 @@ def run_multi_layer_full_layer(
             f"num_layers must be in [1, {model.config.num_hidden_layers}], "
             f"got {args.num_layers}"
         )
+    reference_num_layers = (
+        args.num_layers
+        if args.reference_num_layers is None
+        else args.reference_num_layers
+    )
+    if not (args.num_layers <= reference_num_layers <= model.config.num_hidden_layers):
+        raise ValueError(
+            "reference_num_layers must be in "
+            f"[{args.num_layers}, {model.config.num_hidden_layers}], "
+            f"got {reference_num_layers}"
+        )
 
     (
         next_token,
@@ -215,11 +566,15 @@ def run_multi_layer_full_layer(
         input_ids,
         args.max_seq_len,
         args.num_layers,
+        prefill_num_layers=reference_num_layers,
     )
     if position != op.position:
         raise RuntimeError(f"compiled position {op.position} != reference {position}")
 
     failed = False
+    first_failure = None
+    first_full_ref_drift = None
+    first_v_diagnostic = None
     repeat_count = max(1, args.verify_repeat)
     for iteration in range(repeat_count):
         current_hidden = initial_hidden.clone()
@@ -227,6 +582,7 @@ def run_multi_layer_full_layer(
         print(f"iteration: {iteration}")
         print(f"prompt_next_token: {next_token}")
         print(f"decode_position: {position}")
+        print(f"reference_num_layers: {reference_num_layers}")
         for layer_idx in range(args.num_layers):
             inputs = build_full_layer_inputs_for_layer(
                 model,
@@ -261,6 +617,7 @@ def run_multi_layer_full_layer(
             packed_outputs = packed_outputs_buf.to_torch()
             packed_cache = packed_cache_buf.to_torch()
             actual = unpack_full_layer_outputs(op, packed_outputs)
+            pending_v_diagnostic = False
 
             keys_cache = packed_cache[: op.cache_half_size].view(
                 op.kv_heads, args.max_seq_len, op.head_dim
@@ -270,62 +627,388 @@ def run_multi_layer_full_layer(
             )
             actual["keys_cache_current"] = keys_cache[:, position, :].flatten()
             actual["values_cache_current"] = values_cache[:, position, :].flatten()
+            v_context_stream = actual["v_context_stream"].view(
+                op.kv_heads, op.max_seq_len, op.head_dim
+            )
+            actual["v_context_stream_current"] = v_context_stream[
+                :, position, :
+            ].flatten()
 
-            add_expected = (
-                actual["attn_residual"].to(torch.float32)
-                + actual["ffn_out"].to(torch.float32)
-            ).to(dtype=actual["layer_residual"].dtype)
-            add_errors = verify_buffer(
-                actual["layer_residual"],
+            local_invariants = full_layer_local_invariants(inputs, actual)
+            add_errors = print_tensor_check(
                 f"layer_{layer_idx}_residual_add",
-                add_expected,
+                actual["layer_residual"],
+                local_invariants["layer_residual_local"],
                 rel_tol=0.04,
                 abs_tol=1e-6,
             )
             failed = failed or bool(add_errors)
+            if add_errors and first_failure is None:
+                first_failure = f"layer_{layer_idx}_residual_add"
             print(f"layer_{layer_idx}_npu_time_us: {result.npu_time / 1e3:.3f}")
-            print(f"layer_{layer_idx}_residual_add_errors: {len(add_errors)}")
+
+            if args.diagnose_depth:
+                full_ref_tolerances = {
+                    "attn_residual": verification_tolerance(
+                        FULL_LAYER_STAGE, "attn_residual"
+                    ),
+                    "ffn_hidden": verification_tolerance(
+                        FULL_LAYER_STAGE, "ffn_hidden"
+                    ),
+                    "ffn_out": verification_tolerance(FULL_LAYER_STAGE, "ffn_out"),
+                    "layer_residual": verification_tolerance(
+                        FULL_LAYER_STAGE, "layer_residual"
+                    ),
+                }
+                local_checks = {
+                    "ffn_out_local": (
+                        actual["ffn_out"],
+                        local_invariants["ffn_out_local"],
+                        0.04,
+                        1e-6,
+                    ),
+                    "values_cache_vs_context_current": (
+                        actual["values_cache_current"],
+                        actual["v_context_stream_current"],
+                        0.05,
+                        0.025,
+                    ),
+                }
+                for name, (output, expected, rel_tol, abs_tol) in local_checks.items():
+                    errors = print_tensor_check(
+                        f"layer_{layer_idx}_{name}",
+                        output,
+                        expected,
+                        rel_tol,
+                        abs_tol,
+                    )
+                    failed = failed or bool(errors)
+                    if errors and first_failure is None:
+                        first_failure = f"layer_{layer_idx}_{name}"
+                for name, (rel_tol, abs_tol) in full_ref_tolerances.items():
+                    errors = print_tensor_check(
+                        f"layer_{layer_idx}_{name}_full_ref",
+                        actual[name],
+                        local_expected[name],
+                        rel_tol,
+                        abs_tol,
+                    )
+                    if errors and first_full_ref_drift is None:
+                        first_full_ref_drift = f"layer_{layer_idx}_{name}_full_ref"
 
             for name, abs_tol in {
                 "keys_cache_current": 0.5,
+                "v_context_stream_current": 0.025,
                 "values_cache_current": 0.025,
             }.items():
-                expected = local_expected[name]
-                errors = verify_buffer(
-                    actual[name],
+                expected = (
+                    local_expected["values_cache_current"]
+                    if name == "v_context_stream_current"
+                    else local_expected[name]
+                )
+                errors = print_tensor_check(
                     f"layer_{layer_idx}_{name}",
+                    actual[name],
                     expected,
                     rel_tol=0.05,
                     abs_tol=abs_tol,
                 )
-                diff = (
-                    actual[name].to(torch.float32) - expected.to(torch.float32)
-                ).abs()
-                print(f"layer_{layer_idx}_{name}_max_abs: {float(diff.max()):.6f}")
-                print(f"layer_{layer_idx}_{name}_mean_abs: {float(diff.mean()):.6f}")
-                print(f"layer_{layer_idx}_{name}_errors: {len(errors)}")
                 failed = failed or bool(errors)
+                if errors and first_failure is None:
+                    first_failure = f"layer_{layer_idx}_{name}"
+                if (
+                    errors
+                    and args.diagnose_depth
+                    and name
+                    in {
+                        "v_context_stream_current",
+                        "values_cache_current",
+                    }
+                    and first_v_diagnostic is None
+                ):
+                    pending_v_diagnostic = True
 
-            current_hidden = actual["layer_residual"].contiguous()
+            next_hidden = host_owned_tensor(actual["layer_residual"])
+            if pending_v_diagnostic:
+                full_layer_v = host_owned_tensor(actual["v_context_stream_current"])
+                bundle_path = write_qkv_boundary_diagnostic_bundle(
+                    args=args,
+                    layer_idx=layer_idx,
+                    inputs=inputs,
+                    full_layer_v=full_layer_v,
+                )
+                first_v_diagnostic = f"layer_{layer_idx}_qkv_bundle:{bundle_path}"
+
+            current_hidden = next_hidden
 
         final_rel_tol = 0.06
         final_abs_tol = 0.04 * max(1, args.num_layers)
-        final_errors = verify_buffer(
-            current_hidden,
+        final_errors = print_tensor_check(
             "hidden_after_layers",
+            current_hidden,
             expected_hidden,
             rel_tol=final_rel_tol,
             abs_tol=final_abs_tol,
         )
-        final_diff = (
-            current_hidden.to(torch.float32) - expected_hidden.to(torch.float32)
-        ).abs()
         print(f"npu_time_us_total: {total_npu_time / 1e3:.3f}")
-        print(f"hidden_after_layers_max_abs: {float(final_diff.max()):.6f}")
-        print(f"hidden_after_layers_mean_abs: {float(final_diff.mean()):.6f}")
-        print(f"hidden_after_layers_errors: {len(final_errors)}")
         failed = failed or bool(final_errors)
+        if final_errors and first_failure is None:
+            first_failure = "hidden_after_layers"
 
+    if first_failure is None:
+        print("first_failure: none")
+    else:
+        print(f"first_failure: {first_failure}")
+    if first_full_ref_drift is None:
+        print("first_full_ref_drift: none")
+    else:
+        print(f"first_full_ref_drift: {first_full_ref_drift}")
+    if first_v_diagnostic is None:
+        print("first_v_diagnostic: none")
+    else:
+        print(f"first_v_diagnostic: {first_v_diagnostic}")
+
+    return failed
+
+
+def make_full_layer_op_for_position(
+    args,
+    model: Qwen3ForCausalLM,
+    context: AIEContext,
+    position: int,
+):
+    return Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP(
+        hidden_size=model.config.hidden_size,
+        q_size=model.config.num_attention_heads * model.config.head_dim,
+        kv_size=model.config.num_key_value_heads * model.config.head_dim,
+        head_dim=model.config.head_dim,
+        max_seq_len=args.max_seq_len,
+        position=position,
+        intermediate_size=model.config.intermediate_size,
+        epsilon=model.config.rms_norm_eps,
+        context=context,
+    )
+
+
+def compile_full_layer_op_for_position(
+    args,
+    model: Qwen3ForCausalLM,
+    context: AIEContext,
+    position: int,
+):
+    op = make_full_layer_op_for_position(args, model, context, position)
+    start = time.perf_counter()
+    op.compile()
+    compile_s = time.perf_counter() - start
+    preflight = run_persistent_artifact_preflight(
+        mlir_path=Path(op.xclbin_artifact.mlir_input.filename),
+        arg_specs=len(op.get_arg_spec()),
+    )
+    print(
+        f"generate_position_{position}_compile_s: {compile_s:.3f} "
+        f"operator_name={op.name}"
+    )
+    print(
+        f"generate_position_{position}_preflight: ok "
+        f"runtime_memrefs={preflight.runtime_memrefs} "
+        f"arg_specs={preflight.arg_specs} "
+        f"metadata_host_bos={preflight.metadata_host_bos} "
+        f"compute_cores={preflight.compute_cores} "
+        f"max_fifo_buffered_bytes={preflight.max_fifo_buffered_bytes} "
+        f"max_dma_tasks_per_fifo={preflight.max_dma_tasks_per_fifo} "
+        f"max_tile_inputs={preflight.max_compute_tile_inputs} "
+        f"max_tile_outputs={preflight.max_compute_tile_outputs} "
+        f"non_advancing_acquires={preflight.non_advancing_acquires}"
+    )
+    return op, op.get_callable()
+
+
+def final_logits_from_hidden(
+    model: Qwen3ForCausalLM,
+    hidden: torch.Tensor,
+) -> torch.Tensor:
+    x = rms_norm(
+        hidden.view(1, 1, -1).to(dtype=model.dtype),
+        model.w("model.norm.weight"),
+        model.config.rms_norm_eps,
+    )
+    lm_head = (
+        model.w("model.embed_tokens.weight")
+        if model.config.tie_word_embeddings
+        else model.w("lm_head.weight")
+    )
+    return F.linear(x, lm_head)
+
+
+def run_full_layer_decode_hidden(
+    args,
+    model: Qwen3ForCausalLM,
+    state,
+    token_id: int,
+    op,
+    op_func,
+) -> tuple[torch.Tensor, float]:
+    if state.position != op.position:
+        raise RuntimeError(
+            f"compiled position {op.position} != decode state position {state.position}"
+        )
+
+    current_hidden = host_owned_tensor(
+        model.embed(torch.tensor([[token_id]], dtype=torch.long)).flatten()
+    )
+    total_npu_time = 0.0
+    for layer_idx in range(model.config.num_hidden_layers):
+        inputs = build_full_layer_inputs_for_layer(
+            model,
+            layer_idx,
+            current_hidden,
+            state,
+        )
+        hidden_buf = XRTTensor.from_torch(inputs["hidden"])
+        weights_buf = XRTTensor.from_torch(pack_full_layer_weights(inputs))
+        rope_angles_buf = XRTTensor.from_torch(inputs["rope_angles"])
+        packed_outputs_buf = XRTTensor(
+            (op.packed_outputs_size,),
+            dtype=hidden_buf.dtype,
+        )
+        packed_cache_buf = XRTTensor.from_torch(inputs["initial_cache"].clone())
+        result = op_func(
+            hidden_buf,
+            weights_buf,
+            rope_angles_buf,
+            packed_outputs_buf,
+            packed_cache_buf,
+        )
+        total_npu_time += result.npu_time
+        packed_outputs_buf.device = "npu"
+        packed_cache_buf.device = "npu"
+        packed_outputs = packed_outputs_buf.to_torch()
+        packed_cache = packed_cache_buf.to_torch()
+        actual = unpack_full_layer_outputs(op, packed_outputs)
+
+        keys_cache = packed_cache[: op.cache_half_size].view(
+            op.kv_heads, args.max_seq_len, op.head_dim
+        )
+        values_cache = packed_cache[op.cache_half_size :].view(
+            op.kv_heads, args.max_seq_len, op.head_dim
+        )
+        state.keys[layer_idx] = host_owned_tensor(keys_cache)
+        state.values[layer_idx] = host_owned_tensor(values_cache)
+        current_hidden = host_owned_tensor(actual["layer_residual"])
+
+    state.position += 1
+    return current_hidden, total_npu_time
+
+
+def run_generate(
+    args,
+    model: Qwen3ForCausalLM,
+    tokenizer,
+    input_ids: torch.Tensor,
+    context: AIEContext,
+) -> bool:
+    if args.max_new_tokens < 1:
+        raise ValueError(f"max_new_tokens must be positive, got {args.max_new_tokens}")
+    if input_ids.shape[1] + args.max_new_tokens > args.max_seq_len:
+        raise ValueError(
+            f"prompt length {input_ids.shape[1]} + max_new_tokens "
+            f"{args.max_new_tokens} exceeds max_seq_len {args.max_seq_len}"
+        )
+
+    ref = Qwen3CachedReference(
+        model,
+        args.max_seq_len,
+        num_layers=model.config.num_hidden_layers,
+    )
+    prefill_logits, prefill_state = ref.prefill(input_ids)
+    first_token = int(torch.argmax(prefill_logits[:, -1, :], dim=-1).item())
+    first_text = tokenizer.decode([first_token], skip_special_tokens=True)
+    print("stage: generate")
+    print("implementation: persistent full-layer decode + CPU final norm/lm head")
+    print(f"prompt_len: {input_ids.shape[1]}")
+    print(f"max_new_tokens: {args.max_new_tokens}")
+    print(f"prompt_next_token: {first_token} text={first_text!r}")
+
+    op_cache = {}
+
+    def get_position_op(position: int):
+        if position not in op_cache:
+            op_cache[position] = compile_full_layer_op_for_position(
+                args,
+                model,
+                context,
+                position,
+            )
+        return op_cache[position]
+
+    if args.compile_only:
+        get_position_op(prefill_state.position)
+        return False
+
+    generated_tokens = [first_token]
+    npu_state = clone_decode_state(prefill_state)
+    ref_state = clone_decode_state(prefill_state)
+    failed = False
+
+    for token_idx in range(1, args.max_new_tokens):
+        current_token = generated_tokens[-1]
+        position = npu_state.position
+        op, op_func = get_position_op(position)
+        start = time.perf_counter()
+        npu_hidden, npu_time = run_full_layer_decode_hidden(
+            args,
+            model,
+            npu_state,
+            current_token,
+            op,
+            op_func,
+        )
+        decode_s = time.perf_counter() - start
+        npu_logits = final_logits_from_hidden(model, npu_hidden)
+        npu_next = int(torch.argmax(npu_logits[:, -1, :], dim=-1).item())
+        npu_text = tokenizer.decode([npu_next], skip_special_tokens=True)
+        generated_tokens.append(npu_next)
+
+        print(f"token_step: {token_idx}")
+        print(f"decode_position: {position}")
+        print(f"npu_layer_time_us_total: {npu_time / 1e3:.3f}")
+        print(f"decode_s: {decode_s:.6f}")
+        print(f"npu_next_token: {npu_next} text={npu_text!r}")
+
+        if args.verify_generate:
+            ref_logits, ref_state = ref.decode(current_token, ref_state)
+            ref_next = int(torch.argmax(ref_logits[:, -1, :], dim=-1).item())
+            ref_text = tokenizer.decode([ref_next], skip_special_tokens=True)
+            diff = (npu_logits.to(torch.float32) - ref_logits.to(torch.float32)).abs()
+            token_match = npu_next == ref_next
+            failed = failed or not token_match
+            print(f"ref_next_token: {ref_next} text={ref_text!r}")
+            print(f"token_match: {token_match}")
+            print(f"logits_max_abs: {float(diff.max()):.6f}")
+            print(f"logits_mean_abs: {float(diff.mean()):.6f}")
+            if not token_match:
+                top_npu = torch.topk(npu_logits[0, -1].to(torch.float32), k=5)
+                top_ref = torch.topk(ref_logits[0, -1].to(torch.float32), k=5)
+                print(f"npu_top5_ids: {top_npu.indices.tolist()}")
+                print(f"npu_top5_values: {[float(v) for v in top_npu.values]}")
+                print(f"ref_top5_ids: {top_ref.indices.tolist()}")
+                print(f"ref_top5_values: {[float(v) for v in top_ref.values]}")
+
+        if npu_next == model.config.eos_token_id:
+            break
+
+    generated = torch.cat(
+        [
+            input_ids,
+            torch.tensor([generated_tokens], dtype=torch.long),
+        ],
+        dim=1,
+    )
+    new_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+    print(f"generated_ids: {generated.tolist()[0]}")
+    print(f"new_token_ids: {generated_tokens}")
+    print(f"new_text: {new_text!r}")
+    print(f"final_decode_position: {npu_state.position}")
     return failed
 
 
@@ -358,6 +1041,18 @@ def main():
         assert_standard_runtime_available()
 
     context = AIEContext(build_dir=args.build_dir)
+    if args.qkv_diagnostic_bundle is not None:
+        failed = run_qkv_diagnostic_bundle(args, model, context)
+        if failed:
+            raise SystemExit(1)
+        return
+    if args.stage == GENERATE_STAGE:
+        failed = run_generate(args, model, tokenizer, input_ids, context)
+        if args.verify_generate and failed:
+            raise SystemExit(1)
+        gc.collect()
+        return
+
     if args.stage == "input-rmsnorm":
         op = Qwen3PersistentInputRMSNorm(
             hidden_size=model.config.hidden_size,

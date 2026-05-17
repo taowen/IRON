@@ -419,12 +419,15 @@ def build_reference_multi_layer_full_layer(
     input_ids: torch.Tensor,
     max_seq_len: int,
     num_layers: int,
+    prefill_num_layers: int | None = None,
 ):
-    ref = Qwen3CachedReference(model, max_seq_len, num_layers=num_layers)
-    prefill_logits, state = ref.prefill(input_ids)
+    prefill_layers = num_layers if prefill_num_layers is None else prefill_num_layers
+    prefill_ref = Qwen3CachedReference(model, max_seq_len, num_layers=prefill_layers)
+    decode_ref = Qwen3CachedReference(model, max_seq_len, num_layers=num_layers)
+    prefill_logits, state = prefill_ref.prefill(input_ids)
     next_token = int(torch.argmax(prefill_logits[:, -1, :], dim=-1).item())
     hidden = model.embed(torch.tensor([[next_token]], dtype=torch.long)).flatten()
-    expected_hidden, expected_state = ref.decode_hidden(
+    expected_hidden, expected_state = decode_ref.decode_hidden(
         next_token, clone_decode_state(state)
     )
     return (

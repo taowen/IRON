@@ -370,10 +370,11 @@ ffn_hidden_errors: 0
 Symptom:
 
 ```text
-multi-layer-full-layer --num-layers 1  -> hidden_after_layers_errors: 0
-multi-layer-full-layer --num-layers 2  -> hidden_after_layers_errors: 0
-multi-layer-full-layer --num-layers 4  -> hidden_after_layers_errors: 0
-multi-layer-full-layer --num-layers 28 -> hidden_after_layers_errors: 51
+multi-layer-full-layer --num-layers 4  --reference-num-layers 28 -> hidden_after_layers_errors: 0
+multi-layer-full-layer --num-layers 8  --reference-num-layers 28 -> hidden_after_layers_errors: 0
+multi-layer-full-layer --num-layers 12 --reference-num-layers 28 -> hidden_after_layers_errors: 0
+multi-layer-full-layer --num-layers 16 --reference-num-layers 28 -> hidden_after_layers_errors: 0
+multi-layer-full-layer --num-layers 18 --reference-num-layers 28 -> layer_17 V current errors
 ```
 
 Diagnostic:
@@ -383,8 +384,10 @@ source /opt/xilinx/xrt/setup.sh
 PYTHONUNBUFFERED=1 .venv/bin/python iron/applications/qwen3_0_6b/qwen3_persistent.py \
   --model Qwen/Qwen3-0.6B \
   --stage multi-layer-full-layer \
-  --num-layers 28 \
+  --num-layers 18 \
+  --reference-num-layers 28 \
   --verify \
+  --diagnose-depth \
   --build-dir build_qwen3_persistent_multilayer
 ```
 
@@ -395,37 +398,47 @@ Evidence found:
 
 ```text
 preflight: ok
-layer_0..layer_27 residual_add_errors: 0
-layer_0..layer_16 values_cache_current_errors: 0
-layer_17 values_cache_current_errors: 14
-...
-hidden_after_layers_max_abs: 12.000000
-hidden_after_layers_mean_abs: 0.535055
-hidden_after_layers_errors: 51
+layer_17_residual_add_errors: 0
+layer_17_ffn_out_local_errors: 0
+layer_17_values_cache_vs_context_current_errors: 0
+layer_17_keys_cache_current_errors: 0
+layer_17_v_context_stream_current_errors: 14
+layer_17_values_cache_current_errors: 14
+layer_17_qkv_diagnostic_bundle: build_qwen3_persistent_multilayer/diagnostics/qkv_boundary_layer_17.npz
 ```
 
-Interpretation:
+Then run the emitted QKV bundle in a separate process:
 
-```text
-This is not evidence of a new ObjectFifo or placement failure. The layer-local
-residual add invariant continues to pass through all 28 layers, and the short
-1/2/4-layer ladder passes. The failing check is a full PyTorch boundary check
-after many approximate/bf16 NPU layers.
+```bash
+source /opt/xilinx/xrt/setup.sh
+PYTHONUNBUFFERED=1 .venv/bin/python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+  --model Qwen/Qwen3-0.6B \
+  --qkv-diagnostic-bundle build_qwen3_persistent_multilayer/diagnostics/qkv_boundary_layer_17.npz \
+  --build-dir build_qwen3_persistent_multilayer
 ```
 
-False lead checked:
+Evidence found:
 
 ```text
-Trying to rebuild the cache-current reference from the full-layer x_norm debug
-slice produced impossible layer-0 references, so that slice is not currently a
-trusted boundary in the composed full-layer checkpoint.
+layer_17_diag_qkv_values_local_errors: 0
+layer_17_diag_full_v_vs_qkv_values_errors: 0
+layer_17_diag_full_v_vs_py_ref_values_errors: 14
+qkv_diagnostic_result: layer_17_diag_py_ref_drift
 ```
 
-Next diagnostic step:
+Root cause:
 
 ```text
-Add an explicit accepted local boundary for the composed full-layer checkpoint
-before treating full-depth hidden drift as a kernel-dataflow bug. Candidate
-boundaries are attn_residual, ffn_hidden, ffn_out, and layer_residual per layer.
-Only after those pass should final RMSNorm/LM-head accuracy be judged.
+The full-layer V stream and cache writeback are consistent with the standalone
+QKV operator. The mismatch is against a PyTorch RMSNorm-derived reference at a
+strict V tolerance after bf16/NPU approximation, not a V FIFO/cache dataflow
+bug.
+```
+
+False leads ruled out:
+
+```text
+cache writeback DMA/TAP: values_cache_current == v_context_stream_current
+full-layer V FIFO/dataflow: full V == isolated QKV V
+standalone V GEMV: QKV V == F.linear(actual NPU x_norm, W_v)
 ```

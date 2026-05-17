@@ -173,3 +173,40 @@ If workers appear as persistent `aie.core` loops, a later runtime start is not a
 phase barrier. Add an explicit FIFO dependency or restructure the dataflow so
 the always-running workers can safely block.
 
+## 31. Clone XRT Tensor Views Before Crossing Debug Boundaries
+
+Use when a tensor returned by `XRTTensor.to_torch()` is carried into a later
+layer, saved to disk, or passed to a separate diagnostic.
+
+`XRTTensor.to_torch()` returns a zero-copy torch view over the mapped XRT BO.
+`contiguous()` does not copy when the view is already contiguous. If the BO is
+destroyed at the end of the loop iteration, the torch tensor can still point at
+unstable mapped memory.
+
+Symptom found:
+
+```text
+layer_17_qkv_diagnostic_bundle_begin: .../qkv_boundary_layer_17.npz
+layer_17_qkv_diagnostic_bundle_tensor_begin: hidden
+process exits with code -1 and no Python traceback
+```
+
+Accepted fix:
+
+```python
+def host_owned_tensor(tensor):
+    return tensor.detach().clone().contiguous()
+
+current_hidden = host_owned_tensor(actual["layer_residual"])
+full_layer_v = host_owned_tensor(actual["v_context_stream_current"])
+```
+
+Recheck:
+
+```text
+layer_17_qkv_diagnostic_bundle_tensor_done: hidden shape=(1024,)
+...
+layer_17_qkv_diagnostic_bundle: build_qwen3_persistent_multilayer/diagnostics/qkv_boundary_layer_17.npz
+```
+
+Do this before interpreting a serialization crash as an NPU dataflow failure.

@@ -172,3 +172,109 @@ ffn_gate_silu_errors: 0
 ffn_hidden_errors: 0
 ```
 
+## 28. Freeze The Full-Depth Prefill Reference For Prefix Ladders
+
+Use when a multi-layer prefix ladder is meant to isolate the first failing
+decode layer.
+
+The wrong ladder is:
+
+```text
+--num-layers 4
+--num-layers 8
+--num-layers 12
+```
+
+if each run also uses `num_layers` for prefill. That changes the prefill logits,
+the selected decode token, and every KV cache slice, so the runs are no longer
+prefixes of one fixed full-model state.
+
+The accepted ladder pins the prefill/token/cache reference:
+
+```bash
+PYTHONUNBUFFERED=1 .venv/bin/python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+  --model Qwen/Qwen3-0.6B \
+  --stage multi-layer-full-layer \
+  --num-layers 16 \
+  --reference-num-layers 28 \
+  --verify \
+  --build-dir build_qwen3_persistent_multilayer
+```
+
+Accepted evidence:
+
+```text
+num_layers=4  reference_num_layers=28 hidden_after_layers_errors: 0
+num_layers=8  reference_num_layers=28 hidden_after_layers_errors: 0
+num_layers=12 reference_num_layers=28 hidden_after_layers_errors: 0
+num_layers=16 reference_num_layers=28 hidden_after_layers_errors: 0
+num_layers=18 reference_num_layers=28 first_failure: layer_17_v_context_stream_current
+```
+
+## 29. Compare The Same Value Through Two Consumers
+
+Use when one ObjectFIFO value feeds both a compute Worker and a Runtime drain.
+
+For the full-layer checkpoint, `v_fifos[col]` is consumed by:
+
+```text
+v_context_merge_worker -> v_context_stream debug drain -> attention context
+Runtime.drain(v_fifos[col].cons()) -> packed KV cache writeback
+```
+
+Checking only `values_cache_current` cannot tell whether the V projection
+produced the wrong value, or whether the cache writeback path wrote the right
+value to the wrong address. The diagnostic adds both checks:
+
+```text
+v_context_stream_current vs local V reference
+values_cache_current vs local V reference
+values_cache_current vs v_context_stream_current
+```
+
+Interpretation:
+
+```text
+v_context_stream_current passes, values_cache_current fails
+  -> cache writeback DMA/TAP/order is the first bad boundary
+both fail with the same values
+  -> cache writeback is ruled out; isolate the V producer/input boundary next
+values_cache_current and v_context_stream_current differ
+  -> broadcast/multi-consumer FIFO or writeback path needs inspection
+```
+
+## 30. Export A Boundary Bundle And Re-run A Smaller Operator
+
+Use when a composed full-layer checkpoint fails against PyTorch reference, but
+the failing value can be recomputed by an earlier standalone operator.
+
+Do not switch to the smaller xclbin inside the same diagnostic until tensor
+lifetime is proven safe. Export a host-owned bundle, then run a fresh process:
+
+```bash
+PYTHONUNBUFFERED=1 .venv/bin/python iron/applications/qwen3_0_6b/qwen3_persistent.py \
+  --model Qwen/Qwen3-0.6B \
+  --qkv-diagnostic-bundle build_qwen3_persistent_multilayer/diagnostics/qkv_boundary_layer_17.npz \
+  --build-dir build_qwen3_persistent_multilayer
+```
+
+Evidence from layer 17:
+
+```text
+layer_17_diag_qkv_values_local_errors: 0
+layer_17_diag_full_v_vs_qkv_values_errors: 0
+layer_17_diag_full_v_vs_py_ref_values_errors: 14
+qkv_diagnostic_result: layer_17_diag_py_ref_drift
+```
+
+Interpretation:
+
+```text
+full V == isolated QKV V
+isolated QKV V == F.linear(actual NPU x_norm, W_v)
+full V != F.linear(PyTorch rms_norm(hidden), W_v) within strict V tolerance
+```
+
+That rules out the full-layer V FIFO, cache writeback, and standalone V GEMV.
+The active mismatch is a PyTorch-reference boundary after NPU RMSNorm/bf16
+approximation, not a V dataflow bug.

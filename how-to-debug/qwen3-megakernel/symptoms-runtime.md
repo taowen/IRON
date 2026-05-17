@@ -294,3 +294,41 @@ iteration 0: npu_next_token=11853 text='imize'
 iteration 1: npu_next_token=11853 text='imize'
 iteration 2: npu_next_token=11853 text='imize'
 ```
+
+## Diagnostic Bundle Crashes While Serializing A Layer Tensor
+
+Symptom:
+
+```text
+layer_17_qkv_diagnostic_bundle_tensor_begin: hidden
+process exits with code -1 and no Python traceback
+```
+
+Diagnostic:
+
+```text
+Check whether the tensor came from XRTTensor.to_torch() in a previous loop
+iteration. A contiguous slice can still be a zero-copy view over the XRT BO.
+```
+
+Root cause:
+
+```text
+The multi-layer driver carried actual["layer_residual"].contiguous() into the
+next layer. Because the slice was already contiguous, no copy happened. The
+next layer's hidden could outlive the previous iteration's XRT BO.
+```
+
+Fix:
+
+```text
+Clone any XRT-derived tensor that crosses a layer, process, or serialization
+boundary.
+```
+
+Accepted recheck:
+
+```text
+layer_17_qkv_diagnostic_bundle_tensor_done: hidden shape=(1024,)
+layer_17_qkv_diagnostic_bundle: build_qwen3_persistent_multilayer/diagnostics/qkv_boundary_layer_17.npz
+```

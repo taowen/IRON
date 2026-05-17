@@ -24,6 +24,8 @@ methods are split by diagnostic boundary.
 | Structured attention-score mismatch | 18, 20 |
 | Persistent artifact should fail before runtime | 19 |
 | PV/context compile or numeric failure | 14, 21, 22 |
+| Multi-layer tensor handoff or diagnostic serialization crash | 31 |
+| Composed checkpoint fails but standalone producer may pass | 30 |
 
 ### Runtime
 
@@ -34,6 +36,7 @@ methods are split by diagnostic boundary.
 - [6. Assert Runtime Patch Sites](methods-runtime.md#6-assert-runtime-patch-sites)
 - [7. Repeat The Same Input](methods-runtime.md#7-repeat-the-same-input)
 - [17. Treat Runtime Phase Assumptions As Suspect](methods-runtime.md#17-treat-runtime-phase-assumptions-as-suspect)
+- [31. Clone XRT Tensor Views Before Crossing Debug Boundaries](methods-runtime.md#31-clone-xrt-tensor-views-before-crossing-debug-boundaries)
 
 ### Static
 
@@ -59,6 +62,9 @@ methods are split by diagnostic boundary.
 - [22. Match The Accumulation Boundary](methods-numeric.md#22-match-the-accumulation-boundary)
 - [26. Rebuild Local References From The Actual FIFO Boundary](methods-numeric.md#26-rebuild-local-references-from-the-actual-fifo-boundary)
 - [27. Test Approximation Kernels On The Model's Real Input Distribution](methods-numeric.md#27-test-approximation-kernels-on-the-models-real-input-distribution)
+- [28. Freeze The Full-Depth Prefill Reference For Prefix Ladders](methods-numeric.md#28-freeze-the-full-depth-prefill-reference-for-prefix-ladders)
+- [29. Compare The Same Value Through Two Consumers](methods-numeric.md#29-compare-the-same-value-through-two-consumers)
+- [30. Export A Boundary Bundle And Re-run A Smaller Operator](methods-numeric.md#30-export-a-boundary-bundle-and-re-run-a-smaller-operator)
 
 ### Layout
 
