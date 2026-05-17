@@ -67,6 +67,12 @@ def copy_tensor_to_xrt(buffer: XRTTensor, tensor: torch.Tensor) -> float:
     return time.perf_counter() - start
 
 
+def final_hidden_from_packed_output(op, packed_outputs: torch.Tensor) -> torch.Tensor:
+    if packed_outputs.numel() == op.hidden_size:
+        return packed_outputs
+    return layer_residual_from_packed_output(op, packed_outputs)
+
+
 def prepare_fast_generate_buffers(
     model: Qwen3ForCausalLM,
     state,
@@ -288,7 +294,7 @@ def run_full_layer_decode_hidden_fast(
 
         start = time.perf_counter()
         current_hidden = host_owned_tensor(
-            layer_residual_from_packed_output(op, packed_outputs)
+            final_hidden_from_packed_output(op, packed_outputs)
         )
         timing.layer_residual_clone_s += time.perf_counter() - start
 
@@ -391,7 +397,7 @@ def run_full_layer_decode_hidden_fast_chunked(
 
             start = time.perf_counter()
             current_hidden = host_owned_tensor(
-                layer_residual_from_packed_output(single_op, packed_outputs)
+                final_hidden_from_packed_output(single_op, packed_outputs)
             )
             timing.layer_residual_clone_s += time.perf_counter() - start
             layer_idx += 1

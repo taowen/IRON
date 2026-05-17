@@ -62,6 +62,7 @@ from iron.applications.qwen3_0_6b.persistent.ops import (  # noqa: E402
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContext,
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj,
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP,
+    Qwen3PersistentSingleLayerFinalOnly,
     Qwen3PersistentTwoLayerFullLayer,
     Qwen3PersistentPostAttnMLPDownResidual,
     Qwen3PersistentPostAttnRMSNormFullMLP,
@@ -90,6 +91,7 @@ from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor  # noqa: E402
 
 FULL_LAYER_STAGE = "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
 MULTI_LAYER_FULL_LAYER_STAGE = "multi-layer-full-layer"
+SINGLE_LAYER_FINAL_ONLY_STAGE = "single-layer-final-only"
 TWO_LAYER_FULL_LAYER_STAGE = "two-layer-full-layer"
 GENERATE_STAGE = "generate"
 
@@ -145,6 +147,7 @@ def parse_args():
             "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
             FULL_LAYER_STAGE,
             MULTI_LAYER_FULL_LAYER_STAGE,
+            SINGLE_LAYER_FINAL_ONLY_STAGE,
             TWO_LAYER_FULL_LAYER_STAGE,
             GENERATE_STAGE,
             "post-attn-rmsnorm-mlp-gate-up",
@@ -576,6 +579,81 @@ def run_two_layer_full_layer(
     return failed
 
 
+def run_single_layer_final_only(
+    args,
+    model: Qwen3ForCausalLM,
+    input_ids: torch.Tensor,
+    op,
+    op_func,
+) -> bool:
+    next_token, position, inputs, expected_buffers = build_reference_full_layer(
+        model,
+        input_ids,
+        args.max_seq_len,
+    )
+    if position != op.position:
+        raise RuntimeError(f"compiled position {op.position} != reference {position}")
+
+    hidden_buf = XRTTensor.from_torch(inputs["hidden"])
+    weights_buf = XRTTensor.from_torch(pack_full_layer_weights(inputs))
+    rope_angles_buf = XRTTensor.from_torch(inputs["rope_angles"])
+    initial_cache = inputs["initial_cache"].clone()
+
+    failed = False
+    repeat_count = max(1, args.verify_repeat)
+    for iteration in range(repeat_count):
+        output_buf = XRTTensor((op.packed_outputs_size,), dtype=hidden_buf.dtype)
+        cache_buf = XRTTensor.from_torch(initial_cache.clone())
+        result = op_func(
+            hidden_buf,
+            weights_buf,
+            rope_angles_buf,
+            output_buf,
+            cache_buf,
+        )
+        print(f"iteration: {iteration}")
+        print(f"prompt_next_token: {next_token}")
+        print(f"decode_position: {position}")
+        print(f"npu_time_us: {result.npu_time / 1e3:.3f}")
+
+        output_buf.device = "npu"
+        cache_buf.device = "npu"
+        actual_hidden = output_buf.to_torch()
+        packed_cache = cache_buf.to_torch()
+        keys_cache = packed_cache[: op.cache_half_size].view(
+            op.kv_heads, args.max_seq_len, op.head_dim
+        )
+        values_cache = packed_cache[op.cache_half_size :].view(
+            op.kv_heads, args.max_seq_len, op.head_dim
+        )
+
+        checks = {
+            "layer_residual": (
+                actual_hidden,
+                expected_buffers["layer_residual"],
+                0.06,
+                0.04,
+            ),
+            "keys_cache_current": (
+                keys_cache[:, position, :].flatten(),
+                expected_buffers["keys"],
+                0.05,
+                0.5,
+            ),
+            "values_cache_current": (
+                values_cache[:, position, :].flatten(),
+                expected_buffers["values"],
+                0.05,
+                0.025,
+            ),
+        }
+        for name, (actual, expected, rel_tol, abs_tol) in checks.items():
+            errors = print_tensor_check(name, actual, expected, rel_tol, abs_tol)
+            failed = failed or bool(errors)
+
+    return failed
+
+
 def make_full_layer_op_for_position(
     args,
     model: Qwen3ForCausalLM,
@@ -583,6 +661,25 @@ def make_full_layer_op_for_position(
     position: int,
 ):
     return Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP(
+        hidden_size=model.config.hidden_size,
+        q_size=model.config.num_attention_heads * model.config.head_dim,
+        kv_size=model.config.num_key_value_heads * model.config.head_dim,
+        head_dim=model.config.head_dim,
+        max_seq_len=args.max_seq_len,
+        position=position,
+        intermediate_size=model.config.intermediate_size,
+        epsilon=model.config.rms_norm_eps,
+        context=context,
+    )
+
+
+def make_single_layer_final_only_op_for_position(
+    args,
+    model: Qwen3ForCausalLM,
+    context: AIEContext,
+    position: int,
+):
+    return Qwen3PersistentSingleLayerFinalOnly(
         hidden_size=model.config.hidden_size,
         q_size=model.config.num_attention_heads * model.config.head_dim,
         kv_size=model.config.num_key_value_heads * model.config.head_dim,
@@ -634,6 +731,39 @@ def compile_full_layer_op_for_position(
     )
     print(
         f"generate_position_{position}_preflight: ok "
+        f"runtime_memrefs={preflight.runtime_memrefs} "
+        f"arg_specs={preflight.arg_specs} "
+        f"metadata_host_bos={preflight.metadata_host_bos} "
+        f"compute_cores={preflight.compute_cores} "
+        f"max_fifo_buffered_bytes={preflight.max_fifo_buffered_bytes} "
+        f"max_dma_tasks_per_fifo={preflight.max_dma_tasks_per_fifo} "
+        f"max_tile_inputs={preflight.max_compute_tile_inputs} "
+        f"max_tile_outputs={preflight.max_compute_tile_outputs} "
+        f"non_advancing_acquires={preflight.non_advancing_acquires}"
+    )
+    return op, op.get_callable()
+
+
+def compile_single_layer_final_only_op_for_position(
+    args,
+    model: Qwen3ForCausalLM,
+    context: AIEContext,
+    position: int,
+):
+    op = make_single_layer_final_only_op_for_position(args, model, context, position)
+    start = time.perf_counter()
+    op.compile()
+    compile_s = time.perf_counter() - start
+    preflight = run_persistent_artifact_preflight(
+        mlir_path=Path(op.xclbin_artifact.mlir_input.filename),
+        arg_specs=len(op.get_arg_spec()),
+    )
+    print(
+        f"generate_position_{position}_single_final_compile_s: {compile_s:.3f} "
+        f"operator_name={op.name}"
+    )
+    print(
+        f"generate_position_{position}_single_final_preflight: ok "
         f"runtime_memrefs={preflight.runtime_memrefs} "
         f"arg_specs={preflight.arg_specs} "
         f"metadata_host_bos={preflight.metadata_host_bos} "
@@ -784,8 +914,13 @@ def run_generate(
     first_text = tokenizer.decode([first_token], skip_special_tokens=True)
     print("stage: generate")
     if args.fast_generate:
+        chunk_desc = (
+            "single-layer final-only"
+            if args.layer_chunk_size == 1
+            else "two-layer final-only"
+        )
         print(
-            "implementation: persistent full-layer decode with cached XRT "
+            f"implementation: persistent {chunk_desc} decode with cached XRT "
             "weights/cache + CPU final norm/lm head"
         )
     else:
@@ -796,6 +931,7 @@ def run_generate(
     print(f"prompt_next_token: {first_token} text={first_text!r}")
 
     op_cache = {}
+    single_final_op_cache = {}
     two_layer_op_cache = {}
 
     def get_position_op(position: int):
@@ -807,6 +943,18 @@ def run_generate(
                 position,
             )
         return op_cache[position]
+
+    def get_position_single_final_op(position: int):
+        if position not in single_final_op_cache:
+            single_final_op_cache[position] = (
+                compile_single_layer_final_only_op_for_position(
+                    args,
+                    model,
+                    context,
+                    position,
+                )
+            )
+        return single_final_op_cache[position]
 
     def get_position_two_layer_op(position: int):
         if position not in two_layer_op_cache:
@@ -822,7 +970,9 @@ def run_generate(
         if args.layer_chunk_size == 2:
             get_position_two_layer_op(prefill_state.position)
             if model.config.num_hidden_layers % 2:
-                get_position_op(prefill_state.position)
+                get_position_single_final_op(prefill_state.position)
+        elif args.fast_generate:
+            get_position_single_final_op(prefill_state.position)
         else:
             get_position_op(prefill_state.position)
         return False
@@ -838,9 +988,13 @@ def run_generate(
             )
             first_op = first_two_layer_op
             if model.config.num_hidden_layers % 2:
-                first_op, _first_op_func = get_position_op(prefill_state.position)
+                first_op, _first_op_func = get_position_single_final_op(
+                    prefill_state.position
+                )
         else:
-            first_op, _first_op_func = get_position_op(prefill_state.position)
+            first_op, _first_op_func = get_position_single_final_op(
+                prefill_state.position
+            )
             first_two_layer_op = None
         setup_start = time.perf_counter()
         fast_buffers = prepare_fast_generate_buffers(
@@ -874,7 +1028,9 @@ def run_generate(
         if args.fast_generate and args.layer_chunk_size == 2:
             two_layer_op, two_layer_op_func = get_position_two_layer_op(position)
             if model.config.num_hidden_layers % 2:
-                op, op_func = get_position_op(position)
+                op, op_func = get_position_single_final_op(position)
+        elif args.fast_generate:
+            op, op_func = get_position_single_final_op(position)
         else:
             op, op_func = get_position_op(position)
         start = time.perf_counter()
@@ -1134,6 +1290,18 @@ def main():
             epsilon=model.config.rms_norm_eps,
             context=context,
         )
+    elif args.stage == SINGLE_LAYER_FINAL_ONLY_STAGE:
+        op = Qwen3PersistentSingleLayerFinalOnly(
+            hidden_size=model.config.hidden_size,
+            q_size=model.config.num_attention_heads * model.config.head_dim,
+            kv_size=model.config.num_key_value_heads * model.config.head_dim,
+            head_dim=model.config.head_dim,
+            max_seq_len=args.max_seq_len,
+            position=input_ids.shape[1],
+            intermediate_size=model.config.intermediate_size,
+            epsilon=model.config.rms_norm_eps,
+            context=context,
+        )
     elif args.stage in {FULL_LAYER_STAGE, MULTI_LAYER_FULL_LAYER_STAGE}:
         op = Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP(
             hidden_size=model.config.hidden_size,
@@ -1312,6 +1480,24 @@ def main():
                 "worker_graph: reuse the accepted full-layer persistent graph; "
                 "host switches layer weights and per-layer KV cache slices"
             )
+        elif args.stage == SINGLE_LAYER_FINAL_ONLY_STAGE:
+            print(
+                "dispatch_shape: hidden[1024] through one full layer with only "
+                "final hidden[1024] and KV cache current position drained"
+            )
+            print(
+                "runtime_bos: hidden[1024], "
+                f"packed_weights[{op.packed_weights_size}], "
+                "rope_angles[128], "
+                f"final_hidden[{op.packed_outputs_size}], "
+                f"packed_cache[{op.packed_cache_size}]"
+            )
+            print(f"decode_position: {op.position}")
+            print(
+                "worker_graph: accepted full-layer graph with debug drains removed; "
+                "attention/MLP internal FIFOs stay on chip and layer_residual is "
+                "the only host output"
+            )
         elif args.stage == TWO_LAYER_FULL_LAYER_STAGE:
             print(
                 "dispatch_shape: hidden[1024] through layers 0 and 1 in one "
@@ -1359,6 +1545,12 @@ def main():
     op_func = op.get_callable()
     if args.stage == MULTI_LAYER_FULL_LAYER_STAGE:
         failed = run_multi_layer_full_layer(args, model, input_ids, op, op_func)
+        if args.verify and failed:
+            raise SystemExit(1)
+        gc.collect()
+        return
+    if args.stage == SINGLE_LAYER_FINAL_ONLY_STAGE:
+        failed = run_single_layer_final_only(args, model, input_ids, op, op_func)
         if args.verify and failed:
             raise SystemExit(1)
         gc.collect()

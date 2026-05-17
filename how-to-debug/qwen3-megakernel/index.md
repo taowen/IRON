@@ -184,17 +184,25 @@ Persistent generate status:
 
 ```text
 The default generate path remains the debug flow: host switches layer weights,
-drains the updated KV cache, and refills it for the next invocation.
+drains the full debug output and updated KV cache, and refills it for the next
+invocation.
 
-The accepted fast-generate path keeps the same full-layer Program but reuses
-packed weight XRT buffers and keeps each layer's KV cache resident in its XRT
-inout buffer across decode positions. It still drains the layer residual after
-each layer because the layer loop is host-driven.
+The accepted fast-generate path now uses single-layer-final-only for
+--layer-chunk-size 1. It reuses packed weight XRT buffers, keeps each layer's
+KV cache resident in its XRT inout buffer across decode positions, and drains
+only the final hidden state after each layer because the layer loop is still
+host-driven.
 
 Accepted evidence:
 --fast-generate --verify-generate --max-new-tokens 4
 token_match: True for positions 6, 7, and 8
 decode_s: 0.249-0.257 per NPU-decoded token
+
+single-layer-final-only:
+layer_residual_errors: 0
+keys_cache_current_errors: 0
+values_cache_current_errors: 0
+preflight: runtime_memrefs=5 compute_cores=19 non_advancing_acquires=0
 ```
 
 Do not debug from final logits first. Start from the symptom, prove the failing

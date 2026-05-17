@@ -358,6 +358,26 @@ Full-depth `num_layers=28` is intentionally not marked accepted yet:
 layer-local residual-add checks still pass, but the final hidden full-reference
 check exceeds the current tolerance after accumulated bf16/approximation drift.
 
+The performance-oriented single-layer checkpoint keeps the accepted full-layer
+worker graph but removes debug-output drains:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+python iron/applications/qwen3_0_6b/persistent/main.py \
+  --model Qwen/Qwen3-0.6B \
+  --stage single-layer-final-only \
+  --verify \
+  --prompt "Count from one to five." \
+  --raw-prompt \
+  --build-dir build_qwen3_persistent_final_only
+```
+
+This stage still updates the current-position K/V cache, but the only host
+output is `final_hidden[1024]`. On the current NPU2 environment it passes
+`layer_residual`, current K cache, and current V cache checks. Preflight reports
+`runtime_memrefs=5`, `metadata_host_bos=5`, `compute_cores=19`,
+`max_dma_tasks_per_fifo=1`, and `non_advancing_acquires=0`.
+
 The first chunked persistent checkpoint runs two adjacent full layers inside one
 runtime sequence:
 
@@ -393,10 +413,12 @@ python iron/applications/qwen3_0_6b/persistent/main.py \
   --max-new-tokens 2
 ```
 
-Current measurement: chunking reduces host dispatch count but is not yet a
-steady-state throughput win. On the same prompt, chunk=2 still matches the CPU
-reference token, but decode time remains around 0.256s per NPU-decoded token,
-similar to chunk=1.
+Current measurement: `--fast-generate --layer-chunk-size 1` uses the
+single-layer final-only Program and matches the CPU reference token. On the
+same prompt, its steady-state NPU layer time was about 244-248ms per decoded
+token. Chunking reduces host dispatch count but is not yet a steady-state
+throughput win: chunk=2 still matches the CPU reference token, but remains
+around 254-256ms per NPU-decoded token on the same run.
 
 Placement scaling, deeper persistent token loops, final norm/LM head, and
 removing the remaining per-position recompiles are still future persistent
@@ -439,8 +461,8 @@ python iron/applications/qwen3_0_6b/persistent/main.py \
   --max-new-tokens 3
 ```
 
-By default, the runtime still executes one full-layer Program per layer. With
-`--layer-chunk-size 2`, it executes one two-layer Program per adjacent layer
-pair. The packed artifact removes runtime weight packing and establishes a
-global weight buffer plus per-layer offset manifest; final norm/LM head still
-run on the CPU.
+By default, fast generate executes one single-layer final-only Program per
+layer. With `--layer-chunk-size 2`, it executes one two-layer Program per
+adjacent layer pair. The packed artifact removes runtime weight packing and
+establishes a global weight buffer plus per-layer offset manifest; final
+norm/LM head still run on the CPU.

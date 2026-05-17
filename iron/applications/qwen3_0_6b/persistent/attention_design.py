@@ -157,8 +157,8 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
         raise ValueError("full-layer checkpoint expects intermediate_size=3072")
     if layer_iterations not in (1, 2):
         raise ValueError("layer_iterations currently supports only 1 or 2")
-    if final_output_only and (layer_iterations != 2 or not include_full_mlp):
-        raise ValueError("final_output_only is only supported for two-layer full MLP")
+    if final_output_only and not include_full_mlp:
+        raise ValueError("final_output_only requires the full MLP stage")
 
     runtime_hidden_in = ObjectFifo(tile_ty, name="qwen3_rc_hidden_in", depth=2)
     in_hidden = runtime_hidden_in
@@ -2113,7 +2113,84 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     rt = Runtime()
     if final_output_only:
 
-        def fill_full_layer_inputs(layer_idx, weights, angles, cache, tg):
+        def fill_single_layer_inputs(weights, angles, cache, tg):
+            rt.fill(in_weight.prod(), weights, norm_weight_tap, task_group=tg)
+            rt.fill(
+                qk_norm_weight.prod(),
+                weights,
+                qk_norm_weight_tap,
+                task_group=tg,
+            )
+            rt.fill(rope_angles.prod(), angles, rope_angles_tap, task_group=tg)
+            for col in range(num_columns):
+                rt.fill(
+                    q_weight_fifos[col].prod(),
+                    weights,
+                    q_weight_taps[col],
+                    task_group=tg,
+                )
+                rt.fill(
+                    k_weight_fifos[col].prod(),
+                    weights,
+                    k_weight_taps[col],
+                    task_group=tg,
+                )
+                rt.fill(
+                    v_weight_fifos[col].prod(),
+                    weights,
+                    v_weight_taps[col],
+                    task_group=tg,
+                )
+                rt.fill(
+                    o_weight_fifos[col].prod(),
+                    weights,
+                    o_weight_taps[col],
+                    task_group=tg,
+                )
+            rt.fill(
+                mlp_gate_up_weight_rows.prod(),
+                weights,
+                mlp_gate_up_weight_rows_tap,
+                task_group=tg,
+            )
+            rt.fill(
+                mlp_down_weight.prod(),
+                weights,
+                mlp_down_weight_tap,
+                task_group=tg,
+            )
+            for col in range(num_columns):
+                rt.fill(
+                    k_cache_fifos[col].prod(),
+                    cache,
+                    cache_key_blocks_tap,
+                    task_group=tg,
+                )
+                rt.fill(
+                    v_cache_raw_fifos[col].prod(),
+                    cache,
+                    cache_value_blocks_tap,
+                    task_group=tg,
+                )
+
+        def drain_single_layer_cache(cache, tg):
+            for col in range(num_columns):
+                rt.drain(
+                    k_rope_fifos[col].cons(),
+                    cache,
+                    cache_key_tap,
+                    wait=True,
+                    task_group=tg,
+                )
+                rt.drain(
+                    v_fifos[col].cons(),
+                    cache,
+                    cache_value_tap,
+                    wait=True,
+                    task_group=tg,
+                )
+
+        def fill_layer_pair_inputs(layer_idx, weights, angles, cache, tg):
             rt.fill(
                 in_weight.prod(),
                 weights,
@@ -2198,7 +2275,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
                     task_group=tg,
                 )
 
-        def drain_full_layer_cache(layer_idx, cache, tg):
+        def drain_layer_pair_cache(layer_idx, cache, tg):
             for col in range(num_columns):
                 rt.drain(
                     k_rope_fifos[col].cons(),
@@ -2215,34 +2292,58 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
                     task_group=tg,
                 )
 
-        with rt.sequence(
-            tensor_ty,
-            weights_pair_ty,
-            angles_ty,
-            outputs_ty,
-            cache_pair_ty,
-        ) as (
-            hidden,
-            weights,
-            angles,
-            outputs,
-            cache,
-        ):
-            rt.start(*workers)
-            tg = rt.task_group()
-            rt.fill(runtime_hidden_in.prod(), hidden, hidden_tap, task_group=tg)
-            fill_full_layer_inputs(0, weights, angles, cache, tg)
-            fill_full_layer_inputs(1, weights, angles, cache, tg)
-            drain_full_layer_cache(0, cache, tg)
-            drain_full_layer_cache(1, cache, tg)
-            rt.drain(
-                final_layer_residual.cons(),
+        if layer_iterations == 1:
+            with rt.sequence(
+                tensor_ty, weights_ty, angles_ty, outputs_ty, cache_ty
+            ) as (
+                hidden,
+                weights,
+                angles,
                 outputs,
-                final_layer_residual_output_tap,
-                wait=True,
-                task_group=tg,
-            )
-            rt.finish_task_group(tg)
+                cache,
+            ):
+                rt.start(*workers)
+                tg = rt.task_group()
+                rt.fill(runtime_hidden_in.prod(), hidden, hidden_tap, task_group=tg)
+                fill_single_layer_inputs(weights, angles, cache, tg)
+                drain_single_layer_cache(cache, tg)
+                rt.drain(
+                    layer_residual.cons(),
+                    outputs,
+                    final_layer_residual_output_tap,
+                    wait=True,
+                    task_group=tg,
+                )
+                rt.finish_task_group(tg)
+        else:
+            with rt.sequence(
+                tensor_ty,
+                weights_pair_ty,
+                angles_ty,
+                outputs_ty,
+                cache_pair_ty,
+            ) as (
+                hidden,
+                weights,
+                angles,
+                outputs,
+                cache,
+            ):
+                rt.start(*workers)
+                tg = rt.task_group()
+                rt.fill(runtime_hidden_in.prod(), hidden, hidden_tap, task_group=tg)
+                fill_layer_pair_inputs(0, weights, angles, cache, tg)
+                fill_layer_pair_inputs(1, weights, angles, cache, tg)
+                drain_layer_pair_cache(0, cache, tg)
+                drain_layer_pair_cache(1, cache, tg)
+                rt.drain(
+                    final_layer_residual.cons(),
+                    outputs,
+                    final_layer_residual_output_tap,
+                    wait=True,
+                    task_group=tg,
+                )
+                rt.finish_task_group(tg)
         return Program(dev, rt).resolve_program(SequentialPlacer())
 
     with rt.sequence(tensor_ty, weights_ty, angles_ty, outputs_ty, cache_ty) as (
@@ -2782,6 +2883,68 @@ def qwen3_persistent_input_rmsnorm_qkv_rope_cache_scores_softmax_context_o_proj_
         silu_kernel_object=silu_kernel_object,
         mul_kernel_object=mul_kernel_object,
         down_gemv_kernel_object=down_gemv_kernel_object,
+    )
+
+
+def qwen3_persistent_single_layer_final_only(
+    dev,
+    hidden_size,
+    q_size,
+    kv_size,
+    head_dim,
+    max_seq_len,
+    position,
+    intermediate_size,
+    num_columns,
+    tile_size_input,
+    tile_size_output,
+    trace_size,
+    func_prefix="",
+    rms_kernel_object="rms_norm.o",
+    gemv_kernel_object="mv.o",
+    rope_kernel_object="rope.o",
+    attention_kernel_object="qwen3_attention.o",
+    passthrough_kernel_object="passThrough.o",
+    softmax_kernel_object="softmax.o",
+    o_gemv_kernel_object="mv_o_proj.o",
+    add_kernel_object="add.o",
+    mlp_gemv_kernel_object="mv_mlp.o",
+    silu_kernel_object="silu.o",
+    mul_kernel_object="mul.o",
+    down_gemv_kernel_object="mv_down.o",
+):
+    """Single Qwen3 full layer that drains only the final hidden state."""
+    return _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
+        dev,
+        hidden_size,
+        q_size,
+        kv_size,
+        head_dim,
+        max_seq_len,
+        position,
+        num_columns,
+        tile_size_input,
+        tile_size_output,
+        trace_size,
+        intermediate_size=intermediate_size,
+        func_prefix=func_prefix,
+        rms_kernel_object=rms_kernel_object,
+        gemv_kernel_object=gemv_kernel_object,
+        rope_kernel_object=rope_kernel_object,
+        include_scores_softmax=True,
+        include_context=True,
+        include_o_proj=True,
+        include_full_mlp=True,
+        attention_kernel_object=attention_kernel_object,
+        passthrough_kernel_object=passthrough_kernel_object,
+        softmax_kernel_object=softmax_kernel_object,
+        o_gemv_kernel_object=o_gemv_kernel_object,
+        add_kernel_object=add_kernel_object,
+        mlp_gemv_kernel_object=mlp_gemv_kernel_object,
+        silu_kernel_object=silu_kernel_object,
+        mul_kernel_object=mul_kernel_object,
+        down_gemv_kernel_object=down_gemv_kernel_object,
+        final_output_only=True,
     )
 
 

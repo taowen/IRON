@@ -1006,6 +1006,63 @@ class Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP(
 
 
 @dataclass
+class Qwen3PersistentSingleLayerFinalOnly(
+    Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP
+):
+    """Single Qwen3 full layer that returns only the final hidden state."""
+
+    @property
+    def packed_outputs_size(self):
+        return self.hidden_size
+
+    def get_mlir_artifact(self):
+        return PythonGeneratedMLIRArtifact(
+            f"{self.name}.mlir",
+            DesignGenerator(
+                self.operator_dir / "attention_design.py",
+                "qwen3_persistent_single_layer_final_only",
+                (
+                    aie_utils.get_current_device(),
+                    self.hidden_size,
+                    self.q_size,
+                    self.kv_size,
+                    self.head_dim,
+                    self.max_seq_len,
+                    self.position,
+                    self.intermediate_size,
+                    self.num_aie_columns,
+                    self.tile_size_input,
+                    self.tile_size_output,
+                    0,
+                ),
+                {
+                    "rms_kernel_object": self._rms_kernel_object,
+                    "gemv_kernel_object": self._gemv_kernel_object,
+                    "rope_kernel_object": self._rope_kernel_object,
+                    "attention_kernel_object": self._attention_kernel_object,
+                    "passthrough_kernel_object": self._passthrough_kernel_object,
+                    "softmax_kernel_object": self._softmax_kernel_object,
+                    "o_gemv_kernel_object": self._o_gemv_kernel_object,
+                    "add_kernel_object": self._add_kernel_object,
+                    "mlp_gemv_kernel_object": self._mlp_gemv_kernel_object,
+                    "silu_kernel_object": self._silu_kernel_object,
+                    "mul_kernel_object": self._mul_kernel_object,
+                    "down_gemv_kernel_object": self._down_gemv_kernel_object,
+                },
+            ),
+        )
+
+    def get_arg_spec(self):
+        return [
+            AIERuntimeArgSpec("in", (self.hidden_size,)),
+            AIERuntimeArgSpec("in", (self.packed_weights_size,)),
+            AIERuntimeArgSpec("in", (self.head_dim,)),
+            AIERuntimeArgSpec("out", (self.packed_outputs_size,)),
+            AIERuntimeArgSpec("inout", (self.packed_cache_size,)),
+        ]
+
+
+@dataclass
 class Qwen3PersistentTwoLayerFullLayer(
     Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP
 ):
