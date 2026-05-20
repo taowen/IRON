@@ -14,6 +14,9 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from iron.applications.qwen3_0_6b.persistent.ops import (
+    Qwen3PersistentNLayerFinalOnly,
+)
 from iron.applications.qwen3_0_6b.persistent.layout import (
     PACKED_WEIGHTS_BIN,
     PACKED_WEIGHTS_MANIFEST,
@@ -268,6 +271,11 @@ module {{
 
     with pytest.raises(Qwen3PreflightError, match="33 DMA tasks"):
         run_persistent_artifact_preflight(mlir_path=mlir_path, arg_specs=1)
+
+
+def test_qwen3_n_layer_final_only_rejects_unsupported_chunk():
+    with pytest.raises(ValueError, match="at most 4 layers per chunk"):
+        Qwen3PersistentNLayerFinalOnly(layer_iterations=8)
 
 
 def test_qwen3_preflight_catches_non_advancing_acquire(tmp_path):

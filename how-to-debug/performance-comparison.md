@@ -234,3 +234,56 @@ the single/two-layer code split. It is still not the main bottleneck: the next
 real performance target is reducing repeated per-layer weight/cache DMA and
 external-kernel scalar work, not only host output volume or dispatch count.
 ```
+
+### Follow-up: Prefix KV Blocks Are A Real Decode Win
+
+Symptom:
+
+```text
+decode position 6 still streamed all max_seq_len=256 K/V cache rows
+```
+
+Cause:
+
+```text
+The attention score/context workers and Runtime.fill TAPs used
+max_seq_len // cache_block_seq blocks unconditionally. For early decode
+positions, most transferred K/V blocks were future rows that the causal mask
+would ignore.
+```
+
+Fix used:
+
+```text
+For final-output-only decode, process active_cache_blocks =
+ceil((position + 1) / cache_block_seq). Keep debug checkpoint streams full-size
+so diagnostic output layouts do not change. Current K/V writeback is drained
+once per chunk with a chunk-shaped TAP instead of one drain per layer.
+```
+
+Accepted evidence on the same prompt:
+
+```text
+n-layer-final-only chunk=4 verify:
+npu_time_us=29134.841
+chunk_hidden_errors=0
+layer0..3 keys/values cache current errors=0
+
+n-layer-final-only chunk=4 verify at decode_position=70:
+npu_time_us=39632.917
+chunk_hidden_errors=0
+layer0..3 keys/values cache current errors=0
+
+generate --fast-generate --layer-chunk-size 4 --max-new-tokens 3:
+token 1: token_match=True npu_layer_time_us_total=184098.641 decode_s=0.187769
+token 2: token_match=True npu_layer_time_us_total=184764.213 decode_s=0.187131
+```
+
+Remaining limit:
+
+```text
+chunk=8 still fails at aiecc. Aggregating current K/V writeback reduces task
+count, but the generated BD uses repeat_count=7 with a two-dimensional scatter
+over layers and KV heads, and still exhausts BD IDs. The supported chunk limit
+is therefore capped at 4 until cache writeback is represented differently.
+```

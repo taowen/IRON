@@ -41,6 +41,7 @@ were used in this repository. Detailed entries are split by failure class.
 - [K Cache Matrix Does Not Fit In L1](symptoms-resources.md#k-cache-matrix-does-not-fit-in-l1)
 - [Debug Pass-Through FIFO Exceeds L1](symptoms-resources.md#debug-pass-through-fifo-exceeds-l1)
 - [K Cache Block DMA Exhausts BD IDs](symptoms-resources.md#k-cache-block-dma-exhausts-bd-ids)
+- [N-Layer Chunk 8 Exhausts Current KV Writeback BD IDs](symptoms-resources.md#n-layer-chunk-8-exhausts-current-kv-writeback-bd-ids)
 - [Full-Layer MLP Worker Exceeds Input DMA Channels](symptoms-resources.md#full-layer-mlp-worker-exceeds-input-dma-channels)
 - [Full-Layer K Project Exceeds Output DMA Channels](symptoms-resources.md#full-layer-k-project-exceeds-output-dma-channels)
 - [Full-Layer Q/K Project Exceeds Input DMA Channels](symptoms-resources.md#full-layer-qk-project-exceeds-input-dma-channels)

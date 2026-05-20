@@ -156,6 +156,8 @@ Checks from the score bring-up:
 Non-unit dimensions cannot use stride=0.
 Large flattened dimensions such as size=8192 can be illegal.
 Break large contiguous blocks into [row, dim] dimensions.
+Repeated scatter dimensions can still exhaust BD IDs even when task count is
+small; inspect repeat_count and the generated bd_dim_layout_array.
 ```
 
 Good K-cache block shape:

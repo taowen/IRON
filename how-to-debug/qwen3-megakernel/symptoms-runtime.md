@@ -432,3 +432,32 @@ Accepted recheck:
 token_match: True for positions 6, 7, and 8
 decode_s: 0.249-0.257 per NPU-decoded token
 ```
+
+## HuggingFace Snapshot Download Fails During Local Verification
+
+Symptom:
+
+```text
+httpx.RemoteProtocolError: Server disconnected without sending a response
+```
+
+Diagnostic:
+
+```bash
+ls ~/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots
+```
+
+Root cause:
+
+```text
+The model was already cached locally, but passing the repo id made
+resolve_model_dir() call snapshot_download(), which still contacted
+HuggingFace before returning the cached snapshot.
+```
+
+Fix used:
+
+```text
+Pass the local snapshot directory through --model for compile/verify runs.
+This keeps network failures out of megakernel diagnosis.
+```

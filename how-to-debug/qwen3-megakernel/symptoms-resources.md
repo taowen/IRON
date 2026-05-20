@@ -218,6 +218,55 @@ If repeated GQA access would require illegal stride=0, reuse K blocks inside a
 worker instead of asking DMA to reread the same block.
 ```
 
+## N-Layer Chunk 8 Exhausts Current KV Writeback BD IDs
+
+Symptom:
+
+```text
+n-layer-final-only --layer-chunk-size 8 --compile-only
+Allocator exhausted available buffer descriptor IDs
+Failed to allocate buffer: "qwen3_full_layer_mlp_down_weight_cons_buff_0"
+```
+
+Diagnostic:
+
+```bash
+rg -n "dma_configure_task_for @qwen3_rc_k_rope_0|dma_configure_task_for @qwen3_rc_v_0" \
+  build_qwen3_persistent_prefix_chunk8/*.mlir
+```
+
+Evidence found:
+
+```text
+The original chunk=8 graph emitted one current-K and one current-V drain task
+per layer for the same FIFO. After aggregating the chunk writeback into one
+drain per FIFO, aiecc still lowered the TAP to repeat_count=7 with dimensions:
+
+[<size = 8, stride = 524288>, <size = 1, stride = 0>,
+ <size = 8, stride = 32768>, <size = 128, stride = 1>]
+
+The failure remained on @qwen3_rc_k_rope_0 and @qwen3_rc_v_0.
+```
+
+Root cause:
+
+```text
+Chunk=8 is not blocked by the attention math. The current N-layer final-only
+runtime expression asks a single FIFO drain to scatter eight layers times eight
+KV heads into the cache chunk. That multidimensional repeated BD chain still
+exceeds the NPU lowering resource budget, and the same graph also has L1
+pressure on the MLP down-weight tile.
+```
+
+Fix used:
+
+```text
+Keep the supported chunk size capped at 4 and fail early in the operator
+constructor. Prefix KV block processing is still kept because it is correct and
+reduces chunk=4 NPU time. A future chunk=8 design needs a different cache
+writeback representation, not another blind placement tweak.
+```
+
 ## Full-Layer MLP Worker Exceeds Input DMA Channels
 
 Symptom:

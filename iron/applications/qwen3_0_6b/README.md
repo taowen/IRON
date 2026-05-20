@@ -381,8 +381,10 @@ layer. Intermediate residuals are routed back on chip as the next layer input;
 only the final hidden is drained. On the current NPU2 environment,
 `--layer-chunk-size 1`, `2`, and `4` pass hidden and current-cache checks.
 Preflight reports `runtime_memrefs=5`, `metadata_host_bos=5`,
-`non_advancing_acquires=0`, and `max_dma_tasks_per_fifo` equal to the chunk
-size.
+`non_advancing_acquires=0`, and `max_dma_tasks_per_fifo=4` for the accepted
+chunk=4 graph. Larger chunk sizes are intentionally rejected in this
+implementation: chunk=8 still exhausts BD/L1 resources in the current
+current-KV writeback/TAP expression.
 
 Fast generate uses this same n-layer checkpoint:
 
@@ -400,14 +402,17 @@ python iron/applications/qwen3_0_6b/persistent/main.py \
 Current measurement on the same prompt and `max_new_tokens=3`:
 
 ```text
-chunk=1: token_match=True, npu_layer_time_us_total ~= 243-246ms
-chunk=2: token_match=True, npu_layer_time_us_total ~= 250-251ms
-chunk=4: token_match=True, npu_layer_time_us_total ~= 249-250ms
+chunk=4 before prefix-KV optimization:
+token_match=True, npu_layer_time_us_total ~= 249-250ms
+
+chunk=4 after prefix-KV optimization:
+token_match=True, npu_layer_time_us_total ~= 184-185ms
 ```
 
-Chunking reduces host dispatch count and code duplication, but it is not yet a
-steady-state throughput win. The current bottleneck is still repeated weight
-and cache DMA plus external-kernel work inside each layer chunk.
+The current performance win comes from processing only the active prefix KV
+blocks for decode instead of always streaming the full `max_seq_len=256` cache.
+The remaining bottleneck is repeated weight DMA plus external-kernel work
+inside each layer chunk.
 
 Placement scaling, deeper persistent token loops, final norm/LM head, and
 removing the remaining per-position recompiles are still future persistent
@@ -451,7 +456,7 @@ python iron/applications/qwen3_0_6b/persistent/main.py \
 ```
 
 By default, fast generate executes the n-layer final-only Program with
-`--layer-chunk-size 1`. Larger values use the same operator class with larger
-weight/cache chunks. The packed artifact removes runtime weight packing and
+`--layer-chunk-size 1`; the current accepted performance setting is
+`--layer-chunk-size 4`. The packed artifact removes runtime weight packing and
 establishes a global weight buffer plus per-layer offset manifest; final
 norm/LM head still run on the CPU.

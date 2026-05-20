@@ -190,20 +190,26 @@ invocation.
 The accepted fast-generate path now uses one n-layer-final-only operator class
 for --layer-chunk-size 1, 2, and 4. It reuses packed weight XRT buffers, keeps
 each chunk's KV cache resident in its XRT inout buffer across decode positions,
-and drains only the final hidden state after each chunk because the chunk loop
-is still host-driven.
+processes only active prefix KV cache blocks during final-only decode, and
+drains only the final hidden state after each chunk because the chunk loop is
+still host-driven.
 
 Accepted evidence:
 --fast-generate --verify-generate --max-new-tokens 3
 chunk=1 token_match: True for positions 6 and 7
 chunk=2 token_match: True for positions 6 and 7
 chunk=4 token_match: True for positions 6 and 7
+chunk=4 after prefix-KV optimization: about 184-185ms NPU layer time per token
 
 n-layer-final-only:
 chunk_hidden_errors: 0 for chunk=1,2,4
 cache current errors: 0 for accepted chunk checks
 preflight: runtime_memrefs=5 compute_cores<=21 non_advancing_acquires=0
 ```
+
+Chunk=8 is not accepted in the current design. It fails NPU lowering with
+current-KV writeback BD exhaustion and MLP down-weight L1 pressure, so the
+operator now rejects chunks larger than 4 before invoking aiecc.
 
 Do not debug from final logits first. Start from the symptom, prove the failing
 boundary, and only then change code.

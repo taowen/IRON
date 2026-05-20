@@ -160,6 +160,12 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     if final_output_only and not include_full_mlp:
         raise ValueError("final_output_only requires the full MLP stage")
 
+    full_cache_blocks = max_seq_len // cache_block_seq
+    active_cache_blocks = (position + cache_block_seq) // cache_block_seq
+    cache_blocks_to_process = (
+        active_cache_blocks if final_output_only else full_cache_blocks
+    )
+
     runtime_hidden_in = ObjectFifo(tile_ty, name="qwen3_rc_hidden_in", depth=2)
     in_hidden = runtime_hidden_in
     hidden_feedback = None
@@ -920,7 +926,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
                 score_softmax0 = score_softmax_pair[0]
                 score_debug1 = score_debug_pair[1]
                 score_softmax1 = score_softmax_pair[1]
-                for block_idx in range_(max_seq_len // cache_block_seq):
+                for block_idx in range_(cache_blocks_to_process):
                     block_i32 = index.casts(T.i32(), block_idx)
                     row_base = block_i32 * cache_block_seq
                     k_cache = k_cache_fifo.acquire(1)
@@ -959,7 +965,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
                 score_softmax_pair = score_softmax_fifo.acquire(2)
                 score_softmax0 = score_softmax_pair[0]
                 score_softmax1 = score_softmax_pair[1]
-                for block_idx in range_(max_seq_len // cache_block_seq):
+                for block_idx in range_(cache_blocks_to_process):
                     block_i32 = index.casts(T.i32(), block_idx)
                     row_base = block_i32 * cache_block_seq
                     k_cache = k_cache_fifo.acquire(1)
@@ -998,7 +1004,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
     def k_cache_debug_worker(in_fifo, out_fifo, copy_kernel):
         for _ in range_(layer_iterations):
             for _ in range_(kv_heads // num_columns):
-                for _ in range_(max_seq_len // cache_block_seq):
+                for _ in range_(cache_blocks_to_process):
                     block = in_fifo.acquire(1)
                     out = out_fifo.acquire(1)
                     copy_kernel(block, out, cache_block_seq, head_dim)
@@ -1016,7 +1022,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
         for _ in range_(layer_iterations):
             for _ in range_(kv_heads // num_columns):
                 current_v = current_v_fifo.acquire(1)
-                for block_idx in range_(max_seq_len // cache_block_seq):
+                for block_idx in range_(cache_blocks_to_process):
                     block_i32 = index.casts(T.i32(), block_idx)
                     row_base = block_i32 * cache_block_seq
                     cached_v = v_cache_fifo.acquire(1)
@@ -1038,7 +1044,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
         for _ in range_(layer_iterations):
             for _ in range_(kv_heads // num_columns):
                 current_v = current_v_fifo.acquire(1)
-                for block_idx in range_(max_seq_len // cache_block_seq):
+                for block_idx in range_(cache_blocks_to_process):
                     block_i32 = index.casts(T.i32(), block_idx)
                     row_base = block_i32 * cache_block_seq
                     cached_v = v_cache_fifo.acquire(1)
@@ -1059,7 +1065,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
                 weight_pair = weight_fifo.acquire(2)
                 weights0 = weight_pair[0]
                 weights1 = weight_pair[1]
-                for block_idx in range_(max_seq_len // cache_block_seq):
+                for block_idx in range_(cache_blocks_to_process):
                     block_i32 = index.casts(T.i32(), block_idx)
                     row_base = block_i32 * cache_block_seq
                     v_block = v_context_fifo.acquire(1)
@@ -1087,7 +1093,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
                 weight_pair = weight_fifo.acquire(2)
                 weights0 = weight_pair[0]
                 weights1 = weight_pair[1]
-                for block_idx in range_(max_seq_len // cache_block_seq):
+                for block_idx in range_(cache_blocks_to_process):
                     block_i32 = index.casts(T.i32(), block_idx)
                     row_base = block_i32 * cache_block_seq
                     v_block = v_context_fifo.acquire(1)
@@ -1116,7 +1122,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
                 weight_pair = weight_fifo.acquire(2)
                 weights0 = weight_pair[0]
                 weights1 = weight_pair[1]
-                for block_idx in range_(max_seq_len // cache_block_seq):
+                for block_idx in range_(cache_blocks_to_process):
                     block_i32 = index.casts(T.i32(), block_idx)
                     row_base = block_i32 * cache_block_seq
                     v_block = v_context_fifo.acquire(1)
@@ -1869,7 +1875,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
         0,
         [
             kv_heads,
-            max_seq_len // cache_block_seq,
+            cache_blocks_to_process,
             cache_block_seq,
             head_dim,
         ],
@@ -1880,7 +1886,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
         kv_size * max_seq_len,
         [
             kv_heads,
-            max_seq_len // cache_block_seq,
+            cache_blocks_to_process,
             cache_block_seq,
             head_dim,
         ],
@@ -1916,7 +1922,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
             layer_idx * cache_size,
             [
                 kv_heads,
-                max_seq_len // cache_block_seq,
+                cache_blocks_to_process,
                 cache_block_seq,
                 head_dim,
             ],
@@ -1929,27 +1935,27 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
             layer_idx * cache_size + kv_size * max_seq_len,
             [
                 kv_heads,
-                max_seq_len // cache_block_seq,
+                cache_blocks_to_process,
                 cache_block_seq,
                 head_dim,
             ],
             [max_seq_len * head_dim, cache_block_seq * head_dim, head_dim, 1],
         )
 
-    def layer_chunk_cache_key_tap(layer_idx):
+    def layer_chunk_cache_key_current_tap():
         return TensorAccessPattern(
             (layer_iterations * cache_size,),
-            layer_idx * cache_size + position * head_dim,
-            [1, 1, kv_heads, head_dim],
-            [0, 0, max_seq_len * head_dim, 1],
+            position * head_dim,
+            [layer_iterations, 1, kv_heads, head_dim],
+            [cache_size, 0, max_seq_len * head_dim, 1],
         )
 
-    def layer_chunk_cache_value_tap(layer_idx):
+    def layer_chunk_cache_value_current_tap():
         return TensorAccessPattern(
             (layer_iterations * cache_size,),
-            layer_idx * cache_size + kv_size * max_seq_len + position * head_dim,
-            [1, 1, kv_heads, head_dim],
-            [0, 0, max_seq_len * head_dim, 1],
+            kv_size * max_seq_len + position * head_dim,
+            [layer_iterations, 1, kv_heads, head_dim],
+            [cache_size, 0, max_seq_len * head_dim, 1],
         )
 
     q_weight_taps = weight_taps(q_size, q_weight_base)
@@ -2200,19 +2206,19 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
                     task_group=tg,
                 )
 
-        def drain_chunk_layer_cache(layer_idx, cache, tg):
+        def drain_chunk_cache(cache, tg):
             for col in range(num_columns):
                 rt.drain(
                     k_rope_fifos[col].cons(),
                     cache,
-                    layer_chunk_cache_key_tap(layer_idx),
+                    layer_chunk_cache_key_current_tap(),
                     wait=True,
                     task_group=tg,
                 )
                 rt.drain(
                     v_fifos[col].cons(),
                     cache,
-                    layer_chunk_cache_value_tap(layer_idx),
+                    layer_chunk_cache_value_current_tap(),
                     wait=True,
                     task_group=tg,
                 )
@@ -2235,8 +2241,7 @@ def _qwen3_persistent_input_rmsnorm_qkv_rope_cache_impl(
             rt.fill(runtime_hidden_in.prod(), hidden, hidden_tap, task_group=tg)
             for layer_idx in range(layer_iterations):
                 fill_chunk_layer_inputs(layer_idx, weights, angles, cache, tg)
-            for layer_idx in range(layer_iterations):
-                drain_chunk_layer_cache(layer_idx, cache, tg)
+            drain_chunk_cache(cache, tg)
             rt.drain(
                 (
                     layer_residual.cons()
