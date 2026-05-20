@@ -80,7 +80,7 @@ python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage generate \
   --fast-generate \
-  --layer-chunk-size 8 \
+  --layer-chunk-size 28 \
   --verify-generate \
   --max-new-tokens 3
 ```
@@ -96,6 +96,14 @@ token_match=True on the default prompt and on raw prompt "The sequence is 1, 2,"
 for consecutive decode positions. The static graph reduces 28 layers to
 8 + 8 + 8 + 4 chunk dispatches per token, and preflight reports
 compute_cores=21, max_dma_tasks_per_fifo=2.
+
+chunk=28 after full-depth cache TAP grouping:
+token_match=True on the default prompt and on raw prompt
+"Fibonacci numbers: 1, 1, 2, 3," for consecutive decode positions.
+This reduces the 28 transformer layers to one NPU dispatch per decoded token.
+The first position compile measured about 66s, following position compiles
+about 3.8s, and token decode measured about 190-200ms NPU layer time.
+Preflight reports compute_cores=21 and max_dma_tasks_per_fifo=1.
 ```
 
 Use the real graph probe to decide the next speed target:
@@ -161,7 +169,8 @@ python iron/applications/qwen3_0_6b/persistent/main.py \
 ```
 
 By default, fast generate executes the n-layer final-only Program with
-`--layer-chunk-size 1`; the current accepted performance setting is
-`--layer-chunk-size 4`. The packed artifact removes runtime weight packing and
-establishes a global weight buffer plus per-layer offset manifest; final
-norm/LM head still run on the CPU.
+`--layer-chunk-size 1`; the current performance setting is
+`--layer-chunk-size 28`. Chunk sizes 1..8 remain useful for debug bisection.
+The packed artifact removes runtime weight packing and establishes a global
+weight buffer plus per-layer offset manifest; final norm/LM head still run on
+the CPU.

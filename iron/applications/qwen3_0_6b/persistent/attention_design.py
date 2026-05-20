@@ -1240,7 +1240,9 @@ def _qwen3_persistent_n_layer_final_only_impl(
         (outputs_size,), 0, [1, 1, 1, hidden_size], [0, 0, 0, 1]
     )
     rt = Runtime()
-    layer_writeback_dma_group_size = 4
+    # Debug chunks use the proven group-of-4 schedule. The full-depth generate
+    # path needs one cache task per FIFO; otherwise chunk=28 exhausts BD IDs.
+    layer_writeback_dma_group_size = 4 if layer_iterations <= 8 else layer_iterations
     layer_writeback_dma_groups = [
         (
             layer_start,
@@ -1248,7 +1250,7 @@ def _qwen3_persistent_n_layer_final_only_impl(
         )
         for layer_start in range(0, layer_iterations, layer_writeback_dma_group_size)
     ]
-    layer_cache_dma_group_size = 4
+    layer_cache_dma_group_size = 4 if layer_iterations <= 8 else layer_iterations
     layer_cache_dma_groups = [
         (
             layer_start,

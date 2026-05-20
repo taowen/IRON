@@ -347,6 +347,28 @@ chunk tests, but full generate with --layer-chunk-size 8 matched CPU reference
 tokens on the default prompt and raw prompt "The sequence is 1, 2,".
 ```
 
+Full-depth recheck:
+
+```text
+After switching layer_iterations > 8 to one full-depth cache TAP, chunk=28
+fast-generate matched CPU reference tokens on:
+
+default prompt:
+  Paris -> EOS
+
+raw prompt "Fibonacci numbers: 1, 1, 2, 3,":
+  new_text: ' 5, 8'
+  token_match=True for decode positions 17, 18, 19, and 20
+
+npu_layer_time_us_total: about 190-200ms
+fast_op_call_s: about 0.191-0.200s
+```
+
+The stage-level full hidden check is stricter than token correctness here:
+chunk=28 `n-layer-final-only --verify` showed hidden/cache drift, but greedy
+tokens matched over the checked prompts. Treat chunk=28 as the performance
+generate path and keep smaller chunks for numerical bisection.
+
 ## Decode Wall Time Is Much Larger Than NPU Time
 
 Symptom:

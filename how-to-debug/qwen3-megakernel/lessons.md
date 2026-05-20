@@ -286,6 +286,8 @@ one repeated TAP stays at 1 DMA task per FIFO through 64 layers
 grouped-by-4 stays under the measured FIFO BD limit for Qwen3's 28 layers
 real Qwen3 n-layer final-only chunk=8 compiles after segment-major weight packing
 real Qwen3 n-layer final-only chunk=8 runs after grouping cache fill/writeback by 4
+real Qwen3 n-layer final-only chunk=28 compiles after grouping cache
+fill/writeback as one full-depth TAP
 ```
 
 This changes the next megakernel direction. A large persistent decode graph
@@ -294,12 +296,21 @@ Whenever the tensor layout allows it, express the layer dimension as a TAP
 dimension or a small number of grouped TAP dimensions. Then use preflight to
 fail before `aiecc` if any FIFO exceeds eight DMA tasks.
 
-The current accepted cap is therefore eight layers per chunk: 28 Qwen3 layers
-can be represented as 8 + 8 + 8 + 4 chunk dispatches per decoded token. The
-important lesson is not the number eight itself. The real fix was changing the
-layout and data movement expression: segment-major weights removed per-layer
-weight DMA replication, and grouped K/V cache fill/writeback avoided runtime
-backpressure on shallow cache FIFOs.
+The current performance path is therefore the full 28-layer chunk. The earlier
+8 + 8 + 8 + 4 path remains useful as a debug ladder, but it is no longer the
+fast-generate target. The important lesson is not the number 8 or 28 itself.
+The real fix was changing the layout and data movement expression:
+segment-major weights removed per-layer weight DMA replication, grouped K/V
+cache fill/writeback avoided runtime backpressure on shallow cache FIFOs, and
+the full-depth TAP reduced the final Qwen3 layer pass to one NPU dispatch per
+decoded token.
+
+This is still not a descriptor-driven layer state machine. `Runtime.fill()` and
+`Runtime.drain()` emit static DMA tasks for the compiled runtime sequence. The
+full-depth path works by making those static tasks describe the whole 28-layer
+stream. A true reusable state machine would need either patchable instruction
+offsets or a lower-level runtime/descriptor mechanism that advances layer
+offsets inside one persistent invocation.
 
 ## 19. Real Performance Work Must Unlock Columns In The Full Graph
 

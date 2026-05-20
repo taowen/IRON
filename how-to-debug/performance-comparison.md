@@ -288,3 +288,18 @@ layer. Grouping cache fill and current writeback by four layers reduced the
 real graph to max_dma_tasks_per_fifo=2 and made chunk=8 generate match the CPU
 reference tokens.
 ```
+
+Second follow-up:
+
+```text
+chunk=28 failed when cache fill/writeback stayed grouped by four layers:
+@qwen3_rc_k_rope_0 and @qwen3_rc_v_0 exhausted BD IDs during NPU lowering.
+Switching layer_iterations > 8 to one full-depth cache TAP made chunk=28
+compile with max_dma_tasks_per_fifo=1 and run as one NPU dispatch per decoded
+token.
+
+default prompt: token_match=True, new_text='Paris'
+Fibonacci raw prompt: token_match=True through decode positions 17..20,
+new_text=' 5, 8'
+npu_layer_time_us_total: about 190-200ms
+```

@@ -355,9 +355,13 @@ def test_qwen3_graph_probe_layer_groups():
 
 def test_qwen3_n_layer_final_only_rejects_unsupported_chunk():
     Qwen3PersistentNLayerFinalOnly(layer_iterations=8)
+    Qwen3PersistentNLayerFinalOnly(layer_iterations=28)
 
-    with pytest.raises(ValueError, match="at most 8 layers per chunk"):
+    with pytest.raises(ValueError, match="supports chunk sizes 1\\.\\.8 or"):
         Qwen3PersistentNLayerFinalOnly(layer_iterations=9)
+
+    with pytest.raises(ValueError, match="at most 28 layers per chunk"):
+        Qwen3PersistentNLayerFinalOnly(layer_iterations=29)
 
 
 def test_qwen3_preflight_catches_non_advancing_acquire(tmp_path):
@@ -579,7 +583,7 @@ def test_qwen3_persistent_fast_generate(tmp_path):
         "--max-new-tokens",
         "2",
         "--layer-chunk-size",
-        "8",
+        "28",
         "--packed-weights-dir",
         str(packed_dir),
         "--require-packed-weights",

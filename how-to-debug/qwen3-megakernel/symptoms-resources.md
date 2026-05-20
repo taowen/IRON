@@ -285,9 +285,42 @@ chunk=8 preflight: max_dma_tasks_per_fifo=2
 chunk=8 generate: token_match=True
 ```
 
-The supported cap is now 8 layers per chunk. Larger chunks still need a real
-runtime state machine or more aggressive descriptor reuse; they should not be
-enabled just because compile/preflight accepts a synthetic pattern.
+Full-depth follow-up:
+
+```text
+Bypassing the 8-layer guard and compiling chunk=28 with cache grouped by 4
+failed at NPU lowering on @qwen3_rc_k_rope_0 and @qwen3_rc_v_0. The generated
+MLIR had seven K writeback tasks and seven V writeback tasks on the same FIFO,
+each with repeat_count=3. aiecc reported:
+
+Allocator exhausted available buffer descriptor IDs
+Free called on BD chain with unassigned IDs
+```
+
+Root cause of the chunk=28 compile failure:
+
+```text
+grouped-by-4 was enough for chunk=8, but still replicated too many writeback
+DMA tasks for a 28-layer graph. The failure was not caused by the full-depth
+worker loop itself; it was caused by static DMA task replication at the cache
+writeback boundary.
+```
+
+Fix used for the performance path:
+
+```text
+For layer_iterations > 8, group historical cache fill and current K/V writeback
+as one full-depth TAP. The chunk=28 graph then compiles with:
+
+compute_cores=21
+max_fifo_buffered_bytes=32768
+max_dma_tasks_per_fifo=1
+```
+
+This still is not a general descriptor-driven state machine. It is a legal
+static full-depth stream. Keep chunk sizes 1..8 for bisection; use chunk=28
+when the goal is reducing 8+8+8+4 host dispatches to one NPU dispatch per
+decoded token.
 
 ## Synthetic Persistent Graph Exhausts BD IDs At 9 DMA Tasks Per FIFO
 

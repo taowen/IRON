@@ -13,6 +13,9 @@ Use these notes as a debugging map, not as a chronological log.
   found real bugs in this bring-up.
 - [Lessons](lessons.md): design constraints and preflight checks inferred from
   the diagnosed failures.
+- [Column scaling experiments](experiments-column-scaling.md): current
+  performance baseline, planned multi-column experiments, and acceptance
+  criteria.
 
 Scope:
 
@@ -185,11 +188,11 @@ drains the full debug output and updated KV cache, and refills it for the next
 invocation.
 
 The accepted fast-generate path now uses one n-layer-final-only operator class
-for --layer-chunk-size 1, 2, 4, 6, and 8. It reuses packed weight XRT buffers, keeps
-each chunk's KV cache resident in its XRT inout buffer across decode positions,
-processes only active prefix KV cache blocks during final-only decode, and
-drains only the final hidden state after each chunk because the chunk loop is
-still host-driven.
+for --layer-chunk-size 1..8 and the full-depth chunk size 28. It reuses packed
+weight XRT buffers, keeps each chunk's KV cache resident in its XRT inout
+buffer across decode positions, processes only active prefix KV cache blocks
+during final-only decode, and drains only the final hidden state after each
+chunk.
 
 Accepted evidence:
 --fast-generate --verify-generate --max-new-tokens 3
@@ -202,6 +205,11 @@ chunk=8 after segment-major weights + grouped cache DMA:
   generate token_match=True on the default prompt
   generate token_match=True on raw prompt "The sequence is 1, 2," for
   consecutive decode positions 9 and 10
+chunk=28 after full-depth cache TAP grouping:
+  compile/preflight accepted with max_dma_tasks_per_fifo=1
+  generate token_match=True on the default prompt
+  generate token_match=True on raw prompt
+  "Fibonacci numbers: 1, 1, 2, 3," for decode positions 17..20
 
 n-layer-final-only:
 chunk_hidden_errors: 0 for chunk=1,2,4
@@ -211,9 +219,11 @@ final hidden and generate token checks still pass
 preflight: runtime_memrefs=5 compute_cores<=21 non_advancing_acquires=0
 ```
 
-Chunks larger than 8 are not accepted in the current design. They need a true
-runtime state machine or further descriptor reuse; do not enable them just by
-raising the operator guard.
+Chunk sizes 9..27 are not accepted in the current design because they have not
+been separately grouped and validated. Chunk=28 is accepted as the performance
+generate path because the full-depth cache TAP avoids the 8+8+8+4 dispatch
+pattern. It is still not a descriptor-driven state machine: the Runtime
+sequence is static for the compiled position.
 
 The synthetic `persistent/graph_probe.py` experiment is the current tool for
 learning large persistent graph scaling without model weights. It showed that

@@ -168,11 +168,25 @@ Accepted evidence:
 64-layer repeated TAP compiles: max_dma_tasks_per_fifo=1
 real Qwen3 chunk=8 compiles/runs after segment-major weights and grouped cache
 DMA: max_dma_tasks_per_fifo=2
+real Qwen3 chunk=28 compiles/runs after full-depth cache TAP grouping:
+max_dma_tasks_per_fifo=1
 ```
 
 So the current Qwen3 preflight limit is eight DMA tasks per FIFO. This is not a
 general XDNA architectural constant; it is the measured safe boundary for the
 Qwen3 persistent graph shapes in this repo.
+
+Do not infer from the synthetic grouped-by-4 result that the real graph should
+also use grouped-by-4 forever. The real chunk=28 experiment showed that the
+same FIFO still emitted too many writeback tasks at full depth. The diagnostic
+sequence is:
+
+```text
+1. Count DMA tasks per FIFO in generated MLIR.
+2. If the same FIFO gets many similar tasks, try one legal full-depth TAP.
+3. Re-run preflight and token verification before treating the new TAP as a
+   performance path.
+```
 
 ## 16. Validate TAP Against NPU BD Limits
 
