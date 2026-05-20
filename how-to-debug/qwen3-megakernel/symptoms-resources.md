@@ -262,9 +262,74 @@ Fix used:
 
 ```text
 Keep the supported chunk size capped at 4 and fail early in the operator
-constructor. Prefix KV block processing is still kept because it is correct and
-reduces chunk=4 NPU time. A future chunk=8 design needs a different cache
-writeback representation, not another blind placement tweak.
+constructor until larger chunks are proven. Prefix KV block processing is still
+kept because it is correct and reduces chunk=4 NPU time. A future chunk=8 design
+needs a different cache writeback representation, not another blind placement
+tweak.
+```
+
+Follow-up optimization evidence:
+
+```text
+chunk=5 compile/preflight: ok, compute_cores=21, max_dma_tasks_per_fifo=5
+chunk=6 compile/preflight: ok, compute_cores=21, max_dma_tasks_per_fifo=6
+chunk=7 compile/preflight: ok, compute_cores=21, max_dma_tasks_per_fifo=7
+```
+
+The static compile/preflight cap was raised to 7 because the synthetic graph
+probe had already established eight DMA tasks per FIFO as the measured safe
+boundary and the real Qwen3 chunk=7 graph stays below it. This does not prove
+the chunk=7 runtime state machine is accepted; chunk=8 remains rejected.
+
+## Synthetic Persistent Graph Exhausts BD IDs At 9 DMA Tasks Per FIFO
+
+Symptom:
+
+```text
+Allocator exhausted available buffer descriptor IDs
+Free called on BD chain with unassigned IDs
+```
+
+Diagnostic command used:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+. .venv/bin/activate
+python iron/applications/qwen3_0_6b/persistent/graph_probe.py \
+  --patterns separate repeat grouped \
+  --layers 8 9 28 64 \
+  --group-layers 4 \
+  --preflight-only \
+  --clean-build \
+  --build-dir build_qwen3_persistent_graph_probe_preflight
+```
+
+Evidence found:
+
+```text
+separate layers=8:  ok, total_dma_tasks=16, max_dma_tasks_per_fifo=8
+separate layers=9:  fail, current_kv FIFO has 9 DMA tasks
+repeat   layers=64: ok, total_dma_tasks=2,  max_dma_tasks_per_fifo=1
+grouped  layers=28: ok, total_dma_tasks=14, max_dma_tasks_per_fifo=7
+grouped  layers=64: fail, current_kv FIFO has 16 DMA tasks
+```
+
+Root cause:
+
+```text
+The failure is not caused by the KV scatter TAP region itself. It is caused by
+expressing many logically similar transfers as too many DMA tasks on the same
+ObjectFIFO endpoint. In this synthetic persistent graph, aiecc lowering fails
+as soon as one FIFO reaches 9 DMA tasks.
+```
+
+Fix direction:
+
+```text
+For large persistent graphs, compress layer repetition into one legal repeated
+TAP when possible. If one repeated TAP is not legal for the real layout, group
+layers so each FIFO stays at eight or fewer DMA tasks, then spend remaining
+resources on the actual compute workers.
 ```
 
 ## Full-Layer MLP Worker Exceeds Input DMA Channels
@@ -310,6 +375,63 @@ Recheck:
 
 ```text
 preflight: ok ... max_tile_inputs=2 max_tile_outputs=2
+```
+
+## Real Full-Layer Graph Is Locked To One Column
+
+Symptom:
+
+```text
+real_graph_probe: fail stage=full-layer cols=2 ...
+ValueError: scores+softmax checkpoint is currently single-column only
+```
+
+Diagnostic:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+. .venv/bin/activate
+python iron/applications/qwen3_0_6b/persistent/real_graph_probe.py \
+  --stages qkv mlp-gate-up full-layer \
+  --columns 1 2 4 8 \
+  --preflight-only \
+  --allow-failures \
+  --clean-build
+```
+
+Evidence found:
+
+```text
+qkv cols=1: ok compute_cores=5
+qkv cols=2: ok compute_cores=8
+qkv cols=4: ok compute_cores=14
+qkv cols=8: placement failure
+
+mlp-gate-up cols=1: ok compute_cores=5
+mlp-gate-up cols=2: ok compute_cores=9
+mlp-gate-up cols=4: placement failure
+
+full-layer cols=1: ok compute_cores=19
+full-layer cols=2/4/8: rejected by scores+softmax single-column guard
+```
+
+Root cause:
+
+```text
+The current full decode graph cannot use NPU2's available columns because the
+attention scores/softmax/full-layer implementation is intentionally
+single-column. Some expensive real subgraphs already scale beyond one column,
+so the blocker is graph composition and placement around the attention closure,
+not merely missing hardware capacity.
+```
+
+Fix direction:
+
+```text
+Lift the single-column attention/full-layer boundary. Keep QKV and MLP
+front-half multi-column, then make score/softmax/context/O-projection consume
+partitioned Q heads and shared K/V blocks without adding illegal three-input
+tiles or L1-heavy debug streams.
 ```
 
 ## Full-Layer K Project Exceeds Output DMA Channels

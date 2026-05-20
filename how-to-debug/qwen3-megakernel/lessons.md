@@ -274,3 +274,60 @@ SequentialPlacer graph. The attention O-projection path already hit the worker
 budget once. The next composition step should use the same checkpoint pattern:
 combine only the minimum adjacent boundary, keep local-reference verification,
 and let preflight/placer identify the actual resource limit.
+
+## 18. Large Persistent Graphs Must Compress Repetition
+
+The synthetic graph probe isolated a Qwen3-like current KV writeback without
+model weights or external kernels. It proved:
+
+```text
+per-layer separate fill/drain is safe through 8 layers and fails at 9
+one repeated TAP stays at 1 DMA task per FIFO through 64 layers
+grouped-by-4 stays under the measured FIFO BD limit for Qwen3's 28 layers
+real Qwen3 n-layer final-only chunk=7 compiles with max_dma_tasks_per_fifo=7
+```
+
+This changes the next megakernel direction. A large persistent decode graph
+should not be built by copying the single-layer runtime sequence N times.
+Whenever the tensor layout allows it, express the layer dimension as a TAP
+dimension or a small number of grouped TAP dimensions. Then use preflight to
+fail before `aiecc` if any FIFO exceeds eight DMA tasks.
+
+The current static compile/preflight candidate cap is therefore seven layers
+per chunk, not four: 28 Qwen3 layers can be represented as four chunk
+dispatches per token while still staying below the measured FIFO BD boundary.
+This does not by itself prove the chunk=7 runtime state machine is accepted;
+chunk=4 remains the measured generate checkpoint, and chunk=8 remains a
+separate resource problem.
+
+## 19. Real Performance Work Must Unlock Columns In The Full Graph
+
+The latest packed-weight chunk=4 generate run matched the reference token, but
+the timing split showed the dominant cost is inside the NPU call:
+
+```text
+npu_layer_time_us_total: 201411.213
+decode_s: 0.203401
+fast_op_call_s: 0.201889
+fast_output_drain_s: 0.000382
+cpu_final_lm_head_s: 0.011655
+token_match: True
+```
+
+This means the previous host-side work succeeded: weight packing, XRT buffer
+reuse, cache residency, RoPE sync, and output drain are no longer the main
+bottleneck for this checkpoint.
+
+The real graph column probe then showed:
+
+```text
+QKV can preflight at 4 columns.
+MLP gate/up can preflight at 2 columns.
+The full attention+MLP layer is accepted only at 1 column.
+```
+
+So the next high-leverage performance direction is not another chunk-size
+sweep. It is to make the attention/full-layer closure multi-column while
+preserving the resource lessons already learned: no three-input score/context
+workers, no oversized K/V cache objects, no debug-only third outputs, and no
+unbounded per-layer DMA task replication.

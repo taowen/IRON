@@ -200,6 +200,10 @@ chunk=1 token_match: True for positions 6 and 7
 chunk=2 token_match: True for positions 6 and 7
 chunk=4 token_match: True for positions 6 and 7
 chunk=4 after prefix-KV optimization: about 184-185ms NPU layer time per token
+chunk=7 compile/preflight accepted:
+  compute_cores=21 total_dma_tasks=81 max_dma_tasks_per_fifo=7
+  the static graph would reduce 28 layers to 4 chunk dispatches per token,
+  but runtime acceptance is not yet proven
 
 n-layer-final-only:
 chunk_hidden_errors: 0 for chunk=1,2,4
@@ -209,7 +213,19 @@ preflight: runtime_memrefs=5 compute_cores<=21 non_advancing_acquires=0
 
 Chunk=8 is not accepted in the current design. It fails NPU lowering with
 current-KV writeback BD exhaustion and MLP down-weight L1 pressure, so the
-operator now rejects chunks larger than 4 before invoking aiecc.
+operator now rejects chunks larger than 7 before invoking aiecc.
+
+The synthetic `persistent/graph_probe.py` experiment is the current tool for
+learning large persistent graph scaling without model weights. It showed that
+copying a single-layer runtime sequence N times is the wrong direction: a
+current-KV-like FIFO is safe at eight DMA tasks and fails at nine, while a
+layer-repeated TAP compiles through 64 synthetic layers.
+
+The real `persistent/real_graph_probe.py` experiment is now the performance
+direction check. It showed that QKV preflights at 4 columns and MLP gate/up
+preflights at 2 columns, but the full attention+MLP layer is still locked to
+one column by the scores/softmax/full-layer graph. The next speed work should
+unlock that real full-layer column scaling rather than keep tuning chunk size.
 
 Do not debug from final logits first. Start from the symptom, prove the failing
 boundary, and only then change code.

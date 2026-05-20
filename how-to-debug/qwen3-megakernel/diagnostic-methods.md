@@ -27,6 +27,7 @@ methods are split by diagnostic boundary.
 | Multi-layer tensor handoff or diagnostic serialization crash | 31 |
 | Composed checkpoint fails but standalone producer may pass | 30 |
 | Decode is correct but much slower than NPU time suggests | 32 |
+| Decode is correct and NPU time dominates | 35 |
 | Packed weight artifact, offset, or XRT sub-buffer risk | 33, 34 |
 
 ### Runtime
@@ -56,6 +57,7 @@ methods are split by diagnostic boundary.
 - [24. Count Workers Against The Actual Placer Budget](methods-static.md#24-count-workers-against-the-actual-placer-budget)
 - [25. Optional Debug Streams Need One Boolean](methods-static.md#25-optional-debug-streams-need-one-boolean)
 - [34. Validate Packed Weight Artifact Before Runtime](methods-static.md#34-validate-packed-weight-artifact-before-runtime)
+- [35. Probe Real Graph Column Scaling](methods-static.md#35-probe-real-graph-column-scaling)
 
 ### Numeric
 

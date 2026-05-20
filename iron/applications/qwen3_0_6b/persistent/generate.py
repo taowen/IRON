@@ -224,13 +224,13 @@ def run_n_layer_decode_hidden_fast(
         model.config.rope_theta,
         position,
     )
+    timing.rope_sync_s += copy_tensor_to_xrt(rope_angles_buf, rope_angles)
     chunk_idx = 0
     layer_idx = 0
     while layer_idx < model.config.num_hidden_layers:
         chunk_len = min(layer_chunk_size, model.config.num_hidden_layers - layer_idx)
         op, op_func = chunk_ops[chunk_len]
         timing.hidden_sync_s += copy_tensor_to_xrt(hidden_buf, current_hidden)
-        timing.rope_sync_s += copy_tensor_to_xrt(rope_angles_buf, rope_angles)
 
         chunk_outputs_buf.device = "npu"
         cache_buf = chunk_cache_bufs[chunk_idx]

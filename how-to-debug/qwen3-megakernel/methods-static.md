@@ -146,6 +146,33 @@ Correct access order can still be expressed incorrectly if Python emits one
 `rt.fill` per logical tile. Prefer a single legal multidimensional TAP, then
 verify the generated `aie.dma_bd` dimensions.
 
+The persistent graph probe made this threshold concrete for a current-KV-like
+stream:
+
+```bash
+python iron/applications/qwen3_0_6b/persistent/graph_probe.py \
+  --patterns separate repeat grouped \
+  --layers 8 9 28 64 \
+  --group-layers 4 \
+  --preflight-only \
+  --clean-build
+```
+
+Accepted evidence:
+
+```text
+8 separate layer transfers compile: max_dma_tasks_per_fifo=8
+9 separate layer transfers fail preflight: max_dma_tasks_per_fifo=9
+28 grouped-by-4 transfers compile: max_dma_tasks_per_fifo=7
+64 grouped-by-4 transfers fail preflight: max_dma_tasks_per_fifo=16
+64-layer repeated TAP compiles: max_dma_tasks_per_fifo=1
+real Qwen3 chunk=7 compiles: max_dma_tasks_per_fifo=7
+```
+
+So the current Qwen3 preflight limit is eight DMA tasks per FIFO. This is not a
+general XDNA architectural constant; it is the measured safe boundary for the
+Qwen3 persistent graph shapes in this repo.
+
 ## 16. Validate TAP Against NPU BD Limits
 
 Use when NPU lowering rejects a generated `aie.dma_bd`.
@@ -179,7 +206,7 @@ MLIR runtime_sequence memref count == operator arg spec count
 MLIR runtime_sequence memref count <= main_kernels.json HOST bo* count
 ObjectFIFO object bytes * depth <= L1 budget
 compute tile input/output ObjectFIFO count <= expected channel budget
-DMA task count per FIFO <= expected BD budget
+DMA task count per FIFO <= measured Qwen3 BD budget
 ```
 
 This turns already diagnosed failures into Python errors before runtime:
@@ -199,6 +226,10 @@ iron/applications/qwen3_0_6b/qwen3_preflight.py
 
 The persistent CLI now prints a `preflight: ok ...` summary immediately after
 compile when these checks pass.
+
+For synthetic scaling work, `graph_probe.py --preflight-only` now generates MLIR
+and runs this check before invoking `aiecc`. This avoids hiding the root cause
+behind the long NPU lowering error dump.
 
 ## 34. Validate Packed Weight Artifact Before Runtime
 
@@ -375,4 +406,48 @@ Runtime.fill
 Runtime.drain
 TensorAccessPattern creation
 host verifier slices
+```
+
+## 35. Probe Real Graph Column Scaling
+
+Use when decode is correct but the measured NPU time is still the dominant
+cost. Do not infer the next performance direction from synthetic chunk tests
+alone; compile/preflight the real stage variants.
+
+Diagnostic command used:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+. .venv/bin/activate
+python iron/applications/qwen3_0_6b/persistent/real_graph_probe.py \
+  --stages qkv mlp-gate-up full-layer \
+  --columns 1 2 4 8 \
+  --preflight-only \
+  --allow-failures \
+  --clean-build
+```
+
+Accepted evidence:
+
+```text
+real_graph_probe: ok stage=qkv cols=4 ... compute_cores=14
+real_graph_probe: ok stage=mlp-gate-up cols=2 ... compute_cores=9
+real_graph_probe: ok stage=full-layer cols=1 ... compute_cores=19
+real_graph_probe: fail stage=full-layer cols=2 ...
+  ValueError: scores+softmax checkpoint is currently single-column only
+```
+
+Interpretation:
+
+```text
+If producer subgraphs scale to multiple columns but the full graph is rejected
+by a single-column guard, the next speed work is to restructure the attention
+closure and its placement. Re-running chunk sweeps will not unlock the unused
+columns.
+```
+
+The reusable probe is:
+
+```text
+iron/applications/qwen3_0_6b/persistent/real_graph_probe.py
 ```

@@ -41,6 +41,7 @@ class PersistentPreflightResult:
     metadata_host_bos: int | None
     compute_cores: int
     max_fifo_buffered_bytes: int
+    total_dma_tasks: int
     max_dma_tasks_per_fifo: int
     max_compute_tile_inputs: int
     max_compute_tile_outputs: int
@@ -255,7 +256,7 @@ def run_persistent_artifact_preflight(
     max_compute_tile_input_fifos: int = 2,
     max_compute_tile_output_fifos: int = 2,
     max_compute_cores: int = 32,
-    max_dma_tasks_per_fifo: int = 32,
+    max_dma_tasks_per_fifo: int = 8,
 ) -> PersistentPreflightResult:
     """Fail before runtime when generated artifacts match known bad patterns."""
 
@@ -347,7 +348,9 @@ def run_persistent_artifact_preflight(
         fifo, count = max(bad_dma.items(), key=lambda item: item[1])
         raise Qwen3PreflightError(
             f"FIFO {fifo} has {count} DMA tasks; limit={max_dma_tasks_per_fifo}. "
-            "Prefer one legal multidimensional TAP or reuse data on tile."
+            "The NPU lowering BD allocator has failed at 9 tasks on a single "
+            "FIFO in the Qwen3 persistent graph probe. Prefer one legal "
+            "multidimensional TAP or reuse data on tile."
         )
 
     non_advancing_acquires = find_non_advancing_acquires(mlir_text)
@@ -375,6 +378,7 @@ def run_persistent_artifact_preflight(
             (fifo.buffered_bytes or 0 for fifo in fifos),
             default=0,
         ),
+        total_dma_tasks=sum(dma_counts.values()),
         max_dma_tasks_per_fifo=max(dma_counts.values(), default=0),
         max_compute_tile_inputs=max(tile_inputs.values(), default=0),
         max_compute_tile_outputs=max(tile_outputs.values(), default=0),

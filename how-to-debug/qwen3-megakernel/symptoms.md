@@ -49,6 +49,7 @@ were used in this repository. Detailed entries are split by failure class.
 - [Full-Layer Down Projection Exceeds L1](symptoms-resources.md#full-layer-down-projection-exceeds-l1)
 - [Multidimensional TAP Is Legal But NPU BD Rejects It](symptoms-resources.md#multidimensional-tap-is-legal-but-npu-bd-rejects-it)
 - [New Stage Exceeds SequentialPlacer Worker Capacity](symptoms-resources.md#new-stage-exceeds-sequentialplacer-worker-capacity)
+- [Real Full-Layer Graph Is Locked To One Column](symptoms-resources.md#real-full-layer-graph-is-locked-to-one-column)
 
 ### Dataflow
 

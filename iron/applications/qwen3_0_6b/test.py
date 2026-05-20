@@ -17,6 +17,7 @@ import torch
 from iron.applications.qwen3_0_6b.persistent.ops import (
     Qwen3PersistentNLayerFinalOnly,
 )
+from iron.applications.qwen3_0_6b.persistent.graph_probe import layer_groups
 from iron.applications.qwen3_0_6b.persistent.layout import (
     PACKED_WEIGHTS_BIN,
     PACKED_WEIGHTS_MANIFEST,
@@ -26,6 +27,7 @@ from iron.applications.qwen3_0_6b.persistent.layout import (
     validate_packed_weight_artifact,
     write_packed_weight_artifact,
 )
+from iron.applications.qwen3_0_6b.qwen3_cpu import DEFAULT_MODEL, resolve_model_dir
 from iron.applications.qwen3_0_6b.qwen3_preflight import (
     Qwen3PreflightError,
     run_persistent_artifact_preflight,
@@ -101,6 +103,29 @@ def _fake_qwen3_model(num_layers=3):
             return weights[name]
 
     return FakeModel()
+
+
+def test_qwen3_resolve_model_dir_prefers_local_hf_snapshot(tmp_path, monkeypatch):
+    commit = "abc123"
+    repo_cache = tmp_path / "hub" / "models--Qwen--Qwen3-0.6B"
+    snapshot = repo_cache / "snapshots" / commit
+    snapshot.mkdir(parents=True)
+    for name in [
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "merges.txt",
+        "model.safetensors",
+    ]:
+        (snapshot / name).write_text("{}")
+    refs = repo_cache / "refs"
+    refs.mkdir()
+    (refs / "main").write_text(commit)
+
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
+
+    assert resolve_model_dir(DEFAULT_MODEL) == snapshot
 
 
 def test_qwen3_packed_weight_artifact_roundtrip(tmp_path):
@@ -273,8 +298,43 @@ module {{
         run_persistent_artifact_preflight(mlir_path=mlir_path, arg_specs=1)
 
 
+def test_qwen3_preflight_catches_probe_bd_boundary(tmp_path):
+    mlir_path = tmp_path / "bad_probe_bd.mlir"
+    dma_tasks = "\n".join(
+        f"      %{idx} = aiex.dma_configure_task_for @current_kv {{ aie.end }}"
+        for idx in range(9)
+    )
+    mlir_path.write_text(f"""
+module {{
+  aie.device(npu2) {{
+    %tile_0_2 = aie.tile(0, 2)
+    %shim_noc_tile_0_0 = aie.tile(0, 0)
+    aie.objectfifo @current_kv(%shim_noc_tile_0_0, {{%tile_0_2}}, 2 : i32) : !aie.objectfifo<memref<128xbf16>>
+    aie.runtime_sequence(%arg0: memref<128xbf16>) {{
+{dma_tasks}
+    }}
+  }}
+}}
+""")
+
+    with pytest.raises(Qwen3PreflightError, match="9 DMA tasks"):
+        run_persistent_artifact_preflight(mlir_path=mlir_path, arg_specs=1)
+
+
+def test_qwen3_graph_probe_layer_groups():
+    assert layer_groups(8, 4) == [(0, 4), (4, 4)]
+    assert layer_groups(10, 4) == [(0, 4), (4, 4), (8, 2)]
+
+    with pytest.raises(ValueError, match="layers must be positive"):
+        layer_groups(0, 4)
+    with pytest.raises(ValueError, match="group_layers must be positive"):
+        layer_groups(4, 0)
+
+
 def test_qwen3_n_layer_final_only_rejects_unsupported_chunk():
-    with pytest.raises(ValueError, match="at most 4 layers per chunk"):
+    Qwen3PersistentNLayerFinalOnly(layer_iterations=7)
+
+    with pytest.raises(ValueError, match="at most 7 layers per chunk"):
         Qwen3PersistentNLayerFinalOnly(layer_iterations=8)
 
 
@@ -600,7 +660,7 @@ def test_qwen3_persistent_full_layer():
 
 
 @pytest.mark.extensive
-@pytest.mark.parametrize("layer_chunk_size", [1, 2])
+@pytest.mark.parametrize("layer_chunk_size", [1, 2, 4, 7])
 def test_qwen3_persistent_n_layer_final_only(layer_chunk_size):
     model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
     if model is None:

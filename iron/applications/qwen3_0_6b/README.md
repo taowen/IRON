@@ -368,8 +368,8 @@ source /opt/xilinx/xrt/setup.sh
 python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage n-layer-final-only \
-  --layer-chunk-size 4 \
-  --verify \
+  --layer-chunk-size 7 \
+  --compile-only \
   --prompt "Count from one to five." \
   --raw-prompt \
   --build-dir build_qwen3_persistent_n_layer
@@ -380,9 +380,9 @@ caches into `weight_chunk` and `cache_chunk` buffers, then using TAP offsets per
 layer. Intermediate residuals are routed back on chip as the next layer input;
 only the final hidden is drained. On the current NPU2 environment,
 `--layer-chunk-size 1`, `2`, and `4` pass hidden and current-cache checks.
-Preflight reports `runtime_memrefs=5`, `metadata_host_bos=5`,
-`non_advancing_acquires=0`, and `max_dma_tasks_per_fifo=4` for the accepted
-chunk=4 graph. Larger chunk sizes are intentionally rejected in this
+`--layer-chunk-size 7` has compile/preflight acceptance only, with
+`runtime_memrefs=5`, `metadata_host_bos=5`, `non_advancing_acquires=0`, and
+`max_dma_tasks_per_fifo=7`. Larger chunk sizes are intentionally rejected in this
 implementation: chunk=8 still exhausts BD/L1 resources in the current
 current-KV writeback/TAP expression.
 
@@ -407,12 +407,33 @@ token_match=True, npu_layer_time_us_total ~= 249-250ms
 
 chunk=4 after prefix-KV optimization:
 token_match=True, npu_layer_time_us_total ~= 184-185ms
+
+chunk=7 compile/preflight optimization:
+the static graph would reduce 28 layers to 4 chunk dispatches per token, and
+compile-only preflight reports compute_cores=21, total_dma_tasks=81,
+max_dma_tasks_per_fifo=7
 ```
 
 The current performance win comes from processing only the active prefix KV
 blocks for decode instead of always streaming the full `max_seq_len=256` cache.
-The remaining bottleneck is repeated weight DMA plus external-kernel work
-inside each layer chunk.
+After packed weights and resident KV buffers, the measured `fast_op_call_s`
+dominates the token step; host sync and output drain are sub-millisecond in the
+current fast path. Use the real graph probe to decide the next speed target:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+. .venv/bin/activate
+python iron/applications/qwen3_0_6b/persistent/real_graph_probe.py \
+  --stages qkv mlp-gate-up full-layer \
+  --columns 1 2 4 8 \
+  --preflight-only \
+  --allow-failures
+```
+
+Current result: QKV preflights at 4 columns and MLP gate/up preflights at 2
+columns, but the full attention+MLP layer is still accepted only at 1 column
+because scores/softmax/full-layer are guarded as single-column. The next
+performance direction is to lift that real full-layer column-scaling limit.
 
 Placement scaling, deeper persistent token loops, final norm/LM head, and
 removing the remaining per-position recompiles are still future persistent
@@ -440,6 +461,14 @@ with `--packed-weights-dir`. The artifact is:
 ```text
 weights.bf16.bin   contiguous raw bf16 full-layer weights for all layers
 manifest.json      format/config/offset/shape table for every layer segment
+```
+
+On the current development machine, `Qwen/Qwen3-0.6B` resolves to the local
+Hugging Face snapshot pinned in `qwen3_cpu.py`, and the prepared artifact lives
+under:
+
+```text
+~/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca/qwen3_iron_packed
 ```
 
 Use the artifact during fast generate:

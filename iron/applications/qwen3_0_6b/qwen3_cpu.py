@@ -7,6 +7,7 @@ import argparse
 import gc
 import json
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +19,23 @@ from transformers import AutoTokenizer
 
 DEFAULT_MODEL = "Qwen/Qwen3-0.6B"
 DEFAULT_PROMPT = "What is the capital of France? Answer with only the city name."
+LOCAL_QWEN3_0_6B_SNAPSHOT = (
+    Path.home()
+    / ".cache"
+    / "huggingface"
+    / "hub"
+    / "models--Qwen--Qwen3-0.6B"
+    / "snapshots"
+    / "c1899de289a04d12100db370d81485cdf75e47ca"
+)
+QWEN3_MODEL_FILES = (
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt",
+)
+QWEN3_SAFETENSOR_PATTERNS = ("model.safetensors", "model-*.safetensors")
 
 
 @dataclass(frozen=True)
@@ -58,10 +76,88 @@ class Qwen3Config:
         )
 
 
+def _repo_cache_name(repo_id: str) -> str:
+    return f"models--{repo_id.replace('/', '--')}"
+
+
+def _hf_hub_cache_roots() -> list[Path]:
+    roots: list[Path] = []
+    hf_hub_cache = os.environ.get("HF_HUB_CACHE")
+    if hf_hub_cache:
+        roots.append(Path(hf_hub_cache).expanduser())
+
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        roots.append(Path(hf_home).expanduser() / "hub")
+
+    roots.append(Path.home() / ".cache" / "huggingface" / "hub")
+
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        resolved = root.resolve() if root.exists() else root
+        if resolved not in seen:
+            deduped.append(root)
+            seen.add(resolved)
+    return deduped
+
+
+def _has_qwen3_model_files(path: Path) -> bool:
+    if not all((path / name).exists() for name in QWEN3_MODEL_FILES):
+        return False
+    return any(path.glob(pattern) for pattern in QWEN3_SAFETENSOR_PATTERNS)
+
+
+def _local_hf_snapshot_dir(repo_id: str, revision: str | None = None) -> Path | None:
+    """Return an existing HF cache snapshot before falling back to network."""
+
+    for cache_root in _hf_hub_cache_roots():
+        repo_cache = cache_root / _repo_cache_name(repo_id)
+        snapshots_dir = repo_cache / "snapshots"
+        candidates: list[Path] = []
+
+        if revision:
+            ref_file = repo_cache / "refs" / revision
+            if ref_file.exists():
+                candidates.append(snapshots_dir / ref_file.read_text().strip())
+            candidates.append(snapshots_dir / revision)
+        else:
+            main_ref = repo_cache / "refs" / "main"
+            if main_ref.exists():
+                candidates.append(snapshots_dir / main_ref.read_text().strip())
+
+        if snapshots_dir.exists():
+            candidates.extend(
+                sorted(
+                    (path for path in snapshots_dir.iterdir() if path.is_dir()),
+                    key=lambda path: path.stat().st_mtime,
+                    reverse=True,
+                )
+            )
+
+        for candidate in candidates:
+            if candidate.exists() and _has_qwen3_model_files(candidate):
+                return candidate
+    return None
+
+
 def resolve_model_dir(model: str, revision: str | None = None) -> Path:
     model_path = Path(model).expanduser()
     if model_path.exists():
         return model_path
+
+    if (
+        model == DEFAULT_MODEL
+        and revision is None
+        and not os.environ.get("HF_HUB_CACHE")
+        and not os.environ.get("HF_HOME")
+        and _has_qwen3_model_files(LOCAL_QWEN3_0_6B_SNAPSHOT)
+    ):
+        return LOCAL_QWEN3_0_6B_SNAPSHOT
+
+    local_model_dir = _local_hf_snapshot_dir(model, revision)
+    if local_model_dir is not None:
+        return local_model_dir
 
     local_dir = snapshot_download(
         repo_id=model,

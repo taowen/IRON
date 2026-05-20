@@ -1011,7 +1011,7 @@ class Qwen3PersistentNLayerFinalOnly(
 ):
     """One or more sequential Qwen3 full layers using one persistent graph."""
 
-    max_supported_layer_iterations: ClassVar[int] = 4
+    max_supported_layer_iterations: ClassVar[int] = 7
     layer_iterations: int = 1
 
     _name_aliases: ClassVar[dict[str, str]] = {
@@ -1027,7 +1027,7 @@ class Qwen3PersistentNLayerFinalOnly(
             raise ValueError(
                 "Qwen3 n-layer final-only currently supports at most "
                 f"{self.max_supported_layer_iterations} layers per chunk; "
-                f"got {self.layer_iterations}. Larger chunks still exhaust NPU "
+                f"got {self.layer_iterations}. Chunk=8 still exhausts NPU "
                 "BD/L1 resources in the current writeback/TAP expression."
             )
 

@@ -45,6 +45,37 @@ Compiled artifacts (`.xclbin`, `.bin`, `.o` files) are stored in `build/` direct
 
 - `IRON_EXAMPLE_WEIGHTS_DIR`: Path to model weights for applications (default: `/srv`)
 
+### Local Model Cache On This Machine
+
+The Qwen3-0.6B safetensors weights used by `iron/applications/qwen3_0_6b/`
+are already present in the Hugging Face cache:
+
+```bash
+/var/home/taowen/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca
+```
+
+This snapshot contains `config.json`, `model.safetensors`, `tokenizer.json`,
+`tokenizer_config.json`, `vocab.json`, and `merges.txt`. The Qwen3 scripts now
+resolve `Qwen/Qwen3-0.6B` to an existing local Hugging Face snapshot before
+falling back to `snapshot_download`, so setting `IRON_QWEN3_0_6B_MODEL` is not
+required on this machine. `/srv` is not the active Qwen3 model location here.
+
+The IRON prepacked bf16 weights have also been prepared and are the default
+fast-generate artifact for that snapshot:
+
+```bash
+/var/home/taowen/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca/qwen3_iron_packed
+```
+
+It contains `weights.bf16.bin` and `manifest.json` in
+`qwen3_iron_packed/`. Recreate it with:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+. .venv/bin/activate
+python iron/applications/qwen3_0_6b/persistent/main.py --prepare-weights
+```
+
 ## Building and Testing
 
 ### Run All Operators (non-extensive tests)
