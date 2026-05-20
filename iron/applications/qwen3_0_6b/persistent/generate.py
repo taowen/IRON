@@ -18,6 +18,8 @@ from iron.applications.qwen3_0_6b.persistent.layout import (
     load_packed_weight_tensor,
     pack_full_layer_weights_for_layer,
     pack_layer_cache,
+    pack_segment_major_weight_chunk_from_layer_major,
+    pack_segment_major_weights_for_layers,
     packed_weight_layer_slice,
     validate_packed_weight_artifact,
 )
@@ -112,16 +114,28 @@ def prepare_fast_generate_buffers(
                     f"{layer_slice.numel()} != op.packed_weights_size "
                     f"{op.packed_weights_size}"
                 )
-            layer = packed_weight_manifest["layers"][layer_idx]
-            chunk_weight_bufs.append(
-                XRTSubBuffer.from_parent(
-                    weight_parent_buf,
-                    (chunk_len * op.packed_weights_size,),
-                    int(layer["element_offset"]),
-                    chunk_len * op.packed_weights_size,
-                    weight_parent_buf.dtype,
+            if chunk_len == 1:
+                layer = packed_weight_manifest["layers"][layer_idx]
+                chunk_weight_bufs.append(
+                    XRTSubBuffer.from_parent(
+                        weight_parent_buf,
+                        (op.packed_weights_size,),
+                        int(layer["element_offset"]),
+                        op.packed_weights_size,
+                        weight_parent_buf.dtype,
+                    )
                 )
-            )
+            else:
+                chunk_weight_bufs.append(
+                    XRTTensor.from_torch(
+                        pack_segment_major_weight_chunk_from_layer_major(
+                            packed_weights,
+                            packed_weight_manifest,
+                            layer_idx,
+                            chunk_len,
+                        )
+                    )
+                )
         timing.weight_xrt_s = time.perf_counter() - start
         timing.weight_source = "packed_artifact"
     else:
@@ -143,14 +157,25 @@ def prepare_fast_generate_buffers(
         timing.weight_pack_s = time.perf_counter() - start
 
         start = time.perf_counter()
-        chunk_weight_bufs = [
-            XRTTensor.from_torch(
-                torch.cat(
-                    packed_weights_by_layer[layer_idx : layer_idx + layer_chunk_size]
-                ).contiguous()
+        chunk_weight_bufs = []
+        for layer_idx in range(0, model.config.num_hidden_layers, layer_chunk_size):
+            chunk_len = min(
+                layer_chunk_size,
+                model.config.num_hidden_layers - layer_idx,
             )
-            for layer_idx in range(0, model.config.num_hidden_layers, layer_chunk_size)
-        ]
+            if chunk_len == 1:
+                chunk_weight_bufs.append(
+                    XRTTensor.from_torch(packed_weights_by_layer[layer_idx])
+                )
+            else:
+                chunk_weight_bufs.append(
+                    XRTTensor.from_torch(
+                        pack_segment_major_weights_for_layers(
+                            model,
+                            range(layer_idx, layer_idx + chunk_len),
+                        )
+                    )
+                )
         timing.weight_xrt_s = time.perf_counter() - start
 
     start = time.perf_counter()

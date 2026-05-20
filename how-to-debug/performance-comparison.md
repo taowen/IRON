@@ -279,11 +279,12 @@ token 1: token_match=True npu_layer_time_us_total=184098.641 decode_s=0.187769
 token 2: token_match=True npu_layer_time_us_total=184764.213 decode_s=0.187131
 ```
 
-Remaining limit:
+Follow-up fix:
 
 ```text
-chunk=8 still fails at aiecc. Aggregating current K/V writeback reduces task
-count, but the generated BD uses repeat_count=7 with a two-dimensional scatter
-over layers and KV heads, and still exhausts BD IDs. The supported chunk limit
-is therefore capped at 4 until cache writeback is represented differently.
+chunk=8 no longer fails at aiecc after repacking chunk weights segment-major.
+It still timed out at runtime when historical K/V cache was filled once per
+layer. Grouping cache fill and current writeback by four layers reduced the
+real graph to max_dma_tasks_per_fifo=2 and made chunk=8 generate match the CPU
+reference tokens.
 ```

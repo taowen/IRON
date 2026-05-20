@@ -32,6 +32,17 @@ FULL_LAYER_WEIGHT_ORDER = (
     "W_down",
 )
 
+SEGMENT_MAJOR_WEIGHT_ORDER = (
+    "input_norm_weight",
+    "W_q",
+    "W_k",
+    "W_v",
+    "W_qk_norm",
+    "W_o",
+    "post_norm_gate_up",
+    "W_down",
+)
+
 
 def host_owned_tensor(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.detach().clone().contiguous()
@@ -93,6 +104,66 @@ def pack_full_layer_weights(inputs: dict[str, torch.Tensor]) -> torch.Tensor:
     return torch.cat(
         [inputs[name].flatten() for name in FULL_LAYER_WEIGHT_ORDER]
     ).contiguous()
+
+
+def _segment_major_inputs_from_full_layer_inputs(
+    inputs: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    return {
+        "input_norm_weight": inputs["input_norm_weight"].flatten(),
+        "W_q": inputs["W_q"].flatten(),
+        "W_k": inputs["W_k"].flatten(),
+        "W_v": inputs["W_v"].flatten(),
+        "W_qk_norm": torch.cat(
+            [inputs["W_q_norm"].flatten(), inputs["W_k_norm"].flatten()]
+        ),
+        "W_o": inputs["W_o"].flatten(),
+        "post_norm_gate_up": torch.cat(
+            [
+                inputs["post_norm_weight"].flatten(),
+                inputs["W_gate"].flatten(),
+                inputs["W_up"].flatten(),
+            ]
+        ),
+        "W_down": inputs["W_down"].flatten(),
+    }
+
+
+def pack_segment_major_full_layer_weights(
+    inputs_by_layer: list[dict[str, torch.Tensor]],
+) -> torch.Tensor:
+    """Pack a layer chunk by segment, then by layer within each segment.
+
+    The persistent n-layer graph consumes one ObjectFIFO stream per logical
+    weight segment. Packing all layers for a segment contiguously lets one DMA
+    task feed that FIFO for the whole chunk, instead of emitting one DMA task
+    per layer.
+    """
+    if not inputs_by_layer:
+        raise ValueError("inputs_by_layer must not be empty")
+    segment_inputs_by_layer = [
+        _segment_major_inputs_from_full_layer_inputs(inputs)
+        for inputs in inputs_by_layer
+    ]
+    return torch.cat(
+        [
+            segment_inputs[name].flatten()
+            for name in SEGMENT_MAJOR_WEIGHT_ORDER
+            for segment_inputs in segment_inputs_by_layer
+        ]
+    ).contiguous()
+
+
+def pack_segment_major_weights_for_layers(
+    model: Qwen3ForCausalLM,
+    layer_indices: list[int] | range,
+) -> torch.Tensor:
+    return pack_segment_major_full_layer_weights(
+        [
+            build_full_layer_weight_inputs_for_layer(model, layer_idx)
+            for layer_idx in layer_indices
+        ]
+    )
 
 
 def pack_full_layer_weights_for_layer(
@@ -378,6 +449,69 @@ def load_packed_weight_tensor(
         packed_dir / PACKED_WEIGHTS_BIN,
         int(manifest["total_numel"]),
     )
+
+
+def _manifest_segment_slice(
+    packed_weights: torch.Tensor,
+    manifest: dict[str, object],
+    layer_idx: int,
+    segment_name: str,
+) -> torch.Tensor:
+    layer = manifest["layers"][layer_idx]
+    for segment in layer["segments"]:
+        if segment["name"] == segment_name:
+            start = int(segment["element_offset"])
+            end = start + int(segment["numel"])
+            return packed_weights[start:end]
+    raise KeyError(f"missing segment {segment_name!r} in layer {layer_idx}")
+
+
+def pack_segment_major_weight_chunk_from_layer_major(
+    packed_weights: torch.Tensor,
+    manifest: dict[str, object],
+    layer_start: int,
+    layer_count: int,
+) -> torch.Tensor:
+    """Build a segment-major chunk from the existing layer-major artifact."""
+    if layer_count < 1:
+        raise ValueError(f"layer_count must be positive, got {layer_count}")
+    layers = range(layer_start, layer_start + layer_count)
+
+    def segment_for_layer(layer_idx: int, name: str) -> torch.Tensor:
+        if name == "W_qk_norm":
+            return torch.cat(
+                [
+                    _manifest_segment_slice(
+                        packed_weights, manifest, layer_idx, "W_q_norm"
+                    ),
+                    _manifest_segment_slice(
+                        packed_weights, manifest, layer_idx, "W_k_norm"
+                    ),
+                ]
+            )
+        if name == "post_norm_gate_up":
+            return torch.cat(
+                [
+                    _manifest_segment_slice(
+                        packed_weights, manifest, layer_idx, "post_norm_weight"
+                    ),
+                    _manifest_segment_slice(
+                        packed_weights, manifest, layer_idx, "W_gate"
+                    ),
+                    _manifest_segment_slice(
+                        packed_weights, manifest, layer_idx, "W_up"
+                    ),
+                ]
+            )
+        return _manifest_segment_slice(packed_weights, manifest, layer_idx, name)
+
+    return torch.cat(
+        [
+            segment_for_layer(layer_idx, name)
+            for name in SEGMENT_MAJOR_WEIGHT_ORDER
+            for layer_idx in layers
+        ]
+    ).contiguous()
 
 
 def packed_weight_layer_slice(

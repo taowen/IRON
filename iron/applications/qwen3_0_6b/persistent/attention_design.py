@@ -517,14 +517,14 @@ def _qwen3_persistent_n_layer_final_only_impl(
             x_fifo.release(1)
 
     def qk_rope_metadata_worker(norm_weight_fifo, angles_fifo, meta_fifo, pack_kernel):
+        angles = angles_fifo.acquire(1)
         for _ in range_(layer_iterations):
             norm_weights = norm_weight_fifo.acquire(1)
-            angles = angles_fifo.acquire(1)
             meta = meta_fifo.acquire(1)
             pack_kernel(norm_weights, angles, meta, head_dim)
             meta_fifo.release(1)
-            angles_fifo.release(1)
             norm_weight_fifo.release(1)
+        angles_fifo.release(1)
 
     def q_norm_rope_metadata_worker(raw_fifo, meta_fifo, rope_fifo, norm_rope_kernel):
         for _ in range_(layer_iterations):
@@ -1027,6 +1027,41 @@ def _qwen3_persistent_n_layer_final_only_impl(
     mlp_up_weight_base = mlp_gate_weight_base + intermediate_size * hidden_size
     mlp_down_weight_base = mlp_up_weight_base + intermediate_size * hidden_size
 
+    segment_input_norm_size = hidden_size
+    segment_q_weight_size = q_size * hidden_size
+    segment_k_weight_size = kv_size * hidden_size
+    segment_v_weight_size = kv_size * hidden_size
+    segment_qk_norm_size = 2 * head_dim
+    segment_o_weight_size = hidden_size * q_size
+    segment_mlp_gate_up_size = hidden_size + 2 * intermediate_size * hidden_size
+    segment_mlp_down_size = hidden_size * intermediate_size
+    segment_input_norm_base = 0
+    segment_q_weight_base = segment_input_norm_base + (
+        layer_iterations * segment_input_norm_size
+    )
+    segment_k_weight_base = segment_q_weight_base + (
+        layer_iterations * segment_q_weight_size
+    )
+    segment_v_weight_base = segment_k_weight_base + (
+        layer_iterations * segment_k_weight_size
+    )
+    segment_qk_norm_base = segment_v_weight_base + (
+        layer_iterations * segment_v_weight_size
+    )
+    segment_o_weight_base = segment_qk_norm_base + (
+        layer_iterations * segment_qk_norm_size
+    )
+    segment_mlp_gate_up_base = segment_o_weight_base + (
+        layer_iterations * segment_o_weight_size
+    )
+    segment_mlp_down_base = segment_mlp_gate_up_base + (
+        layer_iterations * segment_mlp_gate_up_size
+    )
+    if segment_mlp_down_base + layer_iterations * segment_mlp_down_size != (
+        layer_iterations * weights_size
+    ):
+        raise ValueError("segment-major n-layer weight layout size mismatch")
+
     def weight_taps_for_k(total_rows, k_size, base_offset):
         return [
             TensorAccessPattern(
@@ -1041,15 +1076,6 @@ def _qwen3_persistent_n_layer_final_only_impl(
     def weight_taps(total_rows, base_offset):
         return weight_taps_for_k(total_rows, hidden_size, base_offset)
 
-    q_norm_weight_tap = TensorAccessPattern(
-        (weights_size,), q_norm_weight_base, [1, 1, 1, head_dim], [0, 0, 0, 1]
-    )
-    k_norm_weight_tap = TensorAccessPattern(
-        (weights_size,), k_norm_weight_base, [1, 1, 1, head_dim], [0, 0, 0, 1]
-    )
-    qk_norm_weight_tap = TensorAccessPattern(
-        (weights_size,), q_norm_weight_base, [1, 1, 1, 2 * head_dim], [0, 0, 0, 1]
-    )
     rope_angles_tap = TensorAccessPattern(
         (1, head_dim), 0, [1, 1, 1, head_dim], [0, 0, 0, 1]
     )
@@ -1091,83 +1117,53 @@ def _qwen3_persistent_n_layer_final_only_impl(
             for col in range(num_columns)
         ]
 
-    cache_key_tap = TensorAccessPattern(
-        (cache_size,),
-        position * head_dim,
-        [1, 1, kv_heads, head_dim],
-        [0, 0, max_seq_len * head_dim, 1],
-    )
-    cache_value_tap = TensorAccessPattern(
-        (cache_size,),
-        kv_size * max_seq_len + position * head_dim,
-        [1, 1, kv_heads, head_dim],
-        [0, 0, max_seq_len * head_dim, 1],
-    )
-    cache_key_blocks_tap = TensorAccessPattern(
-        (cache_size,),
-        0,
-        [kv_heads, cache_blocks_to_process, cache_block_seq, head_dim],
-        [max_seq_len * head_dim, cache_block_seq * head_dim, head_dim, 1],
-    )
-    cache_value_blocks_tap = TensorAccessPattern(
-        (cache_size,),
-        kv_size * max_seq_len,
-        [kv_heads, cache_blocks_to_process, cache_block_seq, head_dim],
-        [max_seq_len * head_dim, cache_block_seq * head_dim, head_dim, 1],
-    )
-
-    def layer_chunk_weight_tap(layer_idx, base_offset, length):
+    def segment_major_weight_tap(base_offset, length):
         return TensorAccessPattern(
             (layer_iterations * weights_size,),
-            layer_idx * weights_size + base_offset,
-            [1, 1, 1, length],
+            base_offset,
+            [1, 1, 1, layer_iterations * length],
             [0, 0, 0, 1],
         )
 
-    def layer_chunk_weight_taps_for_k(layer_idx, total_rows, k_size, base_offset):
-        return [
-            layer_chunk_weight_tap(
-                layer_idx,
-                base_offset + col * (total_rows // num_columns) * k_size,
-                total_rows // num_columns * k_size,
-            )
-            for col in range(num_columns)
-        ]
-
-    def layer_chunk_weight_taps(layer_idx, total_rows, base_offset):
-        return layer_chunk_weight_taps_for_k(
-            layer_idx, total_rows, hidden_size, base_offset
-        )
-
-    def layer_chunk_cache_key_blocks_tap(layer_idx):
+    def layer_group_cache_key_blocks_tap(layer_start, layer_count):
         return TensorAccessPattern(
             (layer_iterations * cache_size,),
-            layer_idx * cache_size,
-            [kv_heads, cache_blocks_to_process, cache_block_seq, head_dim],
-            [max_seq_len * head_dim, cache_block_seq * head_dim, head_dim, 1],
+            layer_start * cache_size,
+            [
+                layer_count,
+                kv_heads,
+                cache_blocks_to_process * cache_block_seq,
+                head_dim,
+            ],
+            [cache_size, max_seq_len * head_dim, head_dim, 1],
         )
 
-    def layer_chunk_cache_value_blocks_tap(layer_idx):
+    def layer_group_cache_value_blocks_tap(layer_start, layer_count):
         return TensorAccessPattern(
             (layer_iterations * cache_size,),
-            layer_idx * cache_size + kv_size * max_seq_len,
-            [kv_heads, cache_blocks_to_process, cache_block_seq, head_dim],
-            [max_seq_len * head_dim, cache_block_seq * head_dim, head_dim, 1],
+            layer_start * cache_size + kv_size * max_seq_len,
+            [
+                layer_count,
+                kv_heads,
+                cache_blocks_to_process * cache_block_seq,
+                head_dim,
+            ],
+            [cache_size, max_seq_len * head_dim, head_dim, 1],
         )
 
-    def layer_chunk_cache_key_current_tap():
+    def layer_group_cache_key_current_tap(layer_start, layer_count):
         return TensorAccessPattern(
             (layer_iterations * cache_size,),
-            position * head_dim,
-            [layer_iterations, 1, kv_heads, head_dim],
+            layer_start * cache_size + position * head_dim,
+            [layer_count, 1, kv_heads, head_dim],
             [cache_size, 0, max_seq_len * head_dim, 1],
         )
 
-    def layer_chunk_cache_value_current_tap():
+    def layer_group_cache_value_current_tap(layer_start, layer_count):
         return TensorAccessPattern(
             (layer_iterations * cache_size,),
-            kv_size * max_seq_len + position * head_dim,
-            [layer_iterations, 1, kv_heads, head_dim],
+            layer_start * cache_size + kv_size * max_seq_len + position * head_dim,
+            [layer_count, 1, kv_heads, head_dim],
             [cache_size, 0, max_seq_len * head_dim, 1],
         )
 
@@ -1244,100 +1240,109 @@ def _qwen3_persistent_n_layer_final_only_impl(
         (outputs_size,), 0, [1, 1, 1, hidden_size], [0, 0, 0, 1]
     )
     rt = Runtime()
+    layer_writeback_dma_group_size = 4
+    layer_writeback_dma_groups = [
+        (
+            layer_start,
+            min(layer_writeback_dma_group_size, layer_iterations - layer_start),
+        )
+        for layer_start in range(0, layer_iterations, layer_writeback_dma_group_size)
+    ]
+    layer_cache_dma_group_size = 4
+    layer_cache_dma_groups = [
+        (
+            layer_start,
+            min(layer_cache_dma_group_size, layer_iterations - layer_start),
+        )
+        for layer_start in range(0, layer_iterations, layer_cache_dma_group_size)
+    ]
 
-    def fill_chunk_layer_inputs(layer_idx, weights, angles, cache, tg):
+    def fill_chunk_weight_segments(weights, tg):
         rt.fill(
             in_weight.prod(),
             weights,
-            layer_chunk_weight_tap(layer_idx, 0, hidden_size),
+            segment_major_weight_tap(segment_input_norm_base, segment_input_norm_size),
             task_group=tg,
         )
         rt.fill(
             qk_norm_weight.prod(),
             weights,
-            layer_chunk_weight_tap(layer_idx, q_norm_weight_base, 2 * head_dim),
+            segment_major_weight_tap(segment_qk_norm_base, segment_qk_norm_size),
             task_group=tg,
-        )
-        rt.fill(rope_angles.prod(), angles, rope_angles_tap, task_group=tg)
-        layer_q_weight_taps = layer_chunk_weight_taps(layer_idx, q_size, q_weight_base)
-        layer_k_weight_taps = layer_chunk_weight_taps(layer_idx, kv_size, k_weight_base)
-        layer_v_weight_taps = layer_chunk_weight_taps(layer_idx, kv_size, v_weight_base)
-        layer_o_weight_taps = layer_chunk_weight_taps_for_k(
-            layer_idx, hidden_size, q_size, o_weight_base
         )
         for col in range(num_columns):
             rt.fill(
                 q_weight_fifos[col].prod(),
                 weights,
-                layer_q_weight_taps[col],
+                segment_major_weight_tap(segment_q_weight_base, segment_q_weight_size),
                 task_group=tg,
             )
             rt.fill(
                 k_weight_fifos[col].prod(),
                 weights,
-                layer_k_weight_taps[col],
+                segment_major_weight_tap(segment_k_weight_base, segment_k_weight_size),
                 task_group=tg,
             )
             rt.fill(
                 v_weight_fifos[col].prod(),
                 weights,
-                layer_v_weight_taps[col],
+                segment_major_weight_tap(segment_v_weight_base, segment_v_weight_size),
                 task_group=tg,
             )
             rt.fill(
                 o_weight_fifos[col].prod(),
                 weights,
-                layer_o_weight_taps[col],
+                segment_major_weight_tap(segment_o_weight_base, segment_o_weight_size),
                 task_group=tg,
             )
         rt.fill(
             mlp_gate_up_weight_rows.prod(),
             weights,
-            layer_chunk_weight_tap(
-                layer_idx,
-                mlp_post_norm_weight_base,
-                hidden_size + 2 * intermediate_size * hidden_size,
+            segment_major_weight_tap(
+                segment_mlp_gate_up_base,
+                segment_mlp_gate_up_size,
             ),
             task_group=tg,
         )
         rt.fill(
             mlp_down_weight.prod(),
             weights,
-            layer_chunk_weight_tap(
-                layer_idx, mlp_down_weight_base, hidden_size * intermediate_size
-            ),
+            segment_major_weight_tap(segment_mlp_down_base, segment_mlp_down_size),
             task_group=tg,
         )
+
+    def fill_chunk_layer_group_cache_inputs(layer_start, layer_count, cache, tg):
         for col in range(num_columns):
             rt.fill(
                 k_cache_fifos[col].prod(),
                 cache,
-                layer_chunk_cache_key_blocks_tap(layer_idx),
+                layer_group_cache_key_blocks_tap(layer_start, layer_count),
                 task_group=tg,
             )
             rt.fill(
                 v_cache_raw_fifos[col].prod(),
                 cache,
-                layer_chunk_cache_value_blocks_tap(layer_idx),
+                layer_group_cache_value_blocks_tap(layer_start, layer_count),
                 task_group=tg,
             )
 
     def drain_chunk_cache(cache, tg):
-        for col in range(num_columns):
-            rt.drain(
-                k_rope_fifos[col].cons(),
-                cache,
-                layer_chunk_cache_key_current_tap(),
-                wait=True,
-                task_group=tg,
-            )
-            rt.drain(
-                v_fifos[col].cons(),
-                cache,
-                layer_chunk_cache_value_current_tap(),
-                wait=True,
-                task_group=tg,
-            )
+        for layer_start, layer_count in layer_writeback_dma_groups:
+            for col in range(num_columns):
+                rt.drain(
+                    k_rope_fifos[col].cons(),
+                    cache,
+                    layer_group_cache_key_current_tap(layer_start, layer_count),
+                    wait=True,
+                    task_group=tg,
+                )
+                rt.drain(
+                    v_fifos[col].cons(),
+                    cache,
+                    layer_group_cache_value_current_tap(layer_start, layer_count),
+                    wait=True,
+                    task_group=tg,
+                )
 
     with rt.sequence(
         tensor_ty, weights_chunk_ty, angles_ty, outputs_ty, cache_chunk_ty
@@ -1345,8 +1350,10 @@ def _qwen3_persistent_n_layer_final_only_impl(
         rt.start(*workers)
         tg = rt.task_group()
         rt.fill(runtime_hidden_in.prod(), hidden, hidden_tap, task_group=tg)
-        for layer_idx in range(layer_iterations):
-            fill_chunk_layer_inputs(layer_idx, weights, angles, cache, tg)
+        rt.fill(rope_angles.prod(), angles, rope_angles_tap, task_group=tg)
+        fill_chunk_weight_segments(weights, tg)
+        for layer_start, layer_count in layer_cache_dma_groups:
+            fill_chunk_layer_group_cache_inputs(layer_start, layer_count, cache, tg)
         drain_chunk_cache(cache, tg)
         rt.drain(
             (

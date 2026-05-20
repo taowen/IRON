@@ -23,6 +23,8 @@ from iron.applications.qwen3_0_6b.persistent.layout import (
     PACKED_WEIGHTS_MANIFEST,
     load_packed_weight_tensor,
     pack_full_layer_weights_for_layer,
+    pack_segment_major_weight_chunk_from_layer_major,
+    pack_segment_major_weights_for_layers,
     packed_weight_layer_slice,
     validate_packed_weight_artifact,
     write_packed_weight_artifact,
@@ -154,6 +156,26 @@ def test_qwen3_packed_weight_artifact_roundtrip(tmp_path):
         actual = packed_weight_layer_slice(packed, loaded_manifest, layer_idx)
         expected = pack_full_layer_weights_for_layer(model, layer_idx)
         assert torch.equal(actual, expected)
+
+
+def test_qwen3_segment_major_weight_chunk_matches_layer_major_artifact(tmp_path):
+    model = _fake_qwen3_model(num_layers=3)
+    expected_per_layer = pack_full_layer_weights_for_layer(model, 0).numel()
+    manifest = write_packed_weight_artifact(
+        model,
+        tmp_path,
+        expected_per_layer_numel=expected_per_layer,
+    )
+    packed = load_packed_weight_tensor(tmp_path, manifest)
+
+    assert torch.equal(
+        pack_segment_major_weights_for_layers(model, [0]),
+        pack_full_layer_weights_for_layer(model, 0),
+    )
+    assert torch.equal(
+        pack_segment_major_weight_chunk_from_layer_major(packed, manifest, 0, 3),
+        pack_segment_major_weights_for_layers(model, range(3)),
+    )
 
 
 def test_qwen3_packed_weight_manifest_fails_fast(tmp_path):
@@ -332,10 +354,10 @@ def test_qwen3_graph_probe_layer_groups():
 
 
 def test_qwen3_n_layer_final_only_rejects_unsupported_chunk():
-    Qwen3PersistentNLayerFinalOnly(layer_iterations=7)
+    Qwen3PersistentNLayerFinalOnly(layer_iterations=8)
 
-    with pytest.raises(ValueError, match="at most 7 layers per chunk"):
-        Qwen3PersistentNLayerFinalOnly(layer_iterations=8)
+    with pytest.raises(ValueError, match="at most 8 layers per chunk"):
+        Qwen3PersistentNLayerFinalOnly(layer_iterations=9)
 
 
 def test_qwen3_preflight_catches_non_advancing_acquire(tmp_path):
@@ -556,6 +578,8 @@ def test_qwen3_persistent_fast_generate(tmp_path):
         "--verify-generate",
         "--max-new-tokens",
         "2",
+        "--layer-chunk-size",
+        "8",
         "--packed-weights-dir",
         str(packed_dir),
         "--require-packed-weights",

@@ -185,7 +185,7 @@ drains the full debug output and updated KV cache, and refills it for the next
 invocation.
 
 The accepted fast-generate path now uses one n-layer-final-only operator class
-for --layer-chunk-size 1, 2, and 4. It reuses packed weight XRT buffers, keeps
+for --layer-chunk-size 1, 2, 4, 6, and 8. It reuses packed weight XRT buffers, keeps
 each chunk's KV cache resident in its XRT inout buffer across decode positions,
 processes only active prefix KV cache blocks during final-only decode, and
 drains only the final hidden state after each chunk because the chunk loop is
@@ -197,20 +197,23 @@ chunk=1 token_match: True for positions 6 and 7
 chunk=2 token_match: True for positions 6 and 7
 chunk=4 token_match: True for positions 6 and 7
 chunk=4 after prefix-KV optimization: about 184-185ms NPU layer time per token
-chunk=7 compile/preflight accepted:
-  compute_cores=21 total_dma_tasks=81 max_dma_tasks_per_fifo=7
-  the static graph would reduce 28 layers to 4 chunk dispatches per token,
-  but runtime acceptance is not yet proven
+chunk=8 after segment-major weights + grouped cache DMA:
+  compile/preflight accepted with max_dma_tasks_per_fifo=2
+  generate token_match=True on the default prompt
+  generate token_match=True on raw prompt "The sequence is 1, 2," for
+  consecutive decode positions 9 and 10
 
 n-layer-final-only:
 chunk_hidden_errors: 0 for chunk=1,2,4
-cache current errors: 0 for accepted chunk checks
+cache current errors: 0 for accepted strict chunk checks through chunk=6
+chunk=7/8 can have a few deterministic current-K strict-check misses while
+final hidden and generate token checks still pass
 preflight: runtime_memrefs=5 compute_cores<=21 non_advancing_acquires=0
 ```
 
-Chunk=8 is not accepted in the current design. It fails NPU lowering with
-current-KV writeback BD exhaustion and MLP down-weight L1 pressure, so the
-operator now rejects chunks larger than 7 before invoking aiecc.
+Chunks larger than 8 are not accepted in the current design. They need a true
+runtime state machine or further descriptor reuse; do not enable them just by
+raising the operator guard.
 
 The synthetic `persistent/graph_probe.py` experiment is the current tool for
 learning large persistent graph scaling without model weights. It showed that

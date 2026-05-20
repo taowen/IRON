@@ -282,6 +282,71 @@ layer_17_qkv_diagnostic_bundle_tensor_done: hidden shape=(1024,)
 layer_17_qkv_diagnostic_bundle: build_qwen3_persistent_multilayer/diagnostics/qkv_boundary_layer_17.npz
 ```
 
+## N-Layer Chunk 6/8 Compiles But Times Out At Runtime
+
+Symptom:
+
+```text
+n-layer-final-only --layer-chunk-size 6 --verify
+preflight: ok ... max_dma_tasks_per_fifo=6 ...
+HostRuntimeError: Kernel returned ert_cmd_state.ERT_CMD_STATE_TIMEOUT
+```
+
+Diagnostic sequence used:
+
+```text
+1. Repack n-layer weights segment-major and prove compile/preflight improves.
+2. Run chunk=4,5,6,7,8 with the same prompt position and clean builds.
+3. Split current K/V writeback into groups of 4 and rerun chunk=6.
+4. Split historical K/V cache fill into groups of 4 and rerun chunk=6/8.
+```
+
+Evidence found:
+
+```text
+segment-major weights, per-layer cache fill:
+chunk=4 verify: pass, max_dma_tasks_per_fifo=4
+chunk=5 verify: pass, max_dma_tasks_per_fifo=5
+chunk=6 verify: timeout, max_dma_tasks_per_fifo=6
+
+segment-major weights, writeback grouped by 4, per-layer cache fill:
+chunk=6 verify: timeout, max_dma_tasks_per_fifo=6
+
+segment-major weights, cache fill grouped by 4, writeback grouped by 4:
+chunk=6 verify: pass, max_dma_tasks_per_fifo=2
+chunk=8 generate: token_match=True over consecutive decode positions 9 and 10
+```
+
+Root cause:
+
+```text
+The timeout was not caused by external-kernel math or current K/V writeback.
+The blocker was issuing six or more independent historical K/V cache fill tasks
+to the same shallow cache ObjectFIFO in one runtime task group. The DMA stream
+can fill ahead only to FIFO depth, then backpressure blocks the task schedule
+needed to make forward progress.
+```
+
+Fix:
+
+```text
+Use segment-major chunk weights so each weight FIFO gets one linear DMA stream
+for the whole layer chunk. Group historical K/V cache fills and current K/V
+writeback by at most four layers. The real chunk=8 graph then stays at
+max_dma_tasks_per_fifo=2 and avoids the runtime timeout.
+```
+
+Residual check:
+
+```text
+chunk=8 n-layer stage verify:
+final hidden passes with 0 errors.
+V cache current passes with 0 errors.
+K cache current has a few deterministic strict-check errors in some partial
+chunk tests, but full generate with --layer-chunk-size 8 matched CPU reference
+tokens on the default prompt and raw prompt "The sequence is 1, 2,".
+```
+
 ## Decode Wall Time Is Much Larger Than NPU Time
 
 Symptom:

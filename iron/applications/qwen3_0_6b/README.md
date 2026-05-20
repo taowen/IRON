@@ -80,7 +80,7 @@ python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
   --stage generate \
   --fast-generate \
-  --layer-chunk-size 4 \
+  --layer-chunk-size 8 \
   --verify-generate \
   --max-new-tokens 3
 ```
@@ -91,10 +91,11 @@ Current measurement on the default prompt and `max_new_tokens=3`:
 chunk=4 after prefix-KV optimization:
 token_match=True, npu_layer_time_us_total ~= 184-201ms
 
-chunk=7 compile/preflight optimization:
-the static graph would reduce 28 layers to 4 chunk dispatches per token, and
-compile-only preflight reports compute_cores=21, total_dma_tasks=81,
-max_dma_tasks_per_fifo=7
+chunk=8 after segment-major weights + grouped cache DMA:
+token_match=True on the default prompt and on raw prompt "The sequence is 1, 2,"
+for consecutive decode positions. The static graph reduces 28 layers to
+8 + 8 + 8 + 4 chunk dispatches per token, and preflight reports
+compute_cores=21, max_dma_tasks_per_fifo=2.
 ```
 
 Use the real graph probe to decide the next speed target:

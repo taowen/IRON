@@ -20,6 +20,7 @@ were used in this repository. Detailed entries are split by failure class.
 - [First Iteration Is Zero, Later Iterations Improve](symptoms-runtime.md#first-iteration-is-zero-later-iterations-improve)
 - [Diagnostic Bundle Crashes While Serializing A Layer Tensor](symptoms-runtime.md#diagnostic-bundle-crashes-while-serializing-a-layer-tensor)
 - [Decode Wall Time Is Much Larger Than NPU Time](symptoms-runtime.md#decode-wall-time-is-much-larger-than-npu-time)
+- [N-Layer Chunk 6/8 Compiles But Times Out At Runtime](symptoms-runtime.md#n-layer-chunk-68-compiles-but-times-out-at-runtime)
 
 ### Numeric
 

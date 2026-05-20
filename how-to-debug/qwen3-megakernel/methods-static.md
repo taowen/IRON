@@ -166,7 +166,8 @@ Accepted evidence:
 28 grouped-by-4 transfers compile: max_dma_tasks_per_fifo=7
 64 grouped-by-4 transfers fail preflight: max_dma_tasks_per_fifo=16
 64-layer repeated TAP compiles: max_dma_tasks_per_fifo=1
-real Qwen3 chunk=7 compiles: max_dma_tasks_per_fifo=7
+real Qwen3 chunk=8 compiles/runs after segment-major weights and grouped cache
+DMA: max_dma_tasks_per_fifo=2
 ```
 
 So the current Qwen3 preflight limit is eight DMA tasks per FIFO. This is not a

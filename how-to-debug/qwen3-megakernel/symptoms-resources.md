@@ -251,35 +251,43 @@ The failure remained on @qwen3_rc_k_rope_0 and @qwen3_rc_v_0.
 Root cause:
 
 ```text
-Chunk=8 is not blocked by the attention math. The current N-layer final-only
-runtime expression asks a single FIFO drain to scatter eight layers times eight
-KV heads into the cache chunk. That multidimensional repeated BD chain still
-exceeds the NPU lowering resource budget, and the same graph also has L1
-pressure on the MLP down-weight tile.
+The first diagnosis was incomplete. Chunk=8 is not blocked by attention math,
+but the original layer-major weight chunk made every weight FIFO receive one
+DMA task per layer. That static task replication combined with current-KV
+writeback and cache movement exhausted BD/L1 resources during lowering.
 ```
 
-Fix used:
+Fix used now:
 
 ```text
-Keep the supported chunk size capped at 4 and fail early in the operator
-constructor until larger chunks are proven. Prefix KV block processing is still
-kept because it is correct and reduces chunk=4 NPU time. A future chunk=8 design
-needs a different cache writeback representation, not another blind placement
-tweak.
+Repack n-layer chunk weights segment-major:
+
+input_norm for all layers
+Q weights for all layers
+K weights for all layers
+V weights for all layers
+Q/K norm weights for all layers
+O weights for all layers
+post_norm + gate + up weights for all layers
+down weights for all layers
+
+Then each weight FIFO receives one linear DMA stream for the whole chunk.
 ```
 
 Follow-up optimization evidence:
 
 ```text
-chunk=5 compile/preflight: ok, compute_cores=21, max_dma_tasks_per_fifo=5
-chunk=6 compile/preflight: ok, compute_cores=21, max_dma_tasks_per_fifo=6
-chunk=7 compile/preflight: ok, compute_cores=21, max_dma_tasks_per_fifo=7
+segment-major chunk=8 compile/preflight:
+compute_cores=21 total_dma_tasks=29 max_dma_tasks_per_fifo=8
+
+after grouping cache fill and writeback by 4 layers:
+chunk=8 preflight: max_dma_tasks_per_fifo=2
+chunk=8 generate: token_match=True
 ```
 
-The static compile/preflight cap was raised to 7 because the synthetic graph
-probe had already established eight DMA tasks per FIFO as the measured safe
-boundary and the real Qwen3 chunk=7 graph stays below it. This does not prove
-the chunk=7 runtime state machine is accepted; chunk=8 remains rejected.
+The supported cap is now 8 layers per chunk. Larger chunks still need a real
+runtime state machine or more aggressive descriptor reuse; they should not be
+enabled just because compile/preflight accepts a synthetic pattern.
 
 ## Synthetic Persistent Graph Exhausts BD IDs At 9 DMA Tasks Per FIFO
 

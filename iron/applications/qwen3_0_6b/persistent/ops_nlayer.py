@@ -39,7 +39,7 @@ class Qwen3PersistentNLayerFinalOnly(MLIROperator):
     layer_iterations: int = 1
     context: object = field(default=None, repr=False)
 
-    max_supported_layer_iterations: ClassVar[int] = 7
+    max_supported_layer_iterations: ClassVar[int] = 8
 
     _name_aliases: ClassVar[dict[str, str]] = {
         **MLIROperator._name_aliases,
@@ -111,8 +111,9 @@ class Qwen3PersistentNLayerFinalOnly(MLIROperator):
             raise ValueError(
                 "Qwen3 n-layer final-only currently supports at most "
                 f"{self.max_supported_layer_iterations} layers per chunk; "
-                f"got {self.layer_iterations}. Chunk=8 still exhausts NPU "
-                "BD/L1 resources in the current writeback/TAP expression."
+                f"got {self.layer_iterations}. Larger chunks need a runtime "
+                "state-machine design that reuses cache DMA descriptors instead "
+                "of statically issuing more layer groups."
             )
         MLIROperator.__init__(self, context=self.context)
 
