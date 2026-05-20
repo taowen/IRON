@@ -389,33 +389,3 @@ def packed_weight_layer_slice(
     start = int(layer["element_offset"])
     end = start + int(layer["numel"])
     return packed_weights[start:end]
-
-
-def unpack_full_layer_outputs(
-    op, packed_outputs: torch.Tensor
-) -> dict[str, torch.Tensor]:
-    return {
-        "v_context_stream": packed_outputs[
-            op.v_context_stream_output_base : op.attn_context_output_base
-        ],
-        "attn_context": packed_outputs[
-            op.attn_context_output_base : op.attn_context_flat_output_base
-        ],
-        "attn_residual": packed_outputs[
-            op.attn_residual_output_base : op.mlp_x_norm_output_base
-        ],
-        "ffn_hidden": packed_outputs[
-            op.ffn_hidden_output_base : op.ffn_out_output_base
-        ],
-        "ffn_out": packed_outputs[
-            op.ffn_out_output_base : op.layer_residual_output_base
-        ],
-        "layer_residual": packed_outputs[op.layer_residual_output_base :],
-    }
-
-
-def layer_residual_from_packed_output(
-    op,
-    packed_outputs: torch.Tensor,
-) -> torch.Tensor:
-    return packed_outputs[op.layer_residual_output_base :]

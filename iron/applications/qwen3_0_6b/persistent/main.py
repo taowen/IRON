@@ -5,7 +5,6 @@
 
 import argparse
 import gc
-import math
 import shutil
 import sys
 import time
@@ -22,9 +21,7 @@ from iron.applications.qwen3_0_6b.qwen3_cpu import (  # noqa: E402
     DEFAULT_MODEL,
     DEFAULT_PROMPT,
     Qwen3ForCausalLM,
-    apply_rope,
     encode_prompt,
-    repeat_kv,
     resolve_model_dir,
     rms_norm,
 )
@@ -33,21 +30,17 @@ from iron.applications.qwen3_0_6b.qwen3_decode_reference import (  # noqa: E402
     clone_decode_state,
 )
 from iron.applications.qwen3_0_6b.persistent.checks import (  # noqa: E402
-    full_layer_local_invariants,
     print_tensor_check,
 )
 from iron.applications.qwen3_0_6b.persistent.diagnostics import (  # noqa: E402
     run_qkv_diagnostic_bundle,
-    write_qkv_boundary_diagnostic_bundle,
 )
 from iron.applications.qwen3_0_6b.persistent.layout import (  # noqa: E402
     build_full_layer_inputs_for_layer,
     default_packed_weights_dir,
-    host_owned_tensor,
     pack_full_layer_weights,
     validate_packed_weight_artifact,
     write_packed_weight_artifact,
-    unpack_full_layer_outputs,
 )
 from iron.applications.qwen3_0_6b.persistent.generate import (  # noqa: E402
     prepare_fast_generate_buffers,
@@ -56,11 +49,6 @@ from iron.applications.qwen3_0_6b.persistent.generate import (  # noqa: E402
 from iron.applications.qwen3_0_6b.persistent.ops import (  # noqa: E402
     Qwen3PersistentInputRMSNorm,
     Qwen3PersistentInputRMSNormQKV,
-    Qwen3PersistentInputRMSNormQKVRopeCache,
-    Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmax,
-    Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContext,
-    Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj,
-    Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP,
     Qwen3PersistentNLayerFinalOnly,
     Qwen3PersistentPostAttnMLPDownResidual,
     Qwen3PersistentPostAttnRMSNormFullMLP,
@@ -69,16 +57,11 @@ from iron.applications.qwen3_0_6b.persistent.ops import (  # noqa: E402
 )
 from iron.applications.qwen3_0_6b.persistent.refs import (  # noqa: E402
     build_reference_multi_layer_full_layer,
-    build_qk_pair_reference,
     build_reference_input,
-    build_reference_full_layer,
     build_reference_full_mlp,
     build_reference_mlp_down_residual,
     build_reference_mlp_gate_up,
     build_reference_qkv,
-    build_reference_qkv_rope_cache,
-    full_layer_reference_from_inputs,
-    print_structured_attention_error,
 )
 from iron.applications.qwen3_0_6b.qwen3_preflight import (  # noqa: E402
     run_persistent_artifact_preflight,
@@ -87,8 +70,6 @@ from iron.common.context import AIEContext  # noqa: E402
 from iron.common.test_utils import verify_buffer  # noqa: E402
 from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor  # noqa: E402
 
-FULL_LAYER_STAGE = "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
-MULTI_LAYER_FULL_LAYER_STAGE = "multi-layer-full-layer"
 N_LAYER_FINAL_ONLY_STAGE = "n-layer-final-only"
 GENERATE_STAGE = "generate"
 
@@ -138,12 +119,6 @@ def parse_args():
         choices=[
             "input-rmsnorm",
             "input-rmsnorm-qkv",
-            "input-rmsnorm-qkv-rope-cache",
-            "input-rmsnorm-qkv-rope-cache-scores-softmax",
-            "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
-            "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
-            FULL_LAYER_STAGE,
-            MULTI_LAYER_FULL_LAYER_STAGE,
             N_LAYER_FINAL_ONLY_STAGE,
             GENERATE_STAGE,
             "post-attn-rmsnorm-mlp-gate-up",
@@ -164,8 +139,8 @@ def parse_args():
         "--fast-generate",
         action="store_true",
         help=(
-            "Reuse packed weight/cache XRT buffers for --stage generate. "
-            "The default generate path keeps the older host round-trip debug flow."
+            "Use the n-layer final-only generate path with cached packed "
+            "weight/cache XRT buffers."
         ),
     )
     parser.add_argument("--verify-repeat", type=int, default=1)
@@ -182,274 +157,13 @@ def parse_args():
         help="Number of full layers per persistent fast-generate invocation",
     )
     parser.add_argument(
-        "--num-layers",
-        type=int,
-        default=2,
-        help="Number of transformer layers to run for multi-layer-full-layer",
-    )
-    parser.add_argument(
-        "--diagnose-depth",
-        action="store_true",
-        help="Print per-layer boundary diagnostics for multi-layer-full-layer",
-    )
-    parser.add_argument(
-        "--reference-num-layers",
-        type=int,
-        default=None,
-        help=(
-            "Number of layers used for prefill/token/cache reference in "
-            "multi-layer-full-layer; defaults to --num-layers"
-        ),
-    )
-    parser.add_argument(
         "--qkv-diagnostic-bundle",
         type=Path,
         default=None,
-        help="Run an isolated QKV diagnostic from a bundle emitted by --diagnose-depth",
+        help="Run an isolated QKV diagnostic bundle",
     )
     parser.add_argument("--dump-proof", action="store_true")
     return parser.parse_args()
-
-
-def run_multi_layer_full_layer(
-    args,
-    model: Qwen3ForCausalLM,
-    input_ids: torch.Tensor,
-    op,
-    op_func,
-) -> bool:
-    if not (1 <= args.num_layers <= model.config.num_hidden_layers):
-        raise ValueError(
-            f"num_layers must be in [1, {model.config.num_hidden_layers}], "
-            f"got {args.num_layers}"
-        )
-    reference_num_layers = (
-        args.num_layers
-        if args.reference_num_layers is None
-        else args.reference_num_layers
-    )
-    if not (args.num_layers <= reference_num_layers <= model.config.num_hidden_layers):
-        raise ValueError(
-            "reference_num_layers must be in "
-            f"[{args.num_layers}, {model.config.num_hidden_layers}], "
-            f"got {reference_num_layers}"
-        )
-
-    (
-        next_token,
-        position,
-        initial_hidden,
-        initial_state,
-        expected_hidden,
-        _expected_state,
-    ) = build_reference_multi_layer_full_layer(
-        model,
-        input_ids,
-        args.max_seq_len,
-        args.num_layers,
-        prefill_num_layers=reference_num_layers,
-    )
-    if position != op.position:
-        raise RuntimeError(f"compiled position {op.position} != reference {position}")
-
-    failed = False
-    first_failure = None
-    first_full_ref_drift = None
-    first_v_diagnostic = None
-    repeat_count = max(1, args.verify_repeat)
-    for iteration in range(repeat_count):
-        current_hidden = initial_hidden.clone()
-        total_npu_time = 0
-        print(f"iteration: {iteration}")
-        print(f"prompt_next_token: {next_token}")
-        print(f"decode_position: {position}")
-        print(f"reference_num_layers: {reference_num_layers}")
-        for layer_idx in range(args.num_layers):
-            inputs = build_full_layer_inputs_for_layer(
-                model,
-                layer_idx,
-                current_hidden,
-                initial_state,
-            )
-            local_expected = full_layer_reference_from_inputs(
-                model,
-                inputs,
-                position,
-                args.max_seq_len,
-            )
-            hidden_buf = XRTTensor.from_torch(inputs["hidden"])
-            weights_buf = XRTTensor.from_torch(pack_full_layer_weights(inputs))
-            rope_angles_buf = XRTTensor.from_torch(inputs["rope_angles"])
-            packed_outputs_buf = XRTTensor(
-                (op.packed_outputs_size,),
-                dtype=hidden_buf.dtype,
-            )
-            packed_cache_buf = XRTTensor.from_torch(inputs["initial_cache"].clone())
-            result = op_func(
-                hidden_buf,
-                weights_buf,
-                rope_angles_buf,
-                packed_outputs_buf,
-                packed_cache_buf,
-            )
-            total_npu_time += result.npu_time
-            packed_outputs_buf.device = "npu"
-            packed_cache_buf.device = "npu"
-            packed_outputs = packed_outputs_buf.to_torch()
-            packed_cache = packed_cache_buf.to_torch()
-            actual = unpack_full_layer_outputs(op, packed_outputs)
-            pending_v_diagnostic = False
-
-            keys_cache = packed_cache[: op.cache_half_size].view(
-                op.kv_heads, args.max_seq_len, op.head_dim
-            )
-            values_cache = packed_cache[op.cache_half_size :].view(
-                op.kv_heads, args.max_seq_len, op.head_dim
-            )
-            actual["keys_cache_current"] = keys_cache[:, position, :].flatten()
-            actual["values_cache_current"] = values_cache[:, position, :].flatten()
-            v_context_stream = actual["v_context_stream"].view(
-                op.kv_heads, op.max_seq_len, op.head_dim
-            )
-            actual["v_context_stream_current"] = v_context_stream[
-                :, position, :
-            ].flatten()
-
-            local_invariants = full_layer_local_invariants(inputs, actual)
-            add_errors = print_tensor_check(
-                f"layer_{layer_idx}_residual_add",
-                actual["layer_residual"],
-                local_invariants["layer_residual_local"],
-                rel_tol=0.04,
-                abs_tol=1e-6,
-            )
-            failed = failed or bool(add_errors)
-            if add_errors and first_failure is None:
-                first_failure = f"layer_{layer_idx}_residual_add"
-            print(f"layer_{layer_idx}_npu_time_us: {result.npu_time / 1e3:.3f}")
-
-            if args.diagnose_depth:
-                full_ref_tolerances = {
-                    "attn_residual": verification_tolerance(
-                        FULL_LAYER_STAGE, "attn_residual"
-                    ),
-                    "ffn_hidden": verification_tolerance(
-                        FULL_LAYER_STAGE, "ffn_hidden"
-                    ),
-                    "ffn_out": verification_tolerance(FULL_LAYER_STAGE, "ffn_out"),
-                    "layer_residual": verification_tolerance(
-                        FULL_LAYER_STAGE, "layer_residual"
-                    ),
-                }
-                local_checks = {
-                    "ffn_out_local": (
-                        actual["ffn_out"],
-                        local_invariants["ffn_out_local"],
-                        0.04,
-                        1e-6,
-                    ),
-                    "values_cache_vs_context_current": (
-                        actual["values_cache_current"],
-                        actual["v_context_stream_current"],
-                        0.05,
-                        0.025,
-                    ),
-                }
-                for name, (output, expected, rel_tol, abs_tol) in local_checks.items():
-                    errors = print_tensor_check(
-                        f"layer_{layer_idx}_{name}",
-                        output,
-                        expected,
-                        rel_tol,
-                        abs_tol,
-                    )
-                    failed = failed or bool(errors)
-                    if errors and first_failure is None:
-                        first_failure = f"layer_{layer_idx}_{name}"
-                for name, (rel_tol, abs_tol) in full_ref_tolerances.items():
-                    errors = print_tensor_check(
-                        f"layer_{layer_idx}_{name}_full_ref",
-                        actual[name],
-                        local_expected[name],
-                        rel_tol,
-                        abs_tol,
-                    )
-                    if errors and first_full_ref_drift is None:
-                        first_full_ref_drift = f"layer_{layer_idx}_{name}_full_ref"
-
-            for name, abs_tol in {
-                "keys_cache_current": 0.5,
-                "v_context_stream_current": 0.025,
-                "values_cache_current": 0.025,
-            }.items():
-                expected = (
-                    local_expected["values_cache_current"]
-                    if name == "v_context_stream_current"
-                    else local_expected[name]
-                )
-                errors = print_tensor_check(
-                    f"layer_{layer_idx}_{name}",
-                    actual[name],
-                    expected,
-                    rel_tol=0.05,
-                    abs_tol=abs_tol,
-                )
-                failed = failed or bool(errors)
-                if errors and first_failure is None:
-                    first_failure = f"layer_{layer_idx}_{name}"
-                if (
-                    errors
-                    and args.diagnose_depth
-                    and name
-                    in {
-                        "v_context_stream_current",
-                        "values_cache_current",
-                    }
-                    and first_v_diagnostic is None
-                ):
-                    pending_v_diagnostic = True
-
-            next_hidden = host_owned_tensor(actual["layer_residual"])
-            if pending_v_diagnostic:
-                full_layer_v = host_owned_tensor(actual["v_context_stream_current"])
-                bundle_path = write_qkv_boundary_diagnostic_bundle(
-                    build_dir=args.build_dir,
-                    layer_idx=layer_idx,
-                    inputs=inputs,
-                    full_layer_v=full_layer_v,
-                )
-                first_v_diagnostic = f"layer_{layer_idx}_qkv_bundle:{bundle_path}"
-
-            current_hidden = next_hidden
-
-        final_rel_tol = 0.06
-        final_abs_tol = 0.04 * max(1, args.num_layers)
-        final_errors = print_tensor_check(
-            "hidden_after_layers",
-            current_hidden,
-            expected_hidden,
-            rel_tol=final_rel_tol,
-            abs_tol=final_abs_tol,
-        )
-        print(f"npu_time_us_total: {total_npu_time / 1e3:.3f}")
-        failed = failed or bool(final_errors)
-        if final_errors and first_failure is None:
-            first_failure = "hidden_after_layers"
-
-    if first_failure is None:
-        print("first_failure: none")
-    else:
-        print(f"first_failure: {first_failure}")
-    if first_full_ref_drift is None:
-        print("first_full_ref_drift: none")
-    else:
-        print(f"first_full_ref_drift: {first_full_ref_drift}")
-    if first_v_diagnostic is None:
-        print("first_v_diagnostic: none")
-    else:
-        print(f"first_v_diagnostic: {first_v_diagnostic}")
-
-    return failed
 
 
 def run_n_layer_final_only(
@@ -562,13 +276,13 @@ def run_n_layer_final_only(
     return failed
 
 
-def make_full_layer_op_for_position(
+def make_single_layer_final_only_op_for_position(
     args,
     model: Qwen3ForCausalLM,
     context: AIEContext,
     position: int,
 ):
-    return Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP(
+    return Qwen3PersistentNLayerFinalOnly(
         hidden_size=model.config.hidden_size,
         q_size=model.config.num_attention_heads * model.config.head_dim,
         kv_size=model.config.num_key_value_heads * model.config.head_dim,
@@ -576,6 +290,7 @@ def make_full_layer_op_for_position(
         max_seq_len=args.max_seq_len,
         position=position,
         intermediate_size=model.config.intermediate_size,
+        layer_iterations=1,
         epsilon=model.config.rms_norm_eps,
         context=context,
     )
@@ -600,39 +315,6 @@ def make_n_layer_final_only_op_for_position(
         epsilon=model.config.rms_norm_eps,
         context=context,
     )
-
-
-def compile_full_layer_op_for_position(
-    args,
-    model: Qwen3ForCausalLM,
-    context: AIEContext,
-    position: int,
-):
-    op = make_full_layer_op_for_position(args, model, context, position)
-    start = time.perf_counter()
-    op.compile()
-    compile_s = time.perf_counter() - start
-    preflight = run_persistent_artifact_preflight(
-        mlir_path=Path(op.xclbin_artifact.mlir_input.filename),
-        arg_specs=len(op.get_arg_spec()),
-    )
-    print(
-        f"generate_position_{position}_compile_s: {compile_s:.3f} "
-        f"operator_name={op.name}"
-    )
-    print(
-        f"generate_position_{position}_preflight: ok "
-        f"runtime_memrefs={preflight.runtime_memrefs} "
-        f"arg_specs={preflight.arg_specs} "
-        f"metadata_host_bos={preflight.metadata_host_bos} "
-        f"compute_cores={preflight.compute_cores} "
-        f"max_fifo_buffered_bytes={preflight.max_fifo_buffered_bytes} "
-        f"max_dma_tasks_per_fifo={preflight.max_dma_tasks_per_fifo} "
-        f"max_tile_inputs={preflight.max_compute_tile_inputs} "
-        f"max_tile_outputs={preflight.max_compute_tile_outputs} "
-        f"non_advancing_acquires={preflight.non_advancing_acquires}"
-    )
-    return op, op.get_callable()
 
 
 def compile_n_layer_final_only_op_for_position(
@@ -693,66 +375,6 @@ def final_logits_from_hidden(
     return F.linear(x, lm_head)
 
 
-def run_full_layer_decode_hidden(
-    args,
-    model: Qwen3ForCausalLM,
-    state,
-    token_id: int,
-    op,
-    op_func,
-) -> tuple[torch.Tensor, float]:
-    if state.position != op.position:
-        raise RuntimeError(
-            f"compiled position {op.position} != decode state position {state.position}"
-        )
-
-    current_hidden = host_owned_tensor(
-        model.embed(torch.tensor([[token_id]], dtype=torch.long)).flatten()
-    )
-    total_npu_time = 0.0
-    for layer_idx in range(model.config.num_hidden_layers):
-        inputs = build_full_layer_inputs_for_layer(
-            model,
-            layer_idx,
-            current_hidden,
-            state,
-        )
-        hidden_buf = XRTTensor.from_torch(inputs["hidden"])
-        weights_buf = XRTTensor.from_torch(pack_full_layer_weights(inputs))
-        rope_angles_buf = XRTTensor.from_torch(inputs["rope_angles"])
-        packed_outputs_buf = XRTTensor(
-            (op.packed_outputs_size,),
-            dtype=hidden_buf.dtype,
-        )
-        packed_cache_buf = XRTTensor.from_torch(inputs["initial_cache"].clone())
-        result = op_func(
-            hidden_buf,
-            weights_buf,
-            rope_angles_buf,
-            packed_outputs_buf,
-            packed_cache_buf,
-        )
-        total_npu_time += result.npu_time
-        packed_outputs_buf.device = "npu"
-        packed_cache_buf.device = "npu"
-        packed_outputs = packed_outputs_buf.to_torch()
-        packed_cache = packed_cache_buf.to_torch()
-        actual = unpack_full_layer_outputs(op, packed_outputs)
-
-        keys_cache = packed_cache[: op.cache_half_size].view(
-            op.kv_heads, args.max_seq_len, op.head_dim
-        )
-        values_cache = packed_cache[op.cache_half_size :].view(
-            op.kv_heads, args.max_seq_len, op.head_dim
-        )
-        state.keys[layer_idx] = host_owned_tensor(keys_cache)
-        state.values[layer_idx] = host_owned_tensor(values_cache)
-        current_hidden = host_owned_tensor(actual["layer_residual"])
-
-    state.position += 1
-    return current_hidden, total_npu_time
-
-
 def run_generate(
     args,
     model: Qwen3ForCausalLM,
@@ -766,6 +388,10 @@ def run_generate(
         )
     if args.layer_chunk_size != 1 and not args.fast_generate:
         raise ValueError("--layer-chunk-size > 1 requires --fast-generate")
+    if not args.fast_generate:
+        raise ValueError(
+            "generate now uses the n-layer final-only path; pass --fast-generate"
+        )
     if args.max_new_tokens < 1:
         raise ValueError(f"max_new_tokens must be positive, got {args.max_new_tokens}")
     if input_ids.shape[1] + args.max_new_tokens > args.max_seq_len:
@@ -783,31 +409,17 @@ def run_generate(
     first_token = int(torch.argmax(prefill_logits[:, -1, :], dim=-1).item())
     first_text = tokenizer.decode([first_token], skip_special_tokens=True)
     print("stage: generate")
-    if args.fast_generate:
-        print(
-            f"implementation: persistent n-layer final-only decode "
-            f"(chunk={args.layer_chunk_size}) with cached XRT "
-            "weights/cache + CPU final norm/lm head"
-        )
-    else:
-        print("implementation: persistent full-layer decode + CPU final norm/lm head")
+    print(
+        f"implementation: persistent n-layer final-only decode "
+        f"(chunk={args.layer_chunk_size}) with cached XRT "
+        "weights/cache + CPU final norm/lm head"
+    )
     print(f"prompt_len: {input_ids.shape[1]}")
     print(f"max_new_tokens: {args.max_new_tokens}")
     print(f"layer_chunk_size: {args.layer_chunk_size}")
     print(f"prompt_next_token: {first_token} text={first_text!r}")
 
-    op_cache = {}
     chunk_op_cache = {}
-
-    def get_position_op(position: int):
-        if position not in op_cache:
-            op_cache[position] = compile_full_layer_op_for_position(
-                args,
-                model,
-                context,
-                position,
-            )
-        return op_cache[position]
 
     def get_position_chunk_op(position: int, chunk_len: int):
         key = (position, chunk_len)
@@ -838,73 +450,51 @@ def run_generate(
         }
 
     if args.compile_only:
-        if args.fast_generate:
-            get_position_chunk_ops(prefill_state.position)
-        else:
-            get_position_op(prefill_state.position)
+        get_position_chunk_ops(prefill_state.position)
         return False
 
     generated_tokens = [first_token]
     npu_state = clone_decode_state(prefill_state)
     ref_state = clone_decode_state(prefill_state)
     fast_buffers = None
-    if args.fast_generate:
-        first_chunk_ops = get_position_chunk_ops(prefill_state.position)
-        first_op, _first_op_func = first_chunk_ops[
-            min(args.layer_chunk_size, model.config.num_hidden_layers)
-        ]
-        setup_start = time.perf_counter()
-        fast_buffers = prepare_fast_generate_buffers(
-            model,
-            prefill_state,
-            first_op,
-            packed_weights_dir=args.packed_weights_dir,
-            require_packed_weights=args.require_packed_weights,
-            layer_chunk_size=args.layer_chunk_size,
-        )
-        setup_s = time.perf_counter() - setup_start
-        setup_timing = fast_buffers.timing
-        print(f"fast_generate_setup_s: {setup_s:.6f}")
-        print(f"fast_generate_weight_source: {setup_timing.weight_source}")
-        print(f"fast_generate_weight_pack_s: {setup_timing.weight_pack_s:.6f}")
-        print(
-            f"fast_generate_weight_disk_load_s: {setup_timing.weight_disk_load_s:.6f}"
-        )
-        print(f"fast_generate_weight_xrt_s: {setup_timing.weight_xrt_s:.6f}")
-        print(f"fast_generate_cache_xrt_s: {setup_timing.cache_xrt_s:.6f}")
+    first_chunk_ops = get_position_chunk_ops(prefill_state.position)
+    first_op, _first_op_func = first_chunk_ops[
+        min(args.layer_chunk_size, model.config.num_hidden_layers)
+    ]
+    setup_start = time.perf_counter()
+    fast_buffers = prepare_fast_generate_buffers(
+        model,
+        prefill_state,
+        first_op,
+        packed_weights_dir=args.packed_weights_dir,
+        require_packed_weights=args.require_packed_weights,
+        layer_chunk_size=args.layer_chunk_size,
+    )
+    setup_s = time.perf_counter() - setup_start
+    setup_timing = fast_buffers.timing
+    print(f"fast_generate_setup_s: {setup_s:.6f}")
+    print(f"fast_generate_weight_source: {setup_timing.weight_source}")
+    print(f"fast_generate_weight_pack_s: {setup_timing.weight_pack_s:.6f}")
+    print(f"fast_generate_weight_disk_load_s: {setup_timing.weight_disk_load_s:.6f}")
+    print(f"fast_generate_weight_xrt_s: {setup_timing.weight_xrt_s:.6f}")
+    print(f"fast_generate_cache_xrt_s: {setup_timing.cache_xrt_s:.6f}")
     failed = False
 
     for token_idx in range(1, args.max_new_tokens):
         current_token = generated_tokens[-1]
         position = npu_state.position
-        op = None
-        op_func = None
-        chunk_ops = None
-        if args.fast_generate:
-            chunk_ops = get_position_chunk_ops(position)
-        else:
-            op, op_func = get_position_op(position)
+        chunk_ops = get_position_chunk_ops(position)
         start = time.perf_counter()
         fast_timing = None
-        if args.fast_generate:
-            npu_hidden, npu_time, fast_timing = run_n_layer_decode_hidden_fast(
-                model,
-                current_token,
-                position,
-                args.layer_chunk_size,
-                chunk_ops,
-                fast_buffers,
-            )
-            npu_state.position += 1
-        else:
-            npu_hidden, npu_time = run_full_layer_decode_hidden(
-                args,
-                model,
-                npu_state,
-                current_token,
-                op,
-                op_func,
-            )
+        npu_hidden, npu_time, fast_timing = run_n_layer_decode_hidden_fast(
+            model,
+            current_token,
+            position,
+            args.layer_chunk_size,
+            chunk_ops,
+            fast_buffers,
+        )
+        npu_state.position += 1
         decode_s = time.perf_counter() - start
         final_start = time.perf_counter()
         npu_logits = final_logits_from_hidden(model, npu_hidden)
@@ -988,7 +578,7 @@ def main():
         args.packed_weights_dir = default_packed_weights_dir(model_dir)
 
     if args.prepare_weights:
-        op_for_layout = make_full_layer_op_for_position(
+        op_for_layout = make_single_layer_final_only_op_for_position(
             args,
             model,
             AIEContext(build_dir=args.build_dir),
@@ -1015,7 +605,7 @@ def main():
         validate_packed_weight_artifact(
             model,
             args.packed_weights_dir,
-            expected_per_layer_numel=make_full_layer_op_for_position(
+            expected_per_layer_numel=make_single_layer_final_only_op_for_position(
                 args,
                 model,
                 AIEContext(build_dir=args.build_dir),
@@ -1062,39 +652,6 @@ def main():
             epsilon=model.config.rms_norm_eps,
             context=context,
         )
-    elif args.stage == "input-rmsnorm-qkv-rope-cache":
-        op = Qwen3PersistentInputRMSNormQKVRopeCache(
-            hidden_size=model.config.hidden_size,
-            q_size=model.config.num_attention_heads * model.config.head_dim,
-            kv_size=model.config.num_key_value_heads * model.config.head_dim,
-            head_dim=model.config.head_dim,
-            max_seq_len=args.max_seq_len,
-            position=input_ids.shape[1],
-            epsilon=model.config.rms_norm_eps,
-            context=context,
-        )
-    elif args.stage == "input-rmsnorm-qkv-rope-cache-scores-softmax":
-        op = Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmax(
-            hidden_size=model.config.hidden_size,
-            q_size=model.config.num_attention_heads * model.config.head_dim,
-            kv_size=model.config.num_key_value_heads * model.config.head_dim,
-            head_dim=model.config.head_dim,
-            max_seq_len=args.max_seq_len,
-            position=input_ids.shape[1],
-            epsilon=model.config.rms_norm_eps,
-            context=context,
-        )
-    elif args.stage == "input-rmsnorm-qkv-rope-cache-scores-softmax-context":
-        op = Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContext(
-            hidden_size=model.config.hidden_size,
-            q_size=model.config.num_attention_heads * model.config.head_dim,
-            kv_size=model.config.num_key_value_heads * model.config.head_dim,
-            head_dim=model.config.head_dim,
-            max_seq_len=args.max_seq_len,
-            position=input_ids.shape[1],
-            epsilon=model.config.rms_norm_eps,
-            context=context,
-        )
     elif args.stage == "post-attn-rmsnorm-mlp-gate-up":
         op = Qwen3PersistentPostAttnRMSNormMLPGateUp(
             hidden_size=model.config.hidden_size,
@@ -1128,29 +685,8 @@ def main():
             epsilon=model.config.rms_norm_eps,
             context=context,
         )
-    elif args.stage in {FULL_LAYER_STAGE, MULTI_LAYER_FULL_LAYER_STAGE}:
-        op = Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP(
-            hidden_size=model.config.hidden_size,
-            q_size=model.config.num_attention_heads * model.config.head_dim,
-            kv_size=model.config.num_key_value_heads * model.config.head_dim,
-            head_dim=model.config.head_dim,
-            max_seq_len=args.max_seq_len,
-            position=input_ids.shape[1],
-            intermediate_size=model.config.intermediate_size,
-            epsilon=model.config.rms_norm_eps,
-            context=context,
-        )
     else:
-        op = Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProj(
-            hidden_size=model.config.hidden_size,
-            q_size=model.config.num_attention_heads * model.config.head_dim,
-            kv_size=model.config.num_key_value_heads * model.config.head_dim,
-            head_dim=model.config.head_dim,
-            max_seq_len=args.max_seq_len,
-            position=input_ids.shape[1],
-            epsilon=model.config.rms_norm_eps,
-            context=context,
-        )
+        raise ValueError(f"unsupported stage after attention cleanup: {args.stage}")
 
     start = time.perf_counter()
     op.compile()
@@ -1198,24 +734,6 @@ def main():
             print(
                 "worker_graph: hidden_fifo -> rmsnorm_worker -> weight_worker -> "
                 "single xnorm broadcast FIFO -> Q/K/V matvec workers"
-            )
-        elif args.stage == "input-rmsnorm-qkv-rope-cache":
-            print(
-                "dispatch_shape: hidden[1024] + packed QKV/norm weights + "
-                "rope_angles[128] -> x_norm, Q/K/V raw, Q/K norm, Q/K rope, KV cache"
-            )
-            print(
-                "runtime_bos: hidden[1024], "
-                f"packed_weights[{op.packed_weights_size}], "
-                "rope_angles[128], "
-                f"packed_outputs[{op.packed_outputs_size}], "
-                f"packed_cache[{op.packed_cache_size}]"
-            )
-            print(f"decode_position: {op.position}")
-            print(f"qkv_columns: {op.num_aie_columns}")
-            print(
-                "worker_graph: hidden_fifo -> rmsnorm_worker -> weight_worker -> "
-                "xnorm broadcast -> Q/K/V matvec -> Q/K norm -> Q/K RoPE -> KV cache drains"
             )
         elif args.stage == "post-attn-rmsnorm-mlp-gate-up":
             print(
@@ -1270,42 +788,6 @@ def main():
                 "workers -> silu_worker + mul_worker -> down_matvec_worker -> "
                 "residual_add_worker"
             )
-        elif args.stage == FULL_LAYER_STAGE:
-            print(
-                "dispatch_shape: hidden[1024] + packed attention/MLP weights + "
-                "rope_angles[128] + K/V cache -> attention residual -> "
-                "post RMSNorm -> gate/up -> SiLU/mul -> down/residual"
-            )
-            print(
-                "runtime_bos: hidden[1024], "
-                f"packed_weights[{op.packed_weights_size}], "
-                "rope_angles[128], "
-                f"packed_outputs[{op.packed_outputs_size}], "
-                f"packed_cache[{op.packed_cache_size}]"
-            )
-            print(f"decode_position: {op.position}")
-            print(
-                "worker_graph: Q/K matvec -> packed metadata norm+RoPE, "
-                "attention context/O-proj full residual, then postnorm+gate/up "
-                "-> fused SiLU/mul -> down_proj -> residual add"
-            )
-        elif args.stage == MULTI_LAYER_FULL_LAYER_STAGE:
-            print(
-                "dispatch_shape: one-token decode hidden[1024] through "
-                f"{args.num_layers} sequential full-layer invocations"
-            )
-            print(
-                "runtime_bos_per_layer: hidden[1024], "
-                f"packed_weights[{op.packed_weights_size}], "
-                "rope_angles[128], "
-                f"packed_outputs[{op.packed_outputs_size}], "
-                f"packed_cache[{op.packed_cache_size}]"
-            )
-            print(f"decode_position: {op.position}")
-            print(
-                "worker_graph: reuse the accepted full-layer persistent graph; "
-                "host switches layer weights and per-layer KV cache slices"
-            )
         elif args.stage == N_LAYER_FINAL_ONLY_STAGE:
             print(
                 "dispatch_shape: hidden[1024] through "
@@ -1320,43 +802,14 @@ def main():
             )
             print(f"decode_position: {op.position}")
             print(
-                "worker_graph: one full-layer worker graph loops over the chunk; "
+                "worker_graph: one transformer-layer worker graph loops over the chunk; "
                 "intermediate residuals are routed back as the next layer hidden, "
                 "and only the final residual is drained to host"
-            )
-        else:
-            print(
-                "dispatch_shape: hidden[1024] + packed QKV/norm weights + "
-                "rope_angles[128] + K/V cache -> x_norm, Q/K/V raw, Q/K norm, "
-                "RoPE Q, qk_pair, attention scores, attention weights, "
-                "optional attention context, optional O projection/residual, KV cache"
-            )
-            print(
-                "runtime_bos: hidden[1024], "
-                f"packed_weights[{op.packed_weights_size}], "
-                "rope_angles[128], "
-                f"packed_outputs[{op.packed_outputs_size}], "
-                f"packed_cache[{op.packed_cache_size}]"
-            )
-            print(f"decode_position: {op.position}")
-            print(f"qkv_columns: {op.num_aie_columns}")
-            print(
-                "worker_graph: hidden_fifo -> rmsnorm_worker -> weight_worker -> "
-                "xnorm broadcast -> Q/K/V matvec -> Q/K norm -> Q/K RoPE -> "
-                "qk_pair debug drain -> score worker -> softmax worker -> "
-                "optional V merge/context worker -> optional O projection/residual, "
-                "with KV cache drains"
             )
     if args.compile_only:
         return
 
     op_func = op.get_callable()
-    if args.stage == MULTI_LAYER_FULL_LAYER_STAGE:
-        failed = run_multi_layer_full_layer(args, model, input_ids, op, op_func)
-        if args.verify and failed:
-            raise SystemExit(1)
-        gc.collect()
-        return
     if args.stage == N_LAYER_FINAL_ONLY_STAGE:
         failed = run_n_layer_final_only(args, model, input_ids, op, op_func)
         if args.verify and failed:
@@ -1452,67 +905,7 @@ def main():
         op_args = [hidden_buf, weights_buf, packed_outputs_buf]
         output_buffers = {"packed_outputs": packed_outputs_buf}
     else:
-        if (
-            args.stage
-            == "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
-        ):
-            next_token, position, inputs, expected_buffers = build_reference_full_layer(
-                model, input_ids, args.max_seq_len
-            )
-        else:
-            next_token, position, inputs, expected_buffers = (
-                build_reference_qkv_rope_cache(model, input_ids, args.max_seq_len)
-            )
-        if position != op.position:
-            raise RuntimeError(
-                f"compiled position {op.position} != reference {position}"
-            )
-        full_expected_buffers = expected_buffers
-        hidden_buf = XRTTensor.from_torch(inputs["hidden"])
-        packed_weight_parts = [
-            inputs["input_norm_weight"].flatten(),
-            inputs["W_q"].flatten(),
-            inputs["W_k"].flatten(),
-            inputs["W_v"].flatten(),
-            inputs["W_q_norm"].flatten(),
-            inputs["W_k_norm"].flatten(),
-        ]
-        if args.stage in {
-            "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
-            "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp",
-        }:
-            packed_weight_parts.append(inputs["W_o"].flatten())
-        if (
-            args.stage
-            == "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
-        ):
-            packed_weight_parts.extend(
-                [
-                    inputs["post_norm_weight"].flatten(),
-                    inputs["W_gate"].flatten(),
-                    inputs["W_up"].flatten(),
-                    inputs["W_down"].flatten(),
-                ]
-            )
-        packed_weights = torch.cat(packed_weight_parts).contiguous()
-        weights_buf = XRTTensor.from_torch(packed_weights)
-        rope_angles_buf = XRTTensor.from_torch(inputs["rope_angles"])
-        packed_outputs_buf = XRTTensor(
-            (op.packed_outputs_size,),
-            dtype=hidden_buf.dtype,
-        )
-        packed_cache_buf = XRTTensor.from_torch(inputs["initial_cache"].clone())
-        op_args = [
-            hidden_buf,
-            weights_buf,
-            rope_angles_buf,
-            packed_outputs_buf,
-            packed_cache_buf,
-        ]
-        output_buffers = {
-            "packed_outputs": packed_outputs_buf,
-            "packed_cache": packed_cache_buf,
-        }
+        raise ValueError(f"unsupported stage after attention cleanup: {args.stage}")
 
     failed = False
     repeat_count = max(1, args.verify_repeat)
@@ -1650,345 +1043,9 @@ def main():
                 "ffn_out": ffn_out_local.contiguous(),
                 "layer_residual": residual_local.contiguous(),
             }
-        elif (
-            args.stage
-            == "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
-        ):
-            packed_outputs_buf.device = "npu"
-            packed_cache_buf.device = "npu"
-            packed_outputs = packed_outputs_buf.to_torch()
-            actual_buffers = {
-                "attn_residual": packed_outputs[
-                    op.attn_residual_output_base : op.mlp_x_norm_output_base
-                ],
-                "ffn_hidden": packed_outputs[
-                    op.ffn_hidden_output_base : op.ffn_out_output_base
-                ],
-                "ffn_out": packed_outputs[
-                    op.ffn_out_output_base : op.layer_residual_output_base
-                ],
-                "layer_residual": packed_outputs[op.layer_residual_output_base :],
-            }
-            ffn_out_local = F.linear(
-                actual_buffers["ffn_hidden"].view(1, 1, -1), inputs["W_down"]
-            ).flatten()
-            layer_residual_local = (
-                actual_buffers["attn_residual"] + actual_buffers["ffn_out"]
-            )
-            local_expected_buffers = {
-                **expected_buffers,
-                "ffn_hidden": expected_buffers["ffn_hidden"].contiguous(),
-                "ffn_out": ffn_out_local.contiguous(),
-                "layer_residual": layer_residual_local.contiguous(),
-            }
         else:
-            packed_outputs_buf.device = "npu"
-            packed_cache_buf.device = "npu"
-            packed_outputs = packed_outputs_buf.to_torch()
-            packed_cache = packed_cache_buf.to_torch()
-            has_scores_softmax = args.stage in {
-                "input-rmsnorm-qkv-rope-cache-scores-softmax",
-                "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
-                "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
-                "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp",
-            }
-            has_context = args.stage in {
-                "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
-                "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
-                "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp",
-            }
-            has_o_proj = args.stage in {
-                "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
-                "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp",
-            }
-            has_full_mlp = (
-                args.stage
-                == "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp"
-            )
-            q_rope_end = (
-                op.qk_pair_output_base if has_scores_softmax else op.packed_outputs_size
-            )
-            keys_cache = packed_cache[: op.cache_half_size].view(
-                op.kv_heads, args.max_seq_len, op.head_dim
-            )
-            values_cache = packed_cache[op.cache_half_size :].view(
-                op.kv_heads, args.max_seq_len, op.head_dim
-            )
-            keys_cache_current = keys_cache[:, op.position, :].flatten()
-            values_cache_current = values_cache[:, op.position, :].flatten()
-            actual_buffers = {
-                "x_norm": packed_outputs[: op.q_raw_output_base],
-                "queries_raw": packed_outputs[
-                    op.q_raw_output_base : op.k_raw_output_base
-                ],
-                "keys_raw": packed_outputs[
-                    op.k_raw_output_base : op.q_norm_output_base
-                ],
-                "queries_norm": packed_outputs[
-                    op.q_norm_output_base : op.k_norm_output_base
-                ],
-                "keys_norm": packed_outputs[
-                    op.k_norm_output_base : op.q_rope_output_base
-                ],
-                "queries": packed_outputs[op.q_rope_output_base : q_rope_end],
-                "keys": keys_cache_current,
-                "values": values_cache_current,
-                "keys_cache_current": keys_cache_current,
-                "values_cache_current": values_cache_current,
-                "keys_cache_prefix": keys_cache[:, : op.position, :].flatten(),
-                "values_cache_prefix": values_cache[:, : op.position, :].flatten(),
-            }
-            if has_scores_softmax:
-                actual_buffers["qk_pair"] = packed_outputs[
-                    op.qk_pair_output_base : op.k_cache_stream_output_base
-                ]
-                if op.k_cache_debug_size:
-                    k_cache_stream = packed_outputs[
-                        op.k_cache_stream_output_base : op.attn_scores_output_base
-                    ].view(op.kv_heads, op.max_seq_len, op.head_dim)
-                    actual_buffers["k_cache_stream_prefix"] = k_cache_stream[
-                        :, : op.position, :
-                    ].flatten()
-                actual_buffers["attn_scores"] = packed_outputs[
-                    op.attn_scores_output_base : op.attn_weights_output_base
-                ]
-                attn_weight_end = (
-                    op.v_context_stream_output_base
-                    if has_context
-                    else op.packed_outputs_size
-                )
-                actual_buffers["attn_weights"] = packed_outputs[
-                    op.attn_weights_output_base : attn_weight_end
-                ]
-                if has_context:
-                    v_context_stream = packed_outputs[
-                        op.v_context_stream_output_base : op.attn_context_output_base
-                    ].view(op.kv_heads, op.max_seq_len, op.head_dim)
-                    actual_buffers["v_context_stream_prefix"] = v_context_stream[
-                        :, : op.position, :
-                    ].flatten()
-                    actual_buffers["v_context_stream_current"] = v_context_stream[
-                        :, op.position, :
-                    ].flatten()
-                    actual_buffers["attn_context"] = packed_outputs[
-                        op.attn_context_output_base : (
-                            op.attn_context_flat_output_base
-                            if has_o_proj
-                            else op.packed_outputs_size
-                        )
-                    ]
-                    if has_o_proj:
-                        actual_buffers["attn_context_flat"] = packed_outputs[
-                            op.attn_context_flat_output_base : op.attn_o_proj_output_base
-                        ]
-                        actual_buffers["attn_o_proj"] = packed_outputs[
-                            op.attn_o_proj_output_base : op.attn_residual_output_base
-                        ]
-                        attn_residual_end = (
-                            op.mlp_x_norm_output_base
-                            if has_full_mlp
-                            else op.packed_outputs_size
-                        )
-                        actual_buffers["attn_residual"] = packed_outputs[
-                            op.attn_residual_output_base : attn_residual_end
-                        ]
-                        if has_full_mlp:
-                            actual_buffers["mlp_x_norm"] = packed_outputs[
-                                op.mlp_x_norm_output_base : op.ffn_gate_output_base
-                            ]
-                            actual_buffers["ffn_hidden"] = packed_outputs[
-                                op.ffn_hidden_output_base : op.ffn_out_output_base
-                            ]
-                            actual_buffers["ffn_out"] = packed_outputs[
-                                op.ffn_out_output_base : op.layer_residual_output_base
-                            ]
-                            actual_buffers["layer_residual"] = packed_outputs[
-                                op.layer_residual_output_base :
-                            ]
-            q_raw_local = F.linear(
-                actual_buffers["x_norm"].view(1, 1, -1), inputs["W_q"]
-            ).flatten()
-            k_raw_local = F.linear(
-                actual_buffers["x_norm"].view(1, 1, -1), inputs["W_k"]
-            ).flatten()
-            values_local = F.linear(
-                actual_buffers["x_norm"].view(1, 1, -1), inputs["W_v"]
-            ).flatten()
-            q_norm_local = rms_norm(
-                actual_buffers["queries_raw"].view(1, op.q_heads, 1, op.head_dim),
-                inputs["W_q_norm"],
-                model.config.rms_norm_eps,
-            ).flatten()
-            k_norm_local = rms_norm(
-                actual_buffers["keys_raw"].view(1, op.kv_heads, 1, op.head_dim),
-                inputs["W_k_norm"],
-                model.config.rms_norm_eps,
-            ).flatten()
-            q_rope_local, k_rope_local = apply_rope(
-                actual_buffers["queries_norm"].view(1, op.q_heads, 1, op.head_dim),
-                actual_buffers["keys_norm"].view(1, op.kv_heads, 1, op.head_dim),
-                torch.tensor([op.position]),
-                op.head_dim,
-                model.config.rope_theta,
-            )
-            score_expected_buffers = {}
-            context_alt_expected_buffers = {}
-            if has_scores_softmax:
-                qk_pair = build_qk_pair_reference(
-                    actual_buffers["queries"],
-                    actual_buffers["keys"],
-                    op.q_heads,
-                    op.kv_heads,
-                    op.head_dim,
-                )
-                q_for_score = actual_buffers["queries"].view(
-                    1, op.q_heads, 1, op.head_dim
-                )
-                k_ctx = repeat_kv(
-                    keys_cache[:, : op.position + 1, :].unsqueeze(0),
-                    op.q_heads // op.kv_heads,
-                )
-                scores = torch.matmul(
-                    q_for_score.to(torch.float32),
-                    k_ctx.to(torch.float32).transpose(-2, -1),
-                ) / math.sqrt(op.head_dim)
-                padded_scores = torch.zeros(
-                    (op.q_heads, op.max_seq_len),
-                    dtype=packed_outputs.dtype,
-                )
-                padded_weights = torch.zeros_like(padded_scores)
-                padded_scores[:, : op.position + 1] = scores.view(
-                    op.q_heads, op.position + 1
-                ).to(dtype=packed_outputs.dtype)
-                weights = torch.softmax(
-                    padded_scores[:, : op.position + 1].to(torch.float32),
-                    dim=-1,
-                ).to(dtype=packed_outputs.dtype)
-                padded_weights[:, : op.position + 1] = weights.view(
-                    op.q_heads, op.position + 1
-                )
-                context_expected_buffers = {}
-                if has_context:
-                    v_context = inputs["initial_values_cache"].clone()
-                    v_context[:, op.position, :] = actual_buffers["values"].view(
-                        op.kv_heads, op.head_dim
-                    )
-                    context = torch.zeros(
-                        (op.q_heads, op.head_dim), dtype=packed_outputs.dtype
-                    )
-                    context_float = torch.zeros(
-                        (op.q_heads, op.head_dim), dtype=torch.float32
-                    )
-                    weights_by_head = actual_buffers["attn_weights"].view(
-                        op.q_heads, op.max_seq_len
-                    )
-                    q_per_kv = op.q_heads // op.kv_heads
-                    for q_head in range(op.q_heads):
-                        kv_head = q_head // q_per_kv
-                        for block_start in range(0, op.max_seq_len, 64):
-                            block_end = min(block_start + 64, op.position + 1)
-                            if block_start >= block_end:
-                                continue
-                            block_accum = context[q_head].to(torch.float32)
-                            for seq_pos in range(block_start, block_end):
-                                term = weights_by_head[q_head, seq_pos].to(
-                                    torch.float32
-                                ) * v_context[kv_head, seq_pos, :].to(torch.float32)
-                                block_accum += term
-                                context_float[q_head] += term
-                            context[q_head] = block_accum.to(dtype=packed_outputs.dtype)
-                    context_alt_expected_buffers = {
-                        "attn_context_float_accum": context_float.to(
-                            dtype=packed_outputs.dtype
-                        )
-                        .flatten()
-                        .contiguous()
-                    }
-                    context_expected_buffers = {
-                        "v_context_stream_prefix": inputs["initial_values_cache"][
-                            :, : op.position, :
-                        ]
-                        .flatten()
-                        .contiguous(),
-                        "v_context_stream_current": actual_buffers[
-                            "values"
-                        ].contiguous(),
-                        "attn_context": context.flatten().contiguous(),
-                    }
-                    if has_o_proj:
-                        o_proj_local = F.linear(
-                            actual_buffers["attn_context_flat"].view(1, 1, -1),
-                            inputs["W_o"],
-                        ).flatten()
-                        residual_local = (
-                            inputs["hidden"] + actual_buffers["attn_o_proj"]
-                        )
-                        context_expected_buffers.update(
-                            {
-                                "attn_context_flat": actual_buffers[
-                                    "attn_context"
-                                ].contiguous(),
-                                "attn_o_proj": o_proj_local.contiguous(),
-                                "attn_residual": residual_local.contiguous(),
-                            }
-                        )
-                        if has_full_mlp:
-                            mlp_x_norm_local = rms_norm(
-                                actual_buffers["attn_residual"].view(1, 1, -1),
-                                inputs["post_norm_weight"],
-                                model.config.rms_norm_eps,
-                            ).flatten()
-                            ffn_out_local = F.linear(
-                                actual_buffers["ffn_hidden"].view(1, 1, -1),
-                                inputs["W_down"],
-                            ).flatten()
-                            layer_residual_local = (
-                                actual_buffers["attn_residual"]
-                                + actual_buffers["ffn_out"]
-                            )
-                            context_expected_buffers.update(
-                                {
-                                    "mlp_x_norm": mlp_x_norm_local.contiguous(),
-                                    "ffn_hidden": expected_buffers[
-                                        "ffn_hidden"
-                                    ].contiguous(),
-                                    "ffn_out": ffn_out_local.contiguous(),
-                                    "layer_residual": layer_residual_local.contiguous(),
-                                }
-                            )
-                score_expected_buffers = {
-                    "qk_pair": qk_pair,
-                    "attn_scores": padded_scores.flatten().contiguous(),
-                    "attn_weights": padded_weights.flatten().contiguous(),
-                    **context_expected_buffers,
-                }
-                if op.k_cache_debug_size:
-                    score_expected_buffers["k_cache_stream_prefix"] = (
-                        inputs["initial_keys_cache"][:, : op.position, :]
-                        .flatten()
-                        .contiguous()
-                    )
-            local_expected_buffers = {
-                **full_expected_buffers,
-                "queries_raw": q_raw_local.contiguous(),
-                "keys_raw": k_raw_local.contiguous(),
-                "values": values_local.contiguous(),
-                "queries_norm": q_norm_local.contiguous(),
-                "keys_norm": k_norm_local.contiguous(),
-                "queries": q_rope_local.flatten().contiguous(),
-                "keys": k_rope_local.flatten().contiguous(),
-                "keys_cache_current": actual_buffers["keys"].contiguous(),
-                "values_cache_current": actual_buffers["values"].contiguous(),
-                "keys_cache_prefix": inputs["initial_keys_cache"][:, : op.position, :]
-                .flatten()
-                .contiguous(),
-                "values_cache_prefix": inputs["initial_values_cache"][
-                    :, : op.position, :
-                ]
-                .flatten()
-                .contiguous(),
-                **score_expected_buffers,
-            }
+            raise ValueError(f"unsupported stage after attention cleanup: {args.stage}")
+
         for name, output in actual_buffers.items():
             expected = local_expected_buffers[name]
             rel_tol, abs_tol = verification_tolerance(args.stage, name)
@@ -2009,11 +1066,6 @@ def main():
                 args.stage
                 in {
                     "input-rmsnorm-qkv",
-                    "input-rmsnorm-qkv-rope-cache",
-                    "input-rmsnorm-qkv-rope-cache-scores-softmax",
-                    "input-rmsnorm-qkv-rope-cache-scores-softmax-context",
-                    "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj",
-                    "input-rmsnorm-qkv-rope-cache-scores-softmax-context-o-proj-full-mlp",
                     "post-attn-rmsnorm-mlp-gate-up",
                     "post-attn-mlp-down-residual",
                     "post-attn-rmsnorm-full-mlp",
@@ -2028,22 +1080,6 @@ def main():
                 print(f"{name}_full_ref_max_abs: {float(full_diff.max()):.6f}")
                 print(f"{name}_full_ref_mean_abs: {float(full_diff.mean()):.6f}")
             print(f"{name}_errors: {len(errors)}")
-            if name == "attn_context" and errors:
-                for alt_name, alt_expected in context_alt_expected_buffers.items():
-                    alt_diff = (
-                        output.to(torch.float32) - alt_expected.to(torch.float32)
-                    ).abs()
-                    alt_errors = verify_buffer(
-                        output,
-                        alt_name,
-                        alt_expected,
-                        rel_tol=rel_tol,
-                        abs_tol=abs_tol,
-                    )
-                    print(f"{alt_name}_max_abs: {float(alt_diff.max()):.6f}")
-                    print(f"{alt_name}_mean_abs: {float(alt_diff.mean()):.6f}")
-                    print(f"{alt_name}_errors: {len(alt_errors)}")
-            print_structured_attention_error(name, errors, output, expected, op)
             failed = failed or bool(errors)
 
     if args.verify and failed:

@@ -98,3 +98,75 @@ Fix used:
 Use np.dtype[dtype] for all IRON buffer/ObjectFIFO ndarray type annotations,
 even when dtype is already ml_dtypes.bfloat16.
 ```
+
+## Symptom: TaskGroup Fails To Close After Refactor
+
+During the `attention_design.py` single-version cleanup, the real graph probe
+failed before MLIR was produced:
+
+```text
+ValueError: Failed to close task groups: TaskGroup(0)
+```
+
+The useful part was the earlier exception in the traceback:
+
+```text
+NameError: name 'layer_chunk_weight_tap' is not defined
+  fill_chunk_layer_inputs(...)
+```
+
+Cause:
+
+```text
+An AST cleanup removed a nested helper that was not referenced by the parent
+function body, but it was still referenced by another nested function. The
+TaskGroup error was a cleanup side effect while unwinding the Runtime sequence,
+not the root cause.
+```
+
+Fix used:
+
+```text
+When deleting nested helper functions from an IRON design, collect references
+from nested function bodies too. Then re-run a preflight-only real graph probe
+before invoking aiecc.
+```
+
+## Symptom: aiecc Cannot Copy An External Object
+
+Generate reached `aiecc`, then failed while compiling the first n-layer generate
+graph:
+
+```text
+Error: could not copy .../build_qwen3_persistent_generate_check/mul.o to ...
+No such file or directory
+```
+
+The generated MLIR showed the real cause:
+
+```text
+func.func private @eltwise_mul_bf16_vector(...) attributes {link_with = "mul.o"}
+```
+
+But the active operator generated this artifact instead:
+
+```text
+build_qwen3_persistent_generate_check/qwen3_persistent_mul.o
+```
+
+Cause:
+
+```text
+After flattening the n-layer operator, one Kernel declaration in
+attention_design.py still hardcoded "mul.o" instead of using the
+mul_kernel_object parameter passed by Qwen3PersistentNLayerFinalOnly.
+```
+
+Fix used:
+
+```text
+Search generated MLIR/input_with_addresses.mlir for link_with and compare every
+object name against files present in the build directory. Kernel declarations in
+design.py/attention_design.py must use the operator's artifact-name parameter,
+not a stale literal object filename.
+```

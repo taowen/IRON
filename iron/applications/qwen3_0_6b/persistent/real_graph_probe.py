@@ -18,7 +18,6 @@ sys.path.insert(0, str(repo_root))
 
 from iron.applications.qwen3_0_6b.persistent.ops import (  # noqa: E402
     Qwen3PersistentInputRMSNormQKV,
-    Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP,
     Qwen3PersistentNLayerFinalOnly,
     Qwen3PersistentPostAttnMLPDownResidual,
     Qwen3PersistentPostAttnRMSNormFullMLP,
@@ -35,7 +34,6 @@ STAGES = {
     "mlp-gate-up",
     "mlp-down",
     "full-mlp",
-    "full-layer",
     "n-layer-final-only",
 }
 
@@ -98,14 +96,6 @@ def _stage_kwargs(args, stage: str, columns: int) -> tuple[type, dict]:
                 tile_size_input=args.tile_size_input,
                 tile_size_output=args.mlp_down_tile_size_output,
                 epsilon=args.epsilon,
-            ),
-        )
-    if stage == "full-layer":
-        return (
-            Qwen3PersistentInputRMSNormQKVRopeCacheScoresSoftmaxContextOProjFullMLP,
-            dict(
-                **common_attention,
-                intermediate_size=args.intermediate_size,
             ),
         )
     if stage == "n-layer-final-only":
@@ -184,7 +174,7 @@ def parse_args():
     parser.add_argument(
         "--stages",
         nargs="+",
-        default=["qkv", "mlp-gate-up", "full-layer"],
+        default=["qkv", "mlp-gate-up", "n-layer-final-only"],
         choices=sorted(STAGES),
     )
     parser.add_argument("--columns", nargs="+", type=int, default=[1, 2, 4, 8])
