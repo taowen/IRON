@@ -55,7 +55,7 @@ wrong after the extra Q/K path.
 Root cause:
 
 ```text
-In-place Q/K RMSNorm and RoPE were unsafe across the fused full-ELF buffer
+In-place Q/K RMSNorm and RoPE were unsafe across the shared scratch buffer
 layout:
 
 q_norm("queries" -> "queries")
@@ -101,8 +101,8 @@ Experiments that were reverted:
 Diagnostic:
 
 ```text
-Run a clean A/B build. In full-ELF fusion, scratch layout and patch locations
-are correctness-relevant.
+Run a clean A/B build. In this dataflow, scratch layout and buffer lifetime are
+correctness-relevant.
 ```
 
 Current baseline:

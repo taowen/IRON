@@ -57,11 +57,11 @@ hardware legality: BD dimension count, size range, positive strides
 For attention, large cache reads should be expressed as legal sequence blocks,
 not as one full `[seq, head_dim]` L1 object.
 
-## 4. Full-ELF Scratch Layout Is Semantic
+## 4. Scratch Layout Is Semantic
 
-The full-ELF scaffold showed that changes described as "layout-only" can move
-the output token. Scratch buffer class, patch locations, and in-place operator
-lifetimes are part of correctness.
+The deleted fused scaffold showed that changes described as "layout-only" can
+move the output token. Scratch buffer class, runtime metadata, and in-place
+operator lifetimes are part of correctness.
 
 The accepted pattern is to use clean A/B builds and stage-local debug copies
 before keeping a scratch-layout refactor.
@@ -100,7 +100,7 @@ failure. The persistent artifact preflight now covers the checks marked
 `implemented`:
 
 ```text
-pyxrt capability probe for full-ELF APIs
+pyxrt/XRT environment probe
 clean-build or artifact freshness assertion after graph edits
 runtime_sequence memref count vs main_kernels.json BO metadata [implemented]
 ObjectFIFO producer/consumer endpoint count from generated MLIR

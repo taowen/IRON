@@ -26,7 +26,7 @@ name that happened to be running.
 
 ## 2. Probe pyxrt Capabilities
 
-Use when compile-only succeeds but full-ELF runtime cannot start.
+Use when Python or XRT behaves differently across virtual environments.
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
@@ -59,8 +59,8 @@ source /opt/xilinx/xrt/setup.sh
 Use when graph edits appear to have no effect.
 
 ```bash
-find build_qwen3_megakernel -maxdepth 2 -type f \
-  \( -name '*.mlir' -o -name '*.elf' \) | sort
+find build_qwen3_persistent -maxdepth 2 -type f \
+  \( -name '*.mlir' -o -name '*.xclbin' -o -name '*.bin' \) | sort
 ```
 
 Rules confirmed during bring-up:
@@ -69,8 +69,8 @@ Rules confirmed during bring-up:
 Unexpectedly tiny compile time after a graph edit means cached artifacts may
 have been reused.
 
-Use --clean-build or a new build directory after runlist, scratch layout, or
-runtime patch changes.
+Use --clean-build or a new build directory after graph, scratch layout, or
+runtime buffer changes.
 ```
 
 ## 5. Add Stage-Local Debug Drains
@@ -98,41 +98,15 @@ Command used:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-.venv/bin/python iron/applications/qwen3_0_6b/full_elf/main.py \
+.venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
-  --num-layers 1 \
-  --max-seq-len 256 \
-  --build-dir build_qwen3_megakernel_debug \
-  --debug-stage qkv \
-  --dump-patches \
+  --stage input-rmsnorm-qkv \
+  --build-dir build_qwen3_persistent_debug \
+  --verify \
   --verify-repeat 3
 ```
 
 This method localized one wrong-token run to the Q/K path before attention.
-
-## 6. Assert Runtime Patch Sites
-
-Use when the fused graph patches runtime constants into the ELF.
-
-Patch families used by the one-layer decode graph:
-
-```text
-cache write byte offsets for current decode position
-softmax active sequence length
-```
-
-Expected one-layer signals:
-
-```text
-2 key-cache patch sites per layer
-2 value-cache patch sites per layer
-2 zero-base cache patch sites from shared StridedCopy design
-num_layers + 1 softmax patch sites
-no duplicate cache patch locations
-```
-
-Patch locations can move when the runlist changes. Counts and target buffer
-identities should not.
 
 ## 7. Repeat The Same Input
 
@@ -140,11 +114,10 @@ Use when a single run is wrong but the wrongness may depend on state.
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-.venv/bin/python iron/applications/qwen3_0_6b/full_elf/main.py \
+.venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
-  --num-layers 1 \
-  --max-seq-len 256 \
-  --verify-one-step \
+  --stage input-rmsnorm-qkv \
+  --verify \
   --verify-repeat 3
 ```
 

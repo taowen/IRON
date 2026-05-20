@@ -18,12 +18,9 @@ Scope:
 
 ```text
 persistent/           supported hand-authored IRON Program/Worker/ObjectFifo path
-full_elf/             experimental full-ELF FusedMLIROperator scaffold
 ```
 
 Use `persistent/` as the active correctness and performance-debug baseline.
-Use `full_elf/` as a reference for fused-buffer and LM-head ideas, not as the
-currently accepted generate path.
 
 The current accepted persistent checkpoints are:
 

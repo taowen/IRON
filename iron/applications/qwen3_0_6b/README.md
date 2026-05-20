@@ -19,7 +19,6 @@ Implementation layout:
 qwen3_cpu.py              CPU model/reference runner
 qwen3_decode_reference.py cached CPU decode reference
 persistent/              supported IRON persistent Program path
-full_elf/                experimental full-ELF fused scaffold
 ```
 
 ## Run

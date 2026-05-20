@@ -32,7 +32,6 @@ but it is not a full SageAttention implementation yet.
 Qwen3 has two active code paths:
 
 ```text
-qwen3_megakernel.py   full-ELF FusedMLIROperator correctness scaffold
 qwen3_persistent.py   hand-authored IRON Program/Worker/ObjectFifo bring-up
 ```
 
@@ -56,8 +55,7 @@ Use these when the failing symptom is in the standalone SageAttention operator:
 
 ## Qwen3 Megakernel Notes
 
-Use these when the failing symptom is in full-ELF fusion or the persistent
-Qwen3 Program:
+Use these when the failing symptom is in the persistent Qwen3 Program:
 
 - [Qwen3 megakernel debug map](qwen3-megakernel/index.md)
 - [Qwen3 symptom lookup](qwen3-megakernel/symptoms.md)

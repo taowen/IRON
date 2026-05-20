@@ -384,52 +384,6 @@ module {
 
 
 @pytest.mark.extensive
-def test_qwen3_megakernel_lint():
-    model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
-    if model is None:
-        pytest.skip("Set IRON_QWEN3_0_6B_MODEL to run the Qwen3-0.6B megakernel lint")
-
-    test_dir = Path(__file__).parent
-    command = [
-        sys.executable,
-        str(test_dir / "full_elf" / "main.py"),
-        "--model",
-        model,
-        "--num-layers",
-        "1",
-        "--max-seq-len",
-        "256",
-        "--lint-only",
-    ]
-    subprocess.run(command, check=True)
-
-
-@pytest.mark.extensive
-def test_qwen3_megakernel_one_step_decode():
-    model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
-    if model is None:
-        pytest.skip(
-            "Set IRON_QWEN3_0_6B_MODEL to run the Qwen3-0.6B megakernel decode test"
-        )
-
-    test_dir = Path(__file__).parent
-    command = [
-        sys.executable,
-        str(test_dir / "full_elf" / "main.py"),
-        "--model",
-        model,
-        "--num-layers",
-        "1",
-        "--max-seq-len",
-        "256",
-        "--verify-one-step",
-        "--verify-repeat",
-        "2",
-    ]
-    subprocess.run(command, check=True)
-
-
-@pytest.mark.extensive
 def test_qwen3_persistent_input_rmsnorm():
     model = os.environ.get("IRON_QWEN3_0_6B_MODEL")
     if model is None:

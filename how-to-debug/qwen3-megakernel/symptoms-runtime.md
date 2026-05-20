@@ -7,62 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 
 [Back to symptom index](symptoms.md).
 
-## Full-ELF Runtime APIs Are Missing
-
-Symptom:
-
-```text
-compile-only succeeds, but full-ELF runtime cannot execute
-```
-
-Diagnostic:
-
-```bash
-source /opt/xilinx/xrt/setup.sh
-.venv/bin/python - <<'PY'
-import sys
-import pyxrt
-print(sys.version)
-print(pyxrt.__file__)
-for name in ["elf", "ext", "hw_context", "kernel", "bo", "device"]:
-    print(name, hasattr(pyxrt, name))
-PY
-```
-
-Evidence found:
-
-```text
-Python 3.12 pyxrt: elf False, ext False
-Python 3.14 pyxrt: elf True, ext True
-```
-
-Root cause:
-
-```text
-The active Python environment did not expose the XRT full-ELF APIs needed by
-FusedFullELFCallable.
-```
-
-Fix:
-
-```text
-Rebuild .venv with Python 3.14, then reinstall requirements.txt and
-requirements_examples.txt.
-```
-
-Recheck:
-
-```bash
-source /opt/xilinx/xrt/setup.sh
-.venv/bin/python -m pytest iron/operators/mem_copy/test.py -q --iterations 1
-```
-
-Observed recheck:
-
-```text
-64 passed
-```
-
 ## Pytest Cannot Import pyxrt
 
 Symptom:
@@ -114,7 +58,7 @@ bring-up scripts.
 Symptom:
 
 ```text
-After a runlist or buffer-layout edit, compile_and_load_s is unexpectedly tiny.
+After a graph or buffer-layout edit, compile/preflight time is unexpectedly tiny.
 The result still looks like the old graph.
 ```
 
@@ -128,20 +72,21 @@ the build directory before judging the edit.
 Command used:
 
 ```bash
-rm -rf build_qwen3_megakernel
+rm -rf build_qwen3_persistent_probe
 source /opt/xilinx/xrt/setup.sh
-.venv/bin/python iron/applications/qwen3_0_6b/full_elf/main.py \
-  --model Qwen/Qwen3-0.6B \
-  --num-layers 1 \
-  --max-seq-len 256 \
-  --verify-one-step
+.venv/bin/python iron/applications/qwen3_0_6b/persistent/real_graph_probe.py \
+  --stages n-layer-final-only \
+  --columns 1 \
+  --layer-iterations 4 \
+  --preflight-only \
+  --build-dir build_qwen3_persistent_probe
 ```
 
 Root cause:
 
 ```text
-FusedMLIROperator reused existing artifacts. Runtime-only iteration is fast,
-but graph edits require a clean build to prove the generated ELF changed.
+The operator reused existing artifacts. Runtime-only iteration is fast, but
+graph edits require a clean build to prove generated MLIR/xclbin changed.
 ```
 
 Fix:
@@ -149,35 +94,6 @@ Fix:
 ```text
 Use --clean-build or a new build directory after runlist, buffer layout, or
 patch-site changes.
-```
-
-## Host Buffer Assignment TypeError
-
-Symptom:
-
-```text
-TypeError: can't assign a numpy.ndarray to a torch.BFloat16Tensor
-```
-
-Diagnostic:
-
-```text
-Check the host buffer ABI before blaming AIE kernels. The failure occurs while
-filling a host-side full-ELF buffer, not inside the NPU program.
-```
-
-Root cause:
-
-```text
-The RoPE LUT helper returned a NumPy ml_dtypes.bfloat16 view, while
-FusedFullELFCallable.get_buffer(...).torch_view() expected Torch tensor
-assignment.
-```
-
-Fix:
-
-```text
-Return a contiguous torch.bfloat16 tensor for the RoPE LUT runtime input.
 ```
 
 ## Runtime Segfaults In XRT BO Validation
@@ -291,12 +207,12 @@ Diagnostic:
 
 ```bash
 source /opt/xilinx/xrt/setup.sh
-.venv/bin/python iron/applications/qwen3_0_6b/full_elf/main.py \
+.venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
   --model Qwen/Qwen3-0.6B \
-  --num-layers 1 \
-  --max-seq-len 256 \
-  --debug-stage qkv \
-  --verify-repeat 3
+  --stage input-rmsnorm-qkv \
+  --verify \
+  --verify-repeat 3 \
+  --build-dir build_qwen3_persistent_debug
 ```
 
 Evidence found:

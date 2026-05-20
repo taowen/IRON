@@ -31,8 +31,8 @@ from upstream RMSNorm precision.
 
 Use when a change claims to affect only layout or scratch names.
 
-Clean A/B recheck is required because full-ELF fusion makes layout,
-patch-sites, and scratch lifetime part of correctness.
+Clean A/B recheck is required because graph dataflow can make layout, buffer
+lifetime, and patch-like runtime metadata part of correctness.
 
 Reverted examples:
 
