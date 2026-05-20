@@ -66,10 +66,13 @@ def run_n_layer_final_only(
         for layer_idx in range(op.layer_iterations)
     ]
     hidden_buf = XRTTensor.from_torch(initial_hidden)
-    if op.layer_iterations == 1:
+    if op.layer_iterations == 1 and op.num_aie_columns == 1:
         packed_weights = pack_full_layer_weights(inputs_by_layer[0])
     else:
-        packed_weights = pack_segment_major_full_layer_weights(inputs_by_layer)
+        packed_weights = pack_segment_major_full_layer_weights(
+            inputs_by_layer,
+            mlp_columns=op.num_aie_columns if op.num_aie_columns == 2 else 1,
+        )
     weights_buf = XRTTensor.from_torch(packed_weights)
     rope_angles_buf = XRTTensor.from_torch(inputs_by_layer[0]["rope_angles"])
     initial_cache = torch.cat(

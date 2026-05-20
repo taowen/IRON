@@ -933,10 +933,14 @@ def qwen3_persistent_post_attn_rmsnorm_full_mlp(
         raise ValueError("full MLP checkpoint expects hidden_size=1024")
     if intermediate_size != 3072:
         raise ValueError("full MLP checkpoint expects intermediate_size=3072")
-    if num_columns != 1:
-        raise ValueError("full MLP checkpoint is currently single-column only")
+    if num_columns < 1:
+        raise ValueError("num_columns must be positive")
     if hidden_size % tile_size_output != 0:
         raise ValueError("hidden_size must be divisible by tile_size_output")
+    if hidden_size % (tile_size_output * num_columns) != 0:
+        raise ValueError(
+            "hidden_size must be divisible by tile_size_output * num_columns"
+        )
     if tile_size_output % tile_size_input != 0:
         raise ValueError("tile_size_output must be a multiple of tile_size_input")
     if tile_size_output % 16 != 0:
@@ -949,7 +953,14 @@ def qwen3_persistent_post_attn_rmsnorm_full_mlp(
     mlp_xnorm = ObjectFifo(hidden_ty, name="qwen3_full_mlp_xnorm", depth=2)
     gate_weight = ObjectFifo(gate_gemv_a_ty, name="qwen3_full_mlp_gate_weight", depth=2)
     up_weight = ObjectFifo(gate_gemv_a_ty, name="qwen3_full_mlp_up_weight", depth=2)
-    down_weight = ObjectFifo(down_gemv_a_ty, name="qwen3_full_mlp_down_weight", depth=2)
+    down_weight_fifos = [
+        ObjectFifo(
+            down_gemv_a_ty,
+            name=f"qwen3_full_mlp_down_weight_{col}",
+            depth=2,
+        )
+        for col in range(num_columns)
+    ]
     ffn_gate = ObjectFifo(ffn_ty, name="qwen3_full_mlp_gate", depth=2)
     ffn_up = ObjectFifo(ffn_ty, name="qwen3_full_mlp_up", depth=2)
     ffn_gate_silu = ObjectFifo(ffn_ty, name="qwen3_full_mlp_gate_silu", depth=2)
@@ -1110,7 +1121,7 @@ def qwen3_persistent_post_attn_rmsnorm_full_mlp(
                 Worker(
                     down_matvec_worker,
                     [
-                        down_weight.cons(),
+                        down_weight_fifos[col].cons(),
                         ffn_hidden.cons(),
                         ffn_out_fifos[col].prod(),
                         down_matvec,
@@ -1155,12 +1166,19 @@ def qwen3_persistent_post_attn_rmsnorm_full_mlp(
         [1, 1, 1, intermediate_size * hidden_size],
         [0, 0, 0, 1],
     )
-    down_weight_tap = TensorAccessPattern(
-        (weights_size,),
-        down_weight_base,
-        [1, 1, 1, hidden_size * intermediate_size],
-        [0, 0, 0, 1],
-    )
+
+    def weight_taps(total_rows, base_offset):
+        return [
+            TensorAccessPattern(
+                (weights_size,),
+                base_offset + col * (total_rows // num_columns) * intermediate_size,
+                [1, 1, 1, (total_rows // num_columns) * intermediate_size],
+                [0, 0, 0, 1],
+            )
+            for col in range(num_columns)
+        ]
+
+    down_weight_taps = weight_taps(hidden_size, down_weight_base)
 
     mlp_xnorm_output_base = 0
     ffn_gate_output_base = hidden_size
@@ -1212,7 +1230,6 @@ def qwen3_persistent_post_attn_rmsnorm_full_mlp(
         )
         rt.fill(gate_weight.prod(), weights, gate_weight_tap, task_group=tg)
         rt.fill(up_weight.prod(), weights, up_weight_tap, task_group=tg)
-        rt.fill(down_weight.prod(), weights, down_weight_tap, task_group=tg)
         rt.drain(
             mlp_xnorm.cons(),
             outputs,
@@ -1249,6 +1266,12 @@ def qwen3_persistent_post_attn_rmsnorm_full_mlp(
             task_group=tg,
         )
         for col in range(num_columns):
+            rt.fill(
+                down_weight_fifos[col].prod(),
+                weights,
+                down_weight_taps[col],
+                task_group=tg,
+            )
             rt.fill(
                 residual_fifos[col].prod(),
                 residual,

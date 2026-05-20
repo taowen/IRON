@@ -343,3 +343,198 @@ sweep. It is to make the attention/full-layer closure multi-column while
 preserving the resource lessons already learned: no three-input score/context
 workers, no oversized K/V cache objects, no debug-only third outputs, and no
 unbounded per-layer DMA task replication.
+
+## 20. Column Speedups Need Both Correct Shards And Warm Timing
+
+The first accepted full-MLP column-scaling patch did not shard gate/up yet. It
+only proved the second half of the MLP:
+
+```text
+full ffn_hidden FIFO
+  -> broadcast to per-column down workers
+  -> per-column down weight FIFO/TAP
+  -> per-column residual add
+  -> sharded output drain
+```
+
+This was still useful because it proved the join/broadcast side of the MLP
+closure before changing the larger n-layer graph.
+
+Accepted evidence:
+
+```text
+full-mlp cols=1,2,4 preflight: ok
+max_dma_tasks_per_fifo: 1
+max_fifo_buffered_bytes: 49152
+verify: errors=0 for all full-MLP debug buffers
+```
+
+The performance lesson was separate: a single clean run made cols=4 look
+slower, but repeated warm runs showed the expected scaling:
+
+```text
+cols=1 late iterations: about 2.33-2.37 ms
+cols=2 late iterations: about 1.85-1.88 ms
+cols=4 late iterations: about 1.61-1.69 ms
+```
+
+Do not classify a column layout as slow from one iteration. First prove the
+shard layout numerically, then compare warm timing.
+
+## 21. Decouple A Shared Scaling Knob Before Opening The Full Graph
+
+In `n-layer-final-only`, the original `num_columns` parameter controlled the
+attention path and the MLP path together. Removing the guard directly would
+have changed Q/K/V head ownership, O-projection row ownership, MLP down
+ownership, and final output layout in one edit.
+
+The accepted diagnostic step was to keep attention single-column and route the
+public column knob only to MLP down sharding for `layer_iterations=1`:
+
+```text
+attention Q/K/V/score/PV/O: num_columns=1
+MLP gate/up: single-column full vector
+MLP down: 1/2/4 output-row shards
+final drain: compact per-column residual tiles into host slices
+```
+
+Accepted evidence:
+
+```text
+n-layer chunk=1 cols=2 verify: chunk_hidden_errors=0
+n-layer chunk=1 cols=4 verify: chunk_hidden_errors=0
+preflight cols=4: compute_cores=25, max_dma_tasks_per_fifo=1
+```
+
+This made the next blocker precise: full-depth multi-column MLP now needs a
+cross-column `layer_residual` join before feedback to the next layer. Without
+that join, `layer_iterations>1` should fail early instead of producing a
+partially assembled hidden state.
+
+## 22. A Residual Join Can Unlock Multi-Layer Column Scaling
+
+The two-column MLP down experiment became useful only after the compact output
+tiles were joined back into a full hidden vector before the chunk feedback
+router:
+
+```text
+col0 residual tiles + col1 residual tiles
+  -> two-input join Worker
+  -> full hidden FIFO
+  -> existing chunk feedback/router
+```
+
+Accepted evidence:
+
+```text
+cols=2 layers=2: chunk_hidden_errors=0
+cols=2 layers=4: chunk_hidden_errors=0
+layers=4 warm timing:
+  cols=1 about 29.6-30.0 ms
+  cols=2 about 24.5-25.3 ms
+```
+
+The join did not violate the known tile input/output budget:
+
+```text
+max_tile_inputs=2
+max_tile_outputs=2
+max_fifo_buffered_bytes=32768
+```
+
+The remaining scaling limit came from data movement, not the join itself. The
+multi-column down-weight shards are currently filled once per layer, so
+`max_dma_tasks_per_fifo` reaches 8 at `layer_iterations=8`. Full-depth
+multi-column generate needs a better packed layout/TAP for sharded down
+weights, or the next speedup should come from sharding gate/up before pushing
+the chunk length further.
+
+## 23. Weight Layout Must Match The Column Plan
+
+The packed MLP2 experiment replaced two failed graph-only approaches:
+
+```text
+per-layer gate/up shard fills:
+  failed placement by exhausting shim Runtime.fill endpoints
+
+NPU split-copy of one full gate/up stream:
+  verified numerically but took about 153 ms for two layers
+```
+
+The accepted layout moved the split to host-side packing:
+
+```text
+post_norm for all layers
+gate0 rows then up0 rows for all layers
+gate1 rows then up1 rows for all layers
+down0 rows for all layers
+down1 rows for all layers
+```
+
+This made the graph smaller and faster:
+
+```text
+cols=2 layers=2:
+  compute_cores=26
+  max_dma_tasks_per_fifo=1
+  warm time about 9.8-9.9 ms
+
+cols=2 layers=4:
+  max_dma_tasks_per_fifo=1
+  warm time about 19.0-19.8 ms
+```
+
+The practical rule is that column scaling is not just adding Workers. The
+weight artifact must be arranged so each Worker receives a legal contiguous
+stream with no third tile input and no per-layer DMA replication.
+
+## 24. Verify Deep-Chunk Cache Errors Against A Control
+
+The packed MLP2 layers=8 run had `chunk_hidden_errors=0`, but a few current-K
+cache elements exceeded the existing tolerance in layers 2, 4, and 5. A
+single-column layers=8 control showed the same class of current-K failures.
+
+That changes the diagnosis:
+
+```text
+not enough evidence for packed MLP2 layout corruption
+enough evidence for a deep-chunk verifier/tolerance follow-up
+```
+
+For performance work, do not reject a graph solely on a cache-current tolerance
+failure if:
+
+```text
+the final hidden chunk passes
+the same failure appears in the single-column control
+token-level generation still needs to be checked
+```
+
+The next accepted check should be token-level generate on several prompts with
+the packed MLP2 path, plus a decision on whether current-K tolerance should be
+layer-dependent or compared at a more local boundary. The first token-level
+checks on the default prompt passed for chunk=4 and chunk=8:
+
+```text
+chunk=4 cols=2: token_match=True, new_text='Paris'
+chunk=8 cols=2: token_match=True, new_text='Paris'
+```
+
+The follow-up full-depth run made chunk=28 the fastest validated packed MLP2
+path:
+
+```text
+chunk=28 cols=2 default prompt:
+  token_match=True
+  new_text='Paris'
+  npu_layer_time_us_total about 137079
+
+chunk=28 cols=2 raw Fibonacci prompt:
+  token_match=True at positions 17, 18, 19, and 20
+  new_text=' 5, 8'
+  npu_layer_time_us_total about 128429-131611 per position
+```
+
+This is now the accepted performance target before attention head sharding. The
+remaining cost is still inside the NPU call, so the next speed work should
+either parallelize attention/O projection or reduce per-position compile cost.

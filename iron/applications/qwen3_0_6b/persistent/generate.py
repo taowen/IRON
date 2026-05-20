@@ -77,6 +77,7 @@ def prepare_fast_generate_buffers(
         raise ValueError(f"layer_chunk_size must be positive, got {layer_chunk_size}")
 
     timing = FastGenerateSetupTiming()
+    mlp_columns = op.num_aie_columns if getattr(op, "num_aie_columns", 1) == 2 else 1
 
     weight_parent_buf = None
     packed_weight_manifest = None
@@ -114,7 +115,7 @@ def prepare_fast_generate_buffers(
                     f"{layer_slice.numel()} != op.packed_weights_size "
                     f"{op.packed_weights_size}"
                 )
-            if chunk_len == 1:
+            if chunk_len == 1 and mlp_columns == 1:
                 layer = packed_weight_manifest["layers"][layer_idx]
                 chunk_weight_bufs.append(
                     XRTSubBuffer.from_parent(
@@ -133,6 +134,7 @@ def prepare_fast_generate_buffers(
                             packed_weight_manifest,
                             layer_idx,
                             chunk_len,
+                            mlp_columns=mlp_columns,
                         )
                     )
                 )
@@ -163,7 +165,7 @@ def prepare_fast_generate_buffers(
                 layer_chunk_size,
                 model.config.num_hidden_layers - layer_idx,
             )
-            if chunk_len == 1:
+            if chunk_len == 1 and mlp_columns == 1:
                 chunk_weight_bufs.append(
                     XRTTensor.from_torch(packed_weights_by_layer[layer_idx])
                 )
@@ -173,6 +175,7 @@ def prepare_fast_generate_buffers(
                         pack_segment_major_weights_for_layers(
                             model,
                             range(layer_idx, layer_idx + chunk_len),
+                            mlp_columns=mlp_columns,
                         )
                     )
                 )

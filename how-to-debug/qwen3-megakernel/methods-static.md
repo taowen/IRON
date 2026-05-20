@@ -435,7 +435,7 @@ Diagnostic command used:
 source /opt/xilinx/xrt/setup.sh
 . .venv/bin/activate
 python iron/applications/qwen3_0_6b/persistent/real_graph_probe.py \
-  --stages qkv mlp-gate-up full-layer \
+  --stages qkv mlp-gate-up full-mlp n-layer-final-only \
   --columns 1 2 4 8 \
   --preflight-only \
   --allow-failures \
@@ -447,9 +447,10 @@ Accepted evidence:
 ```text
 real_graph_probe: ok stage=qkv cols=4 ... compute_cores=14
 real_graph_probe: ok stage=mlp-gate-up cols=2 ... compute_cores=9
-real_graph_probe: ok stage=full-layer cols=1 ... compute_cores=19
-real_graph_probe: fail stage=full-layer cols=2 ...
-  ValueError: scores+softmax checkpoint is currently single-column only
+real_graph_probe: ok stage=full-mlp cols=4 ... compute_cores=13
+real_graph_probe: ok stage=n-layer-final-only cols=1 ... compute_cores=19
+real_graph_probe: fail stage=n-layer-final-only cols=2 ...
+  ValueError: n-layer final-only attention path is currently single-column only
 ```
 
 Interpretation:
@@ -465,4 +466,200 @@ The reusable probe is:
 
 ```text
 iron/applications/qwen3_0_6b/persistent/real_graph_probe.py
+```
+
+## 36. Decouple A Shared Column Knob
+
+Use when one public parameter controls several unproven subgraphs and a direct
+change would make failures ambiguous.
+
+The n-layer column-scaling experiment used this method:
+
+```text
+requested --num-aie-columns=2 or 4
+attention path internally stays num_columns=1
+MLP down path receives mlp_down_columns=2 or 4
+layer_iterations>1 fails early until a residual join exists
+```
+
+Accepted evidence:
+
+```text
+n-layer-final-only layer_iterations=1 cols=2:
+  preflight ok, chunk_hidden_errors=0
+
+n-layer-final-only layer_iterations=1 cols=4:
+  preflight ok, chunk_hidden_errors=0
+```
+
+This isolates the performance experiment to one boundary. If it fails, the
+search space is the down weight TAP, compact residual tile drain, or broadcast
+from `ffn_hidden`, not Q/K/V head ownership or attention context packing.
+
+## 37. Treat AIECC BD Legality As A Separate Check
+
+Use when `real_graph_probe.py --preflight-only` accepts a graph but full
+`aiecc` lowering fails in `aie.dma_bd`.
+
+Observed command:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+. .venv/bin/activate
+python iron/applications/qwen3_0_6b/persistent/main.py \
+  --stage n-layer-final-only \
+  --layer-chunk-size 2 \
+  --num-aie-columns 2 \
+  --verify \
+  --clean-build
+```
+
+Observed failure:
+
+```text
+'aie.dma_bd' op Stride 3 exceeds the [1:1048576] range
+```
+
+Diagnosis:
+
+```text
+The generated MLIR had a legal high-level TensorAccessPattern, but lowering
+could not encode the layer stride into a BD. This is different from FIFO
+object size, tile input count, or DMA task count.
+```
+
+Fix pattern:
+
+```text
+If a repeated TAP has a huge stride, first try splitting it into a bounded
+number of linear fills. Then re-run preflight to make sure max_dma_tasks_per_fifo
+stays under the measured safe limit.
+```
+
+## 38. Identify Which Placer Resource Was Exhausted
+
+Use when `resolve_program()` fails before MLIR preflight with a generic
+SequentialPlacer message:
+
+```text
+Failed to find a tile matching column N: tried until column 8
+```
+
+Do not assume this means "too many compute workers." Monkey-patch
+`SequentialPlacer._place_endpoint` in a one-off probe to print whether the
+failed endpoint is a runtime input/output endpoint, a memtile endpoint, or a
+compute endpoint:
+
+```python
+from aie.iron.placers import SequentialPlacer
+
+orig_place = SequentialPlacer._place_endpoint
+
+def debug_place(self, ofe, tiles, common_col, channels, device,
+                output=False, link_tiles=[], link_channels={}):
+    try:
+        return orig_place(self, ofe, tiles, common_col, channels, device,
+                          output, link_tiles, link_channels)
+    except Exception:
+        print("endpoint=", repr(ofe))
+        print("output=", output)
+        print("remaining_tiles=", tiles)
+        print("channels_used=", {str(k): sum(c for _, c in v)
+                                 for k, v in channels.items()})
+        raise
+
+SequentialPlacer._place_endpoint = debug_place
+```
+
+Evidence from the packed MLP2 experiment:
+
+```text
+endpoint=<aie.iron.runtime.endpoint.RuntimeEndpoint ...>
+output=True
+remaining_tiles=[]
+```
+
+Interpretation:
+
+```text
+The graph exhausted shim/runtime output endpoints because it emitted too many
+Runtime.fill tasks. The correct fix was packed host-side weight layout, not
+changing the compute kernel.
+```
+
+## 39. Treat Tile Input/Output Count As A Packing Constraint
+
+Use when preflight reports:
+
+```text
+Compute tile %tile_X_Y has 3 input ObjectFIFOs; limit=2
+Compute tile %tile_X_Y has 3 output ObjectFIFOs; limit=2
+```
+
+Diagnostic command:
+
+```bash
+rg -n "tile_X_Y|objectfifo @qwen3_" build_dir/*.mlir
+```
+
+The gate/up shard experiment found:
+
+```text
+bad input shape:
+  xnorm FIFO
+  gate_weight FIFO
+  up_weight FIFO
+
+bad output shape:
+  post_norm FIFO
+  gate_up_shard_0 FIFO
+  gate_up_shard_1 FIFO
+```
+
+Fix pattern:
+
+```text
+Pack logically adjacent streams before the tile:
+  gate rows followed by up rows in one per-column weight FIFO
+
+Move small metadata that would create a third output to runtime or packed
+layout:
+  post_norm weights as one contiguous segment
+```
+
+Recheck:
+
+```text
+preflight: max_tile_inputs=2 max_tile_outputs=2
+```
+
+## 40. Benchmark Routing Workers Before Accepting Them
+
+Use when a graph is correct after adding a copy/split/join Worker to reduce
+DMA tasks or tile ports.
+
+Accepted rule from the MLP2 experiment:
+
+```text
+If the routing Worker touches model weights, run timing before accepting it.
+```
+
+Evidence:
+
+```text
+NPU-side gate/up split-copy:
+  cols=2 layers=2 verify passes
+  npu_time_us about 152935
+
+Host-packed MLP2:
+  cols=2 layers=2 verify passes
+  late iterations about 9837-9916 us
+```
+
+Interpretation:
+
+```text
+A routing Worker is reasonable for small activation tiles such as residual
+joins. It is usually wrong for multi-megabyte weight repacking. Put that
+layout work in the prepacked weight artifact or host packing step instead.
 ```

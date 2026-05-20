@@ -358,8 +358,8 @@ class Qwen3PersistentPostAttnRMSNormFullMLP(MLIROperator):
                 "Qwen3-0.6B persistent full MLP expects intermediate_size=3072, "
                 f"got {self.intermediate_size}"
             )
-        if self.num_aie_columns != 1:
-            raise ValueError("full MLP checkpoint is currently single-column only")
+        if self.num_aie_columns < 1:
+            raise ValueError("num_aie_columns must be positive")
         if self.hidden_size % self.kernel_vector_size != 0:
             raise ValueError("hidden_size must be a multiple of kernel_vector_size")
         if self.intermediate_size % self.kernel_vector_size != 0:
@@ -368,6 +368,10 @@ class Qwen3PersistentPostAttnRMSNormFullMLP(MLIROperator):
             )
         if self.hidden_size % self.tile_size_output != 0:
             raise ValueError("hidden_size must be divisible by tile_size_output")
+        if self.hidden_size % (self.tile_size_output * self.num_aie_columns) != 0:
+            raise ValueError(
+                "hidden_size must be divisible by tile_size_output * num_aie_columns"
+            )
         if self.tile_size_output % self.tile_size_input != 0:
             raise ValueError("tile_size_output must be a multiple of tile_size_input")
         if self.tile_size_output % 16 != 0:

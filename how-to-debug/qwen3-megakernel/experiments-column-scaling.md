@@ -71,12 +71,17 @@ change.
 ```text
 QKV checkpoint: can preflight at multiple columns.
 MLP gate/up checkpoint: can preflight beyond one column.
-full attention+MLP n-layer path: currently accepted only at one column.
+post-attn full-MLP checkpoint: verifies at columns=1,2,4 with down projection
+  sharded by column.
+n-layer chunk=1 path: verifies at columns=1,2,4 with attention still
+  single-column and MLP down projection sharded by column.
+full-depth n-layer path: currently accepted only at one column.
 ```
 
-The full n-layer path still has an explicit single-column guard. Removing it is
-not sufficient because the downstream dataflow still routes the MLP from
-`residual_out_fifos[0]` and does not yet join/broadcast column shards.
+The full-depth n-layer path is still single-column. Removing the old guard was
+not sufficient because `num_columns` originally controlled both attention and
+MLP. The current experiment deliberately keeps attention single-column and uses
+the public column knob only for MLP down sharding in `layer_iterations=1`.
 
 ## Experiment 1: Two-Column MLP Closure
 
@@ -116,6 +121,251 @@ Expected risk:
 Join/broadcast FIFOs may increase tile input/output count.
 Down projection may need a different weight layout so each column receives
 only its row shard.
+```
+
+Progress on 2026-05-20:
+
+```text
+Implemented a partial full-MLP column closure:
+  gate/up remains one full-vector worker pair
+  ffn_hidden is broadcast to down workers
+  down projection uses one weight FIFO/TAP per column
+  residual add and output drain are hidden-row sharded
+
+preflight full-mlp:
+  cols=1 compute_cores=7  total_dma_tasks=13 max_dma_tasks_per_fifo=1
+  cols=2 compute_cores=9  total_dma_tasks=17 max_dma_tasks_per_fifo=1
+  cols=4 compute_cores=13 total_dma_tasks=25 max_dma_tasks_per_fifo=1
+  max_fifo_buffered_bytes=49152 for all three
+
+verify full-mlp:
+  cols=1 errors=0 for all debug buffers
+  cols=2 errors=0 for all debug buffers
+  cols=4 errors=0 for all debug buffers
+```
+
+Timing note:
+
+```text
+A single clean-build run was misleading because the first runtime call is cold.
+Using --verify-repeat 5 on cached builds, late iterations were approximately:
+  cols=1: 2.33-2.37 ms
+  cols=2: 1.85-1.88 ms after warmup
+  cols=4: 1.61-1.69 ms after warmup
+```
+
+Conclusion:
+
+```text
+The ffn_hidden broadcast + per-column down weight shard is correct and has real
+speedup after warmup. This is not the full Experiment 1 goal yet because
+gate/up is still single-column. The next useful patch is gate/up sharding with
+an explicit ffn_hidden join that can later be ported into the n-layer graph.
+```
+
+Progress on 2026-05-20, n-layer chunk=1:
+
+```text
+Implemented the same partial down-shard inside `n-layer-final-only` while
+keeping attention single-column:
+  attention Q/K/V/score/PV/O remains num_columns=1
+  public --num-aie-columns controls only MLP down sharding for layer_iterations=1
+  each down column drains compact 128-element residual tiles into the final
+  host output slice
+
+preflight n-layer-final-only, layer_iterations=1:
+  cols=1 compute_cores=19 total_dma_tasks=15 max_dma_tasks_per_fifo=1
+  cols=2 compute_cores=21 total_dma_tasks=17 max_dma_tasks_per_fifo=1
+  cols=4 compute_cores=25 total_dma_tasks=21 max_dma_tasks_per_fifo=1
+  max_fifo_buffered_bytes=32768 for all three
+
+verify n-layer-final-only, layer_iterations=1:
+  cols=2 chunk_hidden_errors=0, layer0 K/V current errors=0
+  cols=4 chunk_hidden_errors=0, layer0 K/V current errors=0
+```
+
+Timing note:
+
+```text
+Using --verify-repeat 5:
+  cols=1 late iterations: about 6.73-7.81 ms
+  cols=2 late iterations: about 5.92-6.32 ms
+  cols=4 late iterations: about 5.57-7.05 ms
+```
+
+Conclusion:
+
+```text
+The down-only shard survives inside the true full-layer graph and gives a
+modest n-layer chunk=1 speedup. It is not enough to unlock full-depth
+performance because layer_iterations>1 still needs a cross-column
+layer-residual join before feedback to the next layer. The next patch should
+build that join or shard gate/up plus join; continuing to tune down-only
+columns has limited leverage.
+```
+
+Progress on 2026-05-20, n-layer residual join:
+
+```text
+Implemented a two-column residual join for layer_iterations>1:
+  per-column down workers emit compact 128-element residual tiles
+  a two-input join Worker copies left/right tiles into one full hidden vector
+  the existing chunk feedback/router consumes that full joined residual
+
+preflight n-layer-final-only:
+  cols=2 layers=2 compute_cores=24 total_dma_tasks=18
+    max_dma_tasks_per_fifo=2 max_fifo_buffered_bytes=32768
+  cols=2 layers=4 compute_cores=24 total_dma_tasks=22
+    max_dma_tasks_per_fifo=4 max_fifo_buffered_bytes=32768
+  cols=2 layers=8 compute_cores=24 total_dma_tasks=34
+    max_dma_tasks_per_fifo=8 max_fifo_buffered_bytes=32768
+```
+
+Diagnosed issue:
+
+```text
+The first cross-layer sharded down-weight TAP used a layer stride of 3145728,
+which aiecc rejected:
+  'aie.dma_bd' op Stride 3 exceeds the [1:1048576] range
+
+The fix keeps the single-column path as one contiguous full-depth TAP and emits
+one linear down-weight shard fill per layer only for multi-column down.
+```
+
+Verification:
+
+```text
+cols=2 layers=2 verify:
+  chunk_hidden_errors=0
+  layer0/layer1 K/V current errors=0
+
+cols=2 layers=4 verify:
+  chunk_hidden_errors=0
+  layer0..layer3 K/V current errors=0
+```
+
+Timing:
+
+```text
+layers=2, --verify-repeat 5:
+  cols=1 late iterations: about 14.21-14.51 ms
+  cols=2 late iterations: about 12.39-12.77 ms
+
+layers=4, --verify-repeat 3:
+  cols=1 late iterations: about 29.58-30.00 ms
+  cols=2 late iterations: about 24.47-25.33 ms
+```
+
+Conclusion:
+
+```text
+The two-column down-shard plus residual join is now valid beyond one layer and
+has a consistent net speedup. The current limit is not correctness but scaling:
+because multi-column down weights are filled per layer, cols=2 reaches
+max_dma_tasks_per_fifo=8 at layers=8. Full-depth chunk=28 needs a better
+multi-column down weight layout/TAP, or gate/up/attention parallelism must be
+added before attempting full-depth multi-column generate.
+```
+
+Progress on 2026-05-20, packed two-column MLP:
+
+```text
+Tried direct gate/up sharding after the residual join.
+
+Rejected intermediate shape:
+  per-layer runtime fills for post_norm/gate/up shards
+  failed resolve_program() because shim/runtime output endpoints were exhausted
+
+Rejected second shape:
+  one full gate/up Runtime.fill
+  NPU split-copy Worker produced post_norm + two shard streams
+  first failed preflight with 3 output FIFOs on one tile
+  after removing post_norm output it verified but took about 153 ms for layers=2
+
+Accepted shape:
+  host packs MLP weights in two-column order
+  post_norm for all layers is one contiguous segment
+  gate0+up0 and gate1+up1 are two contiguous per-column segments
+  down0 and down1 are two contiguous per-column segments
+  each gate/up shard Worker consumes only xnorm + one packed gate/up weight FIFO
+```
+
+Preflight:
+
+```text
+cols=2 layers=2:
+  compute_cores=26 total_dma_tasks=18 max_dma_tasks_per_fifo=1
+  max_tile_inputs=2 max_tile_outputs=2
+
+cols=2 layers=4:
+  compute_cores=26 total_dma_tasks=18 max_dma_tasks_per_fifo=1
+  max_tile_inputs=2 max_tile_outputs=2
+
+cols=2 layers=8:
+  compute_cores=26 total_dma_tasks=22 max_dma_tasks_per_fifo=2
+  max_tile_inputs=2 max_tile_outputs=2
+```
+
+Verification and timing:
+
+```text
+cols=2 layers=2, --verify-repeat 3:
+  chunk_hidden_errors=0
+  layer0/layer1 K/V current errors=0
+  late iterations: about 9.84-9.92 ms
+
+cols=2 layers=4, --verify-repeat 3:
+  chunk_hidden_errors=0
+  layer0..layer3 K/V current errors=0
+  late iterations: about 19.02-19.81 ms
+
+cols=2 layers=8, --verify-repeat 2:
+  chunk_hidden_errors=0
+  warm iteration: about 39.93 ms
+  current K cache has a few tolerance errors in layers 2/4/5
+
+cols=1 layers=8 comparison:
+  chunk_hidden_errors=0
+  current K cache shows the same layers 2/4/5 tolerance class
+
+token-level generate:
+  chunk=2 cols=2 default prompt token_match=True
+  new_text='Paris'
+  npu_layer_time_us_total about 140995 us
+
+  chunk=4 cols=2 default prompt token_match=True
+  new_text='Paris'
+  npu_layer_time_us_total about 140480 us
+
+  chunk=8 cols=2 default prompt token_match=True
+  new_text='Paris'
+  npu_layer_time_us_total about 145024 us
+
+  chunk=28 cols=2 default prompt token_match=True
+  new_text='Paris'
+  npu_layer_time_us_total about 137079 us
+
+  chunk=28 cols=2 raw Fibonacci prompt token_match=True for positions 17-20
+  new_text=' 5, 8'
+  npu_layer_time_us_total per position about 128429-131611 us
+```
+
+Conclusion:
+
+```text
+Packed MLP2 is the accepted next performance path. It improves layers=2 from
+about 12.4-12.8 ms to about 9.8-9.9 ms, and layers=4 from about 24.5-25.3 ms
+to about 19.0-19.8 ms. It also removes the per-layer down-weight DMA scaling
+limit for the two-column path. Full-depth chunk=28 now preflights and runs:
+compute_cores=26, total_dma_tasks=18, max_dma_tasks_per_fifo=1, and the default
+prompt NPU layer time is about 137 ms, materially faster than the earlier
+single-column 190-200 ms baseline.
+
+The layers=8 cache verifier failure is not specific to packed MLP2 because the
+single-column layers=8 comparison has the same current-K tolerance class while
+final hidden still passes. Token-level generate also matches for chunk=8, so
+treat this as a verifier/tolerance follow-up before using cache-current errors
+alone to reject the path.
 ```
 
 ## Experiment 2: Two-Column Attention Head Shard
@@ -214,7 +464,15 @@ compile overhead, not the 190-200ms NPU execution time.
 
 ## Current Next Step
 
-Start with Experiment 1. The smallest useful patch is a two-column MLP closure
-inside the full-layer graph while attention remains single-column. This targets
-the dominant GEMV work first and should expose the real join/broadcast resource
-cost before attention head sharding adds more moving parts.
+Continue Experiment 1 from the accepted packed MLP2 path. Next targets:
+
+```text
+1. Treat chunk=28 cols=2 packed MLP2 as the current fastest validated path.
+2. Re-run a same-build warm timing suite if timing variance becomes a decision
+   point; current single-token timings are chunk=2 ~141 ms, chunk=4 ~140 ms,
+   chunk=8 ~145 ms, chunk=28 ~137 ms.
+3. Decide whether the layers=8 current-K verifier should use looser per-layer
+   tolerance or a local reference at the actual feedback boundary.
+4. Move to Experiment 2 attention head sharding or reduce per-position compile
+   overhead with instruction offset patching.
+```

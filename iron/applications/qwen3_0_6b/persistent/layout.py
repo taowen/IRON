@@ -125,12 +125,79 @@ def _segment_major_inputs_from_full_layer_inputs(
                 inputs["W_up"].flatten(),
             ]
         ),
+        "post_norm_weight": inputs["post_norm_weight"].flatten(),
+        "W_gate": inputs["W_gate"].flatten(),
+        "W_up": inputs["W_up"].flatten(),
         "W_down": inputs["W_down"].flatten(),
     }
 
 
+def _pack_segment_major_full_layer_weights_default(
+    segment_inputs_by_layer: list[dict[str, torch.Tensor]],
+) -> torch.Tensor:
+    return torch.cat(
+        [
+            segment_inputs[name].flatten()
+            for name in SEGMENT_MAJOR_WEIGHT_ORDER
+            for segment_inputs in segment_inputs_by_layer
+        ]
+    ).contiguous()
+
+
+def _pack_segment_major_full_layer_weights_mlp2(
+    segment_inputs_by_layer: list[dict[str, torch.Tensor]],
+) -> torch.Tensor:
+    def gate_up_shard(
+        segment_inputs: dict[str, torch.Tensor], col: int
+    ) -> torch.Tensor:
+        hidden_size = segment_inputs["post_norm_weight"].numel()
+        gate = segment_inputs["W_gate"].view(-1, hidden_size)
+        up = segment_inputs["W_up"].view(-1, hidden_size)
+        shard_rows = gate.shape[0] // 2
+        start = col * shard_rows
+        end = start + shard_rows
+        return torch.cat([gate[start:end].flatten(), up[start:end].flatten()])
+
+    def down_shard(segment_inputs: dict[str, torch.Tensor], col: int) -> torch.Tensor:
+        hidden_size = segment_inputs["post_norm_weight"].numel()
+        down = segment_inputs["W_down"].view(hidden_size, -1)
+        shard_rows = down.shape[0] // 2
+        start = col * shard_rows
+        end = start + shard_rows
+        return down[start:end].flatten()
+
+    common = [
+        segment_inputs[name].flatten()
+        for name in (
+            "input_norm_weight",
+            "W_q",
+            "W_k",
+            "W_v",
+            "W_qk_norm",
+            "W_o",
+        )
+        for segment_inputs in segment_inputs_by_layer
+    ]
+    post_norm = [
+        segment_inputs["post_norm_weight"].flatten()
+        for segment_inputs in segment_inputs_by_layer
+    ]
+    gate_up = [
+        gate_up_shard(segment_inputs, col)
+        for col in range(2)
+        for segment_inputs in segment_inputs_by_layer
+    ]
+    down = [
+        down_shard(segment_inputs, col)
+        for col in range(2)
+        for segment_inputs in segment_inputs_by_layer
+    ]
+    return torch.cat(common + post_norm + gate_up + down).contiguous()
+
+
 def pack_segment_major_full_layer_weights(
     inputs_by_layer: list[dict[str, torch.Tensor]],
+    mlp_columns: int = 1,
 ) -> torch.Tensor:
     """Pack a layer chunk by segment, then by layer within each segment.
 
@@ -145,24 +212,24 @@ def pack_segment_major_full_layer_weights(
         _segment_major_inputs_from_full_layer_inputs(inputs)
         for inputs in inputs_by_layer
     ]
-    return torch.cat(
-        [
-            segment_inputs[name].flatten()
-            for name in SEGMENT_MAJOR_WEIGHT_ORDER
-            for segment_inputs in segment_inputs_by_layer
-        ]
-    ).contiguous()
+    if mlp_columns == 1:
+        return _pack_segment_major_full_layer_weights_default(segment_inputs_by_layer)
+    if mlp_columns == 2:
+        return _pack_segment_major_full_layer_weights_mlp2(segment_inputs_by_layer)
+    raise ValueError(f"unsupported segment-major MLP column layout: {mlp_columns}")
 
 
 def pack_segment_major_weights_for_layers(
     model: Qwen3ForCausalLM,
     layer_indices: list[int] | range,
+    mlp_columns: int = 1,
 ) -> torch.Tensor:
     return pack_segment_major_full_layer_weights(
         [
             build_full_layer_weight_inputs_for_layer(model, layer_idx)
             for layer_idx in layer_indices
-        ]
+        ],
+        mlp_columns=mlp_columns,
     )
 
 
@@ -471,6 +538,7 @@ def pack_segment_major_weight_chunk_from_layer_major(
     manifest: dict[str, object],
     layer_start: int,
     layer_count: int,
+    mlp_columns: int = 1,
 ) -> torch.Tensor:
     """Build a segment-major chunk from the existing layer-major artifact."""
     if layer_count < 1:
@@ -505,13 +573,54 @@ def pack_segment_major_weight_chunk_from_layer_major(
             )
         return _manifest_segment_slice(packed_weights, manifest, layer_idx, name)
 
-    return torch.cat(
-        [
-            segment_for_layer(layer_idx, name)
-            for name in SEGMENT_MAJOR_WEIGHT_ORDER
-            for layer_idx in layers
-        ]
-    ).contiguous()
+    if mlp_columns == 1:
+        return torch.cat(
+            [
+                segment_for_layer(layer_idx, name)
+                for name in SEGMENT_MAJOR_WEIGHT_ORDER
+                for layer_idx in layers
+            ]
+        ).contiguous()
+    if mlp_columns != 2:
+        raise ValueError(f"unsupported segment-major MLP column layout: {mlp_columns}")
+
+    def gate_up_shard(layer_idx: int, col: int) -> torch.Tensor:
+        hidden_size = segment_for_layer(layer_idx, "post_norm_weight").numel()
+        gate = segment_for_layer(layer_idx, "W_gate").view(-1, hidden_size)
+        up = segment_for_layer(layer_idx, "W_up").view(-1, hidden_size)
+        shard_rows = gate.shape[0] // 2
+        start = col * shard_rows
+        end = start + shard_rows
+        return torch.cat([gate[start:end].flatten(), up[start:end].flatten()])
+
+    def down_shard(layer_idx: int, col: int) -> torch.Tensor:
+        hidden_size = segment_for_layer(layer_idx, "post_norm_weight").numel()
+        down = segment_for_layer(layer_idx, "W_down").view(hidden_size, -1)
+        shard_rows = down.shape[0] // 2
+        start = col * shard_rows
+        end = start + shard_rows
+        return down[start:end].flatten()
+
+    common = [
+        segment_for_layer(layer_idx, name)
+        for name in (
+            "input_norm_weight",
+            "W_q",
+            "W_k",
+            "W_v",
+            "W_qk_norm",
+            "W_o",
+        )
+        for layer_idx in layers
+    ]
+    post_norm = [
+        segment_for_layer(layer_idx, "post_norm_weight") for layer_idx in layers
+    ]
+    gate_up = [
+        gate_up_shard(layer_idx, col) for col in range(2) for layer_idx in layers
+    ]
+    down = [down_shard(layer_idx, col) for col in range(2) for layer_idx in layers]
+    return torch.cat(common + post_norm + gate_up + down).contiguous()
 
 
 def packed_weight_layer_slice(

@@ -263,3 +263,31 @@ token_match: True for positions 6 and 7
 
 If this fails while manifest exact-slice tests pass, inspect XRT sub-buffer
 offsets and sync state before changing AIE kernels.
+
+## 34. Warm Up Column-Scaling Measurements
+
+Use when a graph change verifies numerically but a single timing sample says
+the new column count is slower.
+
+Run repeated iterations from the same compiled artifact:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+.venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
+  --stage post-attn-rmsnorm-full-mlp \
+  --num-aie-columns 4 \
+  --verify \
+  --verify-repeat 5 \
+  --build-dir build_qwen3_full_mlp_cols4_verify
+```
+
+Confirmed failure mode:
+
+```text
+single clean cols=4 run: npu_time_us about 3716
+repeat cols=4 late iterations: about 1609-1691
+```
+
+For performance decisions, compare warm iterations or a latency distribution,
+not iteration 0. Keep `--verify` enabled while changing graph shape so a fast
+number does not hide a broken FIFO/TAP layout.

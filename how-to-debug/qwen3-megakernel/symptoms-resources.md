@@ -218,6 +218,182 @@ If repeated GQA access would require illegal stride=0, reuse K blocks inside a
 worker instead of asking DMA to reread the same block.
 ```
 
+## Sharded Multi-Layer Weight TAP Exceeds BD Stride
+
+Symptom:
+
+```text
+'aie.dma_bd' op Stride 3 exceeds the [1:1048576] range.
+aie.dma_bd(... [<size = 2, stride = 3145728>, ...])
+```
+
+Diagnostic:
+
+```text
+Find the failing `aie.dma_bd` and map its offset/length back to the packed
+weight segment. In the column-scaling experiment the offset was inside the
+MLP down segment, not Q/K/V or cache movement.
+```
+
+Evidence found:
+
+```text
+The first two-column n-layer down-shard used a TAP shaped like:
+  [layer_iterations, 1, 1, shard_rows * intermediate_size]
+with layer stride:
+  hidden_size * intermediate_size = 3145728 bf16 elements
+
+That stride is legal as a tensor concept but illegal for this NPU BD lowering.
+```
+
+Root cause:
+
+```text
+The host packed weights are segment-major across layers. A column shard of
+down_proj is not contiguous across layers; it jumps by a full down matrix per
+layer. Encoding that jump as one repeated TAP exceeded the BD stride limit.
+```
+
+Fix used:
+
+```text
+Keep the single-column path as one contiguous full-depth down-weight TAP.
+For multi-column down, emit one linear shard fill per layer and per column.
+This raises max_dma_tasks_per_fifo to the layer count, so it is acceptable for
+small chunks but not a final full-depth solution.
+```
+
+Accepted recheck:
+
+```text
+cols=2 layers=2: max_dma_tasks_per_fifo=2, verify errors=0
+cols=2 layers=4: max_dma_tasks_per_fifo=4, verify errors=0
+cols=2 layers=8: preflight max_dma_tasks_per_fifo=8
+```
+
+## Sharded Gate/Up Runtime Fills Exhaust Shim Endpoints
+
+Symptom:
+
+```text
+real_graph_probe: fail stage=n-layer-final-only cols=2 layers=2
+ValueError: Failed to find a tile matching column 2: tried until column 8.
+```
+
+Diagnostic:
+
+```text
+Monkey-patching SequentialPlacer._place_endpoint showed the failure happened
+while placing a RuntimeEndpoint with output=True and no shim tiles left. This
+was before aiecc and before any external kernel ran.
+```
+
+Evidence found:
+
+```text
+The first gate/up-sharded n-layer graph emitted per-layer runtime fills for:
+  post_norm
+  gate shard 0
+  gate shard 1
+  up shard 0
+  up shard 1
+
+This was in addition to the existing Q/K/V/O/cache/down traffic.
+```
+
+Root cause:
+
+```text
+The graph expressed a better compute partition but a worse runtime DMA graph.
+Too many host->NPU Runtime.fill endpoints exhausted shim placement.
+```
+
+Fix used:
+
+```text
+Do not use per-layer gate/up shard fills. Pack MLP weights on the host into
+contiguous two-column segments so each shard FIFO receives one full chunk fill.
+```
+
+## Gate/Up Shard Worker Has Too Many Input FIFOs
+
+Symptom:
+
+```text
+Qwen3PreflightError: Compute tile %tile_4_4 has 3 input ObjectFIFOs; limit=2.
+```
+
+Diagnostic:
+
+```bash
+rg -n "tile_4_4|qwen3_full_layer_mlp_" \
+  build_qwen3_column_probe_gateup_split/*.mlir
+```
+
+Evidence found:
+
+```text
+tile_4_4 consumed:
+  qwen3_full_layer_mlp_xnorm
+  qwen3_full_layer_mlp_gate_weight_0
+  qwen3_full_layer_mlp_up_weight_0
+```
+
+Root cause:
+
+```text
+Splitting gate and up into separate weight FIFOs made the compute worker a
+three-input tile even though the math itself was unchanged.
+```
+
+Fix used:
+
+```text
+Pack each column's gate rows followed by up rows into one ObjectFIFO. The
+gate/up shard Worker then consumes only:
+  xnorm
+  packed gate_up shard weight rows
+```
+
+## NPU Weight Split Copy Is Correct But Too Slow
+
+Symptom:
+
+```text
+cols=2 layers=2 verify passes, but npu_time_us is about 152935 us.
+```
+
+Diagnostic:
+
+```text
+Compare against the previous down-only two-column path and the packed MLP2
+path. Both use the same attention and residual-join boundaries, so the new
+cost is isolated to the NPU-side weight split-copy phase.
+```
+
+Evidence found:
+
+```text
+down-only two-column layers=2 warm time: about 12.4-12.8 ms
+NPU split-copy gate/up layers=2 time: about 153 ms
+packed MLP2 layers=2 warm time: about 9.8-9.9 ms
+```
+
+Root cause:
+
+```text
+The split-copy Worker copied millions of bf16 weight elements on the NPU just
+to route gate/up shards. That routing work dominated the GEMV speedup.
+```
+
+Fix used:
+
+```text
+Move the split to host-side/preprocessed weight packing. Runtime should move
+already-contiguous shard streams; NPU Workers should spend cycles on GEMV and
+activation, not weight repacking.
+```
+
 ## N-Layer Chunk 8 Exhausts Current KV Writeback BD IDs
 
 Symptom:

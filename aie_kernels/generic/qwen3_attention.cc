@@ -38,9 +38,7 @@
 
 extern "C" {
 
-void qwen3_copy_bf16(const bfloat16 *__restrict input,
-                     bfloat16 *__restrict output,
-                     int32_t size)
+void qwen3_copy_bf16(const bfloat16 *__restrict input, bfloat16 *__restrict output, int32_t size)
 {
     event0();
 
@@ -49,6 +47,28 @@ void qwen3_copy_bf16(const bfloat16 *__restrict input,
     }
 
     event1();
+}
+
+void qwen3_copy_tile_to_full_bf16(const bfloat16 *__restrict input_tile,
+                                  bfloat16 *__restrict output_full,
+                                  int32_t row_offset,
+                                  int32_t size)
+{
+    event0();
+
+    for (int32_t i = 0; i < size; i++) {
+        output_full[row_offset + i] = input_tile[i];
+    }
+
+    event1();
+}
+
+void qwen3_copy_ffn_shard_to_full_bf16(const bfloat16 *__restrict input_shard,
+                                       bfloat16 *__restrict output_full,
+                                       int32_t row_offset,
+                                       int32_t size)
+{
+    qwen3_copy_tile_to_full_bf16(input_shard, output_full, row_offset, size);
 }
 
 void qwen3_pack_qk_pair_bf16(const bfloat16 *__restrict q,
@@ -207,6 +227,22 @@ void qwen3_add_full_slice_bf16(const bfloat16 *__restrict lhs_full,
     event1();
 }
 
+void qwen3_add_full_slice_to_tile_bf16(const bfloat16 *__restrict lhs_full,
+                                       const bfloat16 *__restrict rhs_tile,
+                                       bfloat16 *__restrict output_tile,
+                                       int32_t row_offset,
+                                       int32_t size)
+{
+    event0();
+
+    for (int32_t i = 0; i < size; i++) {
+        output_tile[i] =
+            static_cast<bfloat16>(static_cast<float>(lhs_full[row_offset + i]) + static_cast<float>(rhs_tile[i]));
+    }
+
+    event1();
+}
+
 void qwen3_weighted_rms_norm_bf16(const bfloat16 *__restrict input,
                                   const bfloat16 *__restrict weight,
                                   bfloat16 *__restrict output,
@@ -269,6 +305,18 @@ void qwen3_mlp_matvec4_rows_bf16(int32_t m,
 #undef QWEN3_DOT_ROW
 
     event1();
+}
+
+void qwen3_mlp_matvec4_rows_shard_bf16(int32_t m,
+                                       int32_t row_offset,
+                                       const bfloat16 *__restrict row0,
+                                       const bfloat16 *__restrict row1,
+                                       const bfloat16 *__restrict row2,
+                                       const bfloat16 *__restrict row3,
+                                       const bfloat16 *__restrict input,
+                                       bfloat16 *__restrict output)
+{
+    qwen3_mlp_matvec4_rows_bf16(m, row_offset, row0, row1, row2, row3, input, output);
 }
 
 void qwen3_norm_rope_with_weight_offset_bf16(const bfloat16 *__restrict input,
@@ -371,6 +419,14 @@ void qwen3_silu_mul_bf16(const bfloat16 *__restrict gate,
     }
 
     event1();
+}
+
+void qwen3_silu_mul_shard_bf16(const bfloat16 *__restrict gate,
+                               const bfloat16 *__restrict up,
+                               bfloat16 *__restrict hidden,
+                               int32_t size)
+{
+    qwen3_silu_mul_bf16(gate, up, hidden, size);
 }
 
 } // extern "C"

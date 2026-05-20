@@ -436,6 +436,58 @@ token_match: True for positions 6, 7, and 8
 decode_s: 0.249-0.257 per NPU-decoded token
 ```
 
+## Column Scaling Looks Slower On A Single Run
+
+Symptom:
+
+```text
+full-MLP cols=4 verifies numerically, but one clean run reports a worse
+npu_time_us than cols=1.
+```
+
+Diagnostic:
+
+```text
+Repeat the same compiled artifact several times and compare warm iterations.
+Keep the same prompt, same stage, same build directory, and --verify enabled.
+```
+
+Command used:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+.venv/bin/python iron/applications/qwen3_0_6b/persistent/main.py \
+  --stage post-attn-rmsnorm-full-mlp \
+  --num-aie-columns 4 \
+  --verify \
+  --verify-repeat 5 \
+  --build-dir build_qwen3_full_mlp_cols4_verify
+```
+
+Evidence found:
+
+```text
+cols=1 late iterations: about 2.33-2.37 ms
+cols=2 late iterations: about 1.85-1.88 ms after warmup
+cols=4 late iterations: about 1.61-1.69 ms after warmup
+all checked debug buffers: errors=0
+```
+
+Root cause:
+
+```text
+The first runtime call includes cold-start/runtime state effects and is not a
+stable estimate for graph scaling. The graph was correct; the diagnostic method
+was too weak.
+```
+
+Fix:
+
+```text
+Use repeated warm measurements or a latency histogram before accepting or
+rejecting a column-scaling change.
+```
+
 ## HuggingFace Snapshot Download Fails During Local Verification
 
 Symptom:

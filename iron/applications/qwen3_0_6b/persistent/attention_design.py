@@ -40,6 +40,7 @@ def _qwen3_persistent_n_layer_final_only_impl(
     mul_kernel_object="mul.o",
     down_gemv_kernel_object="mv_down.o",
     layer_iterations=1,
+    mlp_down_columns=1,
 ):
     """Single-token Qwen3 input RMSNorm, QKV, Q/K norm, RoPE, KV write, and optional softmax."""
     dtype = bfloat16
@@ -103,6 +104,7 @@ def _qwen3_persistent_n_layer_final_only_impl(
     head_ty = np.ndarray[(head_dim,), np.dtype[dtype]]
     qk_norm_weight_ty = np.ndarray[(2 * head_dim,), np.dtype[dtype]]
     ffn_ty = np.ndarray[(intermediate_size,), np.dtype[dtype]]
+    ffn_shard_ty = np.ndarray[(intermediate_size // 2,), np.dtype[dtype]]
     qk_pair_ty = np.ndarray[(3 * head_dim,), np.dtype[dtype]]
     score_ty = np.ndarray[(max_seq_len,), np.dtype[dtype]]
     k_cache_block_ty = np.ndarray[(cache_block_seq, head_dim), np.dtype[dtype]]
@@ -112,6 +114,7 @@ def _qwen3_persistent_n_layer_final_only_impl(
     o_gemv_a_ty = np.ndarray[(tile_size_input, q_size), np.dtype[dtype]]
     mlp_gemv_a_ty = np.ndarray[(tile_size_input, hidden_size), np.dtype[dtype]]
     down_gemv_a_ty = np.ndarray[(tile_size_input, intermediate_size), np.dtype[dtype]]
+    hidden_tile_ty = np.ndarray[(tile_size_output,), np.dtype[dtype]]
     if q_size % head_dim != 0 or kv_size % head_dim != 0:
         raise ValueError("Q/KV sizes must be divisible by head_dim")
     if q_size % num_columns != 0 or kv_size % num_columns != 0:
@@ -125,6 +128,24 @@ def _qwen3_persistent_n_layer_final_only_impl(
     if num_columns != 1:
         raise ValueError(
             "n-layer final-only attention path is currently NPU2 single-column only"
+        )
+    if mlp_down_columns < 1:
+        raise ValueError("mlp_down_columns must be positive")
+    if mlp_down_columns not in {1, 2, 4}:
+        raise ValueError("mlp_down_columns must be one of 1, 2, or 4")
+    if mlp_down_columns > 2 and layer_iterations != 1:
+        raise ValueError(
+            "n-layer MLP down column scaling above 2 columns is currently "
+            "limited to one layer"
+        )
+    mlp_gate_up_columns = 2 if mlp_down_columns == 2 else 1
+    if hidden_size % (tile_size_output * mlp_down_columns) != 0:
+        raise ValueError(
+            "hidden_size must be divisible by tile_size_output * mlp_down_columns"
+        )
+    if intermediate_size % mlp_gate_up_columns != 0:
+        raise ValueError(
+            "intermediate_size must be divisible by the MLP gate/up column count"
         )
     if q_heads % kv_heads != 0:
         raise ValueError("q_heads must be a multiple of kv_heads for GQA")
@@ -213,13 +234,20 @@ def _qwen3_persistent_n_layer_final_only_impl(
     residual_hidden_fifos = []
     residual_out_fifos = []
     mlp_gate_up_weight_rows = None
-    mlp_down_weight = None
+    mlp_post_norm_weight = None
+    mlp_gate_up_shard_weight_fifos = []
+    mlp_down_weight_fifos = []
     mlp_xnorm = None
     ffn_gate = None
     ffn_up = None
     ffn_hidden = None
+    ffn_hidden_shard_fifos = []
+    ffn_hidden_joined = None
     ffn_out = None
+    ffn_out_fifos = []
     layer_residual = None
+    layer_residual_fifos = []
+    layer_residual_joined = None
     qk_rope_meta = ObjectFifo(qk_pair_ty, name="qwen3_rc_qk_rope_metadata", depth=2)
     qk_pair_fifos = [
         ObjectFifo(qk_pair_ty, name=f"qwen3_rc_qk_pair_{col}", depth=2)
@@ -280,18 +308,69 @@ def _qwen3_persistent_n_layer_final_only_impl(
         ObjectFifo(residual_ty, name=f"qwen3_rc_attn_residual_{col}", depth=2)
         for col in range(num_columns)
     ]
-    mlp_gate_up_weight_rows = ObjectFifo(
-        hidden_weight_ty, name="qwen3_full_layer_mlp_gate_up_weight_rows", depth=4
-    )
-    mlp_down_weight = ObjectFifo(
-        down_gemv_a_ty, name="qwen3_full_layer_mlp_down_weight", depth=1
-    )
+    if mlp_gate_up_columns == 1:
+        mlp_gate_up_weight_rows = ObjectFifo(
+            hidden_weight_ty, name="qwen3_full_layer_mlp_gate_up_weight_rows", depth=4
+        )
+    else:
+        mlp_post_norm_weight = ObjectFifo(
+            hidden_weight_ty, name="qwen3_full_layer_mlp_post_norm_weight", depth=2
+        )
+        mlp_gate_up_shard_weight_fifos = [
+            ObjectFifo(
+                hidden_weight_ty,
+                name=f"qwen3_full_layer_mlp_gate_up_weight_{col}",
+                depth=4,
+            )
+            for col in range(mlp_gate_up_columns)
+        ]
+    mlp_down_weight_fifos = [
+        ObjectFifo(
+            down_gemv_a_ty,
+            name=f"qwen3_full_layer_mlp_down_weight_{col}",
+            depth=1,
+        )
+        for col in range(mlp_down_columns)
+    ]
     mlp_xnorm = ObjectFifo(tile_ty, name="qwen3_full_layer_mlp_xnorm", depth=2)
-    ffn_gate = ObjectFifo(ffn_ty, name="qwen3_full_layer_ffn_gate", depth=2)
-    ffn_up = ObjectFifo(ffn_ty, name="qwen3_full_layer_ffn_up", depth=2)
-    ffn_hidden = ObjectFifo(ffn_ty, name="qwen3_full_layer_ffn_hidden", depth=2)
-    ffn_out = ObjectFifo(tile_ty, name="qwen3_full_layer_ffn_out", depth=2)
-    layer_residual = ObjectFifo(tile_ty, name="qwen3_full_layer_residual", depth=2)
+    if mlp_gate_up_columns == 1:
+        ffn_gate = ObjectFifo(ffn_ty, name="qwen3_full_layer_ffn_gate", depth=2)
+        ffn_up = ObjectFifo(ffn_ty, name="qwen3_full_layer_ffn_up", depth=2)
+        ffn_hidden = ObjectFifo(ffn_ty, name="qwen3_full_layer_ffn_hidden", depth=2)
+    else:
+        ffn_hidden_shard_fifos = [
+            ObjectFifo(
+                ffn_shard_ty,
+                name=f"qwen3_full_layer_ffn_hidden_shard_{col}",
+                depth=2,
+            )
+            for col in range(mlp_gate_up_columns)
+        ]
+        ffn_hidden_joined = ObjectFifo(
+            ffn_ty, name="qwen3_full_layer_ffn_hidden_joined", depth=2
+        )
+        ffn_hidden = ffn_hidden_joined
+    ffn_out_ty = hidden_tile_ty if mlp_down_columns != 1 else tile_ty
+    ffn_out_fifos = [
+        ObjectFifo(ffn_out_ty, name=f"qwen3_full_layer_ffn_out_{col}", depth=2)
+        for col in range(mlp_down_columns)
+    ]
+    layer_residual_ty = hidden_tile_ty if mlp_down_columns != 1 else tile_ty
+    layer_residual_fifos = [
+        ObjectFifo(
+            layer_residual_ty,
+            name=f"qwen3_full_layer_residual_{col}",
+            depth=2,
+        )
+        for col in range(mlp_down_columns)
+    ]
+    ffn_out = ffn_out_fifos[0]
+    layer_residual = layer_residual_fifos[0]
+    if mlp_down_columns != 1 and layer_iterations > 1:
+        layer_residual_joined = ObjectFifo(
+            tile_ty, name="qwen3_full_layer_residual_joined", depth=2
+        )
+        layer_residual = layer_residual_joined
     rms_norm_kernel = Kernel(
         f"{func_prefix}rms_norm_bf16_vector",
         f"{func_prefix}{rms_kernel_object}",
@@ -329,6 +408,9 @@ def _qwen3_persistent_n_layer_final_only_impl(
     add_kernel = None
     add_hidden_tile_to_full = None
     add_full_slice = None
+    add_full_slice_to_tile = None
+    copy_tile_to_full = None
+    copy_ffn_shard_to_full = None
     hidden_copy = None
     norm_rope_with_weight_offset = None
     pack_qk_rope_metadata = None
@@ -336,9 +418,11 @@ def _qwen3_persistent_n_layer_final_only_impl(
     mlp_weighted_rms_norm = None
     mlp_matvec = None
     mlp_matvec4_rows = None
+    mlp_matvec4_rows_shard = None
     silu = None
     eltwise_mul = None
     silu_mul = None
+    silu_mul_shard = None
     down_matvec = None
     pack_qk_pair = Kernel(
         f"{func_prefix}qwen3_pack_qk_pair_bf16",
@@ -438,6 +522,20 @@ def _qwen3_persistent_n_layer_final_only_impl(
             ffn_ty,
         ],
     )
+    mlp_matvec4_rows_shard = Kernel(
+        f"{func_prefix}qwen3_mlp_matvec4_rows_shard_bf16",
+        f"{func_prefix}{attention_kernel_object}",
+        [
+            np.int32,
+            np.int32,
+            hidden_weight_ty,
+            hidden_weight_ty,
+            hidden_weight_ty,
+            hidden_weight_ty,
+            tile_ty,
+            ffn_shard_ty,
+        ],
+    )
     silu = Kernel(
         f"{func_prefix}silu_bf16",
         f"{func_prefix}{silu_kernel_object}",
@@ -453,22 +551,42 @@ def _qwen3_persistent_n_layer_final_only_impl(
         f"{func_prefix}{attention_kernel_object}",
         [ffn_ty, ffn_ty, ffn_ty, np.int32],
     )
+    silu_mul_shard = Kernel(
+        f"{func_prefix}qwen3_silu_mul_shard_bf16",
+        f"{func_prefix}{attention_kernel_object}",
+        [ffn_shard_ty, ffn_shard_ty, ffn_shard_ty, np.int32],
+    )
+    down_output_ty = hidden_tile_ty if mlp_down_columns != 1 else tile_ty
     down_matvec = Kernel(
         f"{func_prefix}qwen3_down_proj_matvec_vectorized_bf16_bf16",
         f"{func_prefix}{down_gemv_kernel_object}",
-        [np.int32, np.int32, down_gemv_a_ty, ffn_ty, tile_ty],
+        [np.int32, np.int32, down_gemv_a_ty, ffn_ty, down_output_ty],
     )
     add_full_slice = Kernel(
         f"{func_prefix}qwen3_add_full_slice_bf16",
         f"{func_prefix}{attention_kernel_object}",
         [tile_ty, tile_ty, tile_ty, np.int32, np.int32],
     )
-    if layer_iterations > 1:
-        hidden_copy = Kernel(
-            f"{func_prefix}qwen3_copy_bf16",
-            f"{func_prefix}{attention_kernel_object}",
-            [tile_ty, tile_ty, np.int32],
-        )
+    add_full_slice_to_tile = Kernel(
+        f"{func_prefix}qwen3_add_full_slice_to_tile_bf16",
+        f"{func_prefix}{attention_kernel_object}",
+        [tile_ty, hidden_tile_ty, hidden_tile_ty, np.int32, np.int32],
+    )
+    copy_tile_to_full = Kernel(
+        f"{func_prefix}qwen3_copy_tile_to_full_bf16",
+        f"{func_prefix}{attention_kernel_object}",
+        [hidden_tile_ty, tile_ty, np.int32, np.int32],
+    )
+    copy_ffn_shard_to_full = Kernel(
+        f"{func_prefix}qwen3_copy_ffn_shard_to_full_bf16",
+        f"{func_prefix}{attention_kernel_object}",
+        [ffn_shard_ty, ffn_ty, np.int32, np.int32],
+    )
+    hidden_copy = Kernel(
+        f"{func_prefix}qwen3_copy_bf16",
+        f"{func_prefix}{attention_kernel_object}",
+        [tile_ty, tile_ty, np.int32],
+    )
 
     def rmsnorm_worker(of_in, of_out, rms_norm):
         for _ in range_(layer_iterations):
@@ -734,6 +852,76 @@ def _qwen3_persistent_n_layer_final_only_impl(
             gate_fifo.release(1)
             residual_fifo.release(1)
 
+    def mlp_postnorm_worker(
+        residual_fifo, post_norm_weight_fifo, xnorm_fifo, norm_kernel
+    ):
+        for _ in range_(layer_iterations):
+            residual = residual_fifo.acquire(1)
+            post_norm = post_norm_weight_fifo.acquire(1)
+            xnorm_out = xnorm_fifo.acquire(1)
+            norm_kernel(residual, post_norm, xnorm_out, hidden_size)
+            xnorm_fifo.release(1)
+            post_norm_weight_fifo.release(1)
+            residual_fifo.release(1)
+
+    def make_mlp_gate_up_silu_shard_worker():
+        def mlp_gate_up_silu_shard_worker(
+            gate_up_weight_fifo,
+            xnorm_fifo,
+            hidden_fifo,
+            matvec4_rows_kernel,
+            silu_mul_kernel,
+            gate_buffer,
+            up_buffer,
+        ):
+            for _ in range_(layer_iterations):
+                xnorm_in = xnorm_fifo.acquire(1)
+                hidden_out = hidden_fifo.acquire(1)
+                for j_idx in range_(
+                    intermediate_size // tile_size_input // mlp_gate_up_columns
+                ):
+                    j_i32 = index.casts(T.i32(), j_idx)
+                    output_row_offset = j_i32 * tile_size_input
+                    rows = gate_up_weight_fifo.acquire(tile_size_input)
+                    matvec4_rows_kernel(
+                        tile_size_input,
+                        output_row_offset,
+                        rows[0],
+                        rows[1],
+                        rows[2],
+                        rows[3],
+                        xnorm_in,
+                        gate_buffer,
+                    )
+                    gate_up_weight_fifo.release(tile_size_input)
+                for j_idx in range_(
+                    intermediate_size // tile_size_input // mlp_gate_up_columns
+                ):
+                    j_i32 = index.casts(T.i32(), j_idx)
+                    output_row_offset = j_i32 * tile_size_input
+                    rows = gate_up_weight_fifo.acquire(tile_size_input)
+                    matvec4_rows_kernel(
+                        tile_size_input,
+                        output_row_offset,
+                        rows[0],
+                        rows[1],
+                        rows[2],
+                        rows[3],
+                        xnorm_in,
+                        up_buffer,
+                    )
+                    gate_up_weight_fifo.release(tile_size_input)
+                silu_mul_kernel(
+                    gate_buffer,
+                    up_buffer,
+                    hidden_out,
+                    intermediate_size // mlp_gate_up_columns,
+                )
+                hidden_fifo.release(1)
+                xnorm_fifo.release(1)
+
+        return mlp_gate_up_silu_shard_worker
+
     def mlp_silu_mul_worker(gate_fifo, up_fifo, hidden_fifo, silu_mul_kernel):
         for _ in range_(layer_iterations):
             gate = gate_fifo.acquire(1)
@@ -744,11 +932,27 @@ def _qwen3_persistent_n_layer_final_only_impl(
             up_fifo.release(1)
             gate_fifo.release(1)
 
+    def mlp_ffn_hidden_join2_worker(left_fifo, right_fifo, out_fifo, copy_shard_kernel):
+        for _ in range_(layer_iterations):
+            left = left_fifo.acquire(1)
+            right = right_fifo.acquire(1)
+            out = out_fifo.acquire(1)
+            copy_shard_kernel(left, out, 0, intermediate_size // 2)
+            copy_shard_kernel(
+                right,
+                out,
+                intermediate_size // 2,
+                intermediate_size // 2,
+            )
+            out_fifo.release(1)
+            right_fifo.release(1)
+            left_fifo.release(1)
+
     def mlp_down_worker(hidden_fifo, down_weight_fifo, ffn_out_fifo, matvec_kernel):
         for _ in range_(layer_iterations):
             hidden = hidden_fifo.acquire(1)
             ffn = ffn_out_fifo.acquire(1)
-            for tile_idx in range_(hidden_size // tile_size_output // num_columns):
+            for tile_idx in range_(hidden_size // tile_size_output):
                 tile_i32 = index.casts(T.i32(), tile_idx)
                 row_offset = tile_i32 * tile_size_output
                 for j_idx in range_(tile_size_output // tile_size_input):
@@ -760,6 +964,27 @@ def _qwen3_persistent_n_layer_final_only_impl(
             ffn_out_fifo.release(1)
             hidden_fifo.release(1)
 
+    def make_mlp_down_tile_worker(column_index):
+        def mlp_down_tile_worker(
+            hidden_fifo, down_weight_fifo, ffn_out_fifo, matvec_kernel
+        ):
+            for _ in range_(layer_iterations):
+                hidden = hidden_fifo.acquire(1)
+                for _ in range_(hidden_size // tile_size_output // mlp_down_columns):
+                    ffn = ffn_out_fifo.acquire(1)
+                    for j_idx in range_(tile_size_output // tile_size_input):
+                        j_i32 = index.casts(T.i32(), j_idx)
+                        output_row_offset = j_i32 * tile_size_input
+                        w = down_weight_fifo.acquire(1)
+                        matvec_kernel(
+                            tile_size_input, output_row_offset, w, hidden, ffn
+                        )
+                        down_weight_fifo.release(1)
+                    ffn_out_fifo.release(1)
+                hidden_fifo.release(1)
+
+        return mlp_down_tile_worker
+
     def mlp_layer_residual_worker(
         ffn_out_fifo, residual_fifo, layer_residual_fifo, add_kernel
     ):
@@ -767,13 +992,57 @@ def _qwen3_persistent_n_layer_final_only_impl(
             ffn = ffn_out_fifo.acquire(1)
             residual = residual_fifo.acquire(1)
             out = layer_residual_fifo.acquire(1)
-            for tile_idx in range_(hidden_size // tile_size_output // num_columns):
+            for tile_idx in range_(hidden_size // tile_size_output):
                 tile_i32 = index.casts(T.i32(), tile_idx)
                 row_offset = tile_i32 * tile_size_output
                 add_kernel(residual, ffn, out, row_offset, tile_size_output)
             layer_residual_fifo.release(1)
             residual_fifo.release(1)
             ffn_out_fifo.release(1)
+
+    def make_mlp_layer_residual_tile_worker(column_index):
+        def mlp_layer_residual_tile_worker(
+            ffn_out_fifo, residual_fifo, layer_residual_fifo, add_kernel
+        ):
+            for _ in range_(layer_iterations):
+                residual = residual_fifo.acquire(1)
+                for tile_idx in range_(
+                    hidden_size // tile_size_output // mlp_down_columns
+                ):
+                    tile_i32 = index.casts(T.i32(), tile_idx)
+                    row_offset = (
+                        column_index * (hidden_size // mlp_down_columns)
+                        + tile_i32 * tile_size_output
+                    )
+                    ffn = ffn_out_fifo.acquire(1)
+                    out = layer_residual_fifo.acquire(1)
+                    add_kernel(residual, ffn, out, row_offset, tile_size_output)
+                    layer_residual_fifo.release(1)
+                    ffn_out_fifo.release(1)
+                residual_fifo.release(1)
+
+        return mlp_layer_residual_tile_worker
+
+    def mlp_layer_residual_join2_worker(
+        left_fifo, right_fifo, out_fifo, copy_tile_kernel
+    ):
+        for _ in range_(layer_iterations):
+            out = out_fifo.acquire(1)
+            for tile_idx in range_(hidden_size // tile_size_output // 2):
+                tile_i32 = index.casts(T.i32(), tile_idx)
+                row_offset = tile_i32 * tile_size_output
+                left = left_fifo.acquire(1)
+                right = right_fifo.acquire(1)
+                copy_tile_kernel(left, out, row_offset, tile_size_output)
+                copy_tile_kernel(
+                    right,
+                    out,
+                    hidden_size // 2 + row_offset,
+                    tile_size_output,
+                )
+                right_fifo.release(1)
+                left_fifo.release(1)
+            out_fifo.release(1)
 
     def chunk_initial_hidden_worker(initial_fifo, feedback_fifo, out_fifo, copy):
         initial = initial_fifo.acquire(1)
@@ -960,44 +1229,130 @@ def _qwen3_persistent_n_layer_final_only_impl(
                 ),
             ]
         )
-    workers.extend(
-        [
+    if mlp_gate_up_columns == 1:
+        workers.extend(
+            [
+                Worker(
+                    mlp_postnorm_gate_up_worker,
+                    [
+                        residual_out_fifos[0].cons(),
+                        mlp_gate_up_weight_rows.cons(),
+                        ffn_gate.prod(),
+                        ffn_up.prod(),
+                        mlp_weighted_rms_norm,
+                        mlp_matvec4_rows,
+                        Buffer(type=tile_ty, name="qwen3_full_layer_mlp_xnorm_buf"),
+                    ],
+                ),
+                Worker(
+                    mlp_silu_mul_worker,
+                    [ffn_gate.cons(), ffn_up.cons(), ffn_hidden.prod(), silu_mul],
+                ),
+            ]
+        )
+    else:
+        workers.append(
             Worker(
-                mlp_postnorm_gate_up_worker,
+                mlp_postnorm_worker,
                 [
                     residual_out_fifos[0].cons(),
-                    mlp_gate_up_weight_rows.cons(),
-                    ffn_gate.prod(),
-                    ffn_up.prod(),
+                    mlp_post_norm_weight.cons(),
+                    mlp_xnorm.prod(),
                     mlp_weighted_rms_norm,
-                    mlp_matvec4_rows,
-                    Buffer(type=tile_ty, name="qwen3_full_layer_mlp_xnorm_buf"),
                 ],
-            ),
+            )
+        )
+        for col in range(mlp_gate_up_columns):
+            workers.append(
+                Worker(
+                    make_mlp_gate_up_silu_shard_worker(),
+                    [
+                        mlp_gate_up_shard_weight_fifos[col].cons(),
+                        mlp_xnorm.cons(),
+                        ffn_hidden_shard_fifos[col].prod(),
+                        mlp_matvec4_rows_shard,
+                        silu_mul_shard,
+                        Buffer(
+                            type=ffn_shard_ty,
+                            name=f"qwen3_full_layer_ffn_gate_buf_{col}",
+                        ),
+                        Buffer(
+                            type=ffn_shard_ty,
+                            name=f"qwen3_full_layer_ffn_up_buf_{col}",
+                        ),
+                    ],
+                )
+            )
+        workers.append(
             Worker(
-                mlp_silu_mul_worker,
-                [ffn_gate.cons(), ffn_up.cons(), ffn_hidden.prod(), silu_mul],
-            ),
-            Worker(
-                mlp_down_worker,
+                mlp_ffn_hidden_join2_worker,
                 [
-                    ffn_hidden.cons(),
-                    mlp_down_weight.cons(),
-                    ffn_out.prod(),
-                    down_matvec,
+                    ffn_hidden_shard_fifos[0].cons(),
+                    ffn_hidden_shard_fifos[1].cons(),
+                    ffn_hidden.prod(),
+                    copy_ffn_shard_to_full,
                 ],
-            ),
-            Worker(
-                mlp_layer_residual_worker,
+            )
+        )
+    if mlp_down_columns == 1:
+        workers.extend(
+            [
+                Worker(
+                    mlp_down_worker,
+                    [
+                        ffn_hidden.cons(),
+                        mlp_down_weight_fifos[0].cons(),
+                        ffn_out.prod(),
+                        down_matvec,
+                    ],
+                ),
+                Worker(
+                    mlp_layer_residual_worker,
+                    [
+                        ffn_out.cons(),
+                        residual_out_fifos[0].cons(),
+                        layer_residual.prod(),
+                        add_full_slice,
+                    ],
+                ),
+            ]
+        )
+    else:
+        for col in range(mlp_down_columns):
+            workers.extend(
                 [
-                    ffn_out.cons(),
-                    residual_out_fifos[0].cons(),
-                    layer_residual.prod(),
-                    add_full_slice,
-                ],
-            ),
-        ]
-    )
+                    Worker(
+                        make_mlp_down_tile_worker(col),
+                        [
+                            ffn_hidden.cons(),
+                            mlp_down_weight_fifos[col].cons(),
+                            ffn_out_fifos[col].prod(),
+                            down_matvec,
+                        ],
+                    ),
+                    Worker(
+                        make_mlp_layer_residual_tile_worker(col),
+                        [
+                            ffn_out_fifos[col].cons(),
+                            residual_out_fifos[0].cons(),
+                            layer_residual_fifos[col].prod(),
+                            add_full_slice_to_tile,
+                        ],
+                    ),
+                ]
+            )
+        if layer_iterations > 1:
+            workers.append(
+                Worker(
+                    mlp_layer_residual_join2_worker,
+                    [
+                        layer_residual_fifos[0].cons(),
+                        layer_residual_fifos[1].cons(),
+                        layer_residual.prod(),
+                        copy_tile_to_full,
+                    ],
+                )
+            )
     if layer_iterations > 1:
         workers.append(
             Worker(
@@ -1022,10 +1377,6 @@ def _qwen3_persistent_n_layer_final_only_impl(
     q_norm_weight_base = v_weight_base + kv_size * hidden_size
     k_norm_weight_base = q_norm_weight_base + head_dim
     o_weight_base = k_norm_weight_base + head_dim
-    mlp_post_norm_weight_base = o_weight_base + hidden_size * q_size
-    mlp_gate_weight_base = mlp_post_norm_weight_base + hidden_size
-    mlp_up_weight_base = mlp_gate_weight_base + intermediate_size * hidden_size
-    mlp_down_weight_base = mlp_up_weight_base + intermediate_size * hidden_size
 
     segment_input_norm_size = hidden_size
     segment_q_weight_size = q_size * hidden_size
@@ -1035,6 +1386,11 @@ def _qwen3_persistent_n_layer_final_only_impl(
     segment_o_weight_size = hidden_size * q_size
     segment_mlp_gate_up_size = hidden_size + 2 * intermediate_size * hidden_size
     segment_mlp_down_size = hidden_size * intermediate_size
+    segment_mlp_post_norm_size = hidden_size
+    segment_mlp_gate_up_shard_size = (
+        2 * (intermediate_size // mlp_gate_up_columns) * hidden_size
+    )
+    segment_mlp_down_shard_size = (hidden_size // mlp_down_columns) * intermediate_size
     segment_input_norm_base = 0
     segment_q_weight_base = segment_input_norm_base + (
         layer_iterations * segment_input_norm_size
@@ -1051,15 +1407,29 @@ def _qwen3_persistent_n_layer_final_only_impl(
     segment_o_weight_base = segment_qk_norm_base + (
         layer_iterations * segment_qk_norm_size
     )
-    segment_mlp_gate_up_base = segment_o_weight_base + (
+    segment_mlp_base = segment_o_weight_base + (
         layer_iterations * segment_o_weight_size
     )
-    segment_mlp_down_base = segment_mlp_gate_up_base + (
-        layer_iterations * segment_mlp_gate_up_size
-    )
-    if segment_mlp_down_base + layer_iterations * segment_mlp_down_size != (
-        layer_iterations * weights_size
-    ):
+    if mlp_gate_up_columns == 1:
+        segment_mlp_gate_up_base = segment_mlp_base
+        segment_mlp_down_base = segment_mlp_gate_up_base + (
+            layer_iterations * segment_mlp_gate_up_size
+        )
+        segment_mlp_end = segment_mlp_down_base + (
+            layer_iterations * segment_mlp_down_size
+        )
+    else:
+        segment_mlp_post_norm_base = segment_mlp_base
+        segment_mlp_gate_up_base = segment_mlp_post_norm_base + (
+            layer_iterations * segment_mlp_post_norm_size
+        )
+        segment_mlp_down_base = segment_mlp_gate_up_base + (
+            mlp_gate_up_columns * layer_iterations * segment_mlp_gate_up_shard_size
+        )
+        segment_mlp_end = segment_mlp_down_base + (
+            mlp_down_columns * layer_iterations * segment_mlp_down_shard_size
+        )
+    if segment_mlp_end != (layer_iterations * weights_size):
         raise ValueError("segment-major n-layer weight layout size mismatch")
 
     def weight_taps_for_k(total_rows, k_size, base_offset):
@@ -1122,6 +1492,61 @@ def _qwen3_persistent_n_layer_final_only_impl(
             (layer_iterations * weights_size,),
             base_offset,
             [1, 1, 1, layer_iterations * length],
+            [0, 0, 0, 1],
+        )
+
+    def segment_major_mlp_down_weight_taps():
+        shard_rows = hidden_size // mlp_down_columns
+        return [
+            TensorAccessPattern(
+                (layer_iterations * weights_size,),
+                segment_mlp_down_base + col * shard_rows * intermediate_size,
+                [layer_iterations, 1, 1, shard_rows * intermediate_size],
+                [segment_mlp_down_size, 0, 0, 1],
+            )
+            for col in range(mlp_down_columns)
+        ]
+
+    def segment_major_mlp_post_norm_weight_tap():
+        return TensorAccessPattern(
+            (layer_iterations * weights_size,),
+            segment_mlp_post_norm_base,
+            [1, 1, 1, layer_iterations * segment_mlp_post_norm_size],
+            [0, 0, 0, 1],
+        )
+
+    def segment_major_mlp_gate_up_shard_weight_taps():
+        return [
+            TensorAccessPattern(
+                (layer_iterations * weights_size,),
+                segment_mlp_gate_up_base
+                + col * layer_iterations * segment_mlp_gate_up_shard_size,
+                [1, 1, 1, layer_iterations * segment_mlp_gate_up_shard_size],
+                [0, 0, 0, 1],
+            )
+            for col in range(mlp_gate_up_columns)
+        ]
+
+    def segment_major_mlp_down_shard_weight_taps():
+        return [
+            TensorAccessPattern(
+                (layer_iterations * weights_size,),
+                segment_mlp_down_base
+                + col * layer_iterations * segment_mlp_down_shard_size,
+                [1, 1, 1, layer_iterations * segment_mlp_down_shard_size],
+                [0, 0, 0, 1],
+            )
+            for col in range(mlp_down_columns)
+        ]
+
+    def per_layer_mlp_down_weight_tap(layer_idx, col):
+        shard_rows = hidden_size // mlp_down_columns
+        return TensorAccessPattern(
+            (layer_iterations * weights_size,),
+            segment_mlp_down_base
+            + layer_idx * segment_mlp_down_size
+            + col * shard_rows * intermediate_size,
+            [1, 1, 1, shard_rows * intermediate_size],
             [0, 0, 0, 1],
         )
 
@@ -1188,18 +1613,14 @@ def _qwen3_persistent_n_layer_final_only_impl(
     residual_hidden_taps = []
     o_proj_output_taps = out_taps(o_proj_size, attn_o_proj_output_base)
     residual_output_taps = out_taps(residual_size, attn_residual_output_base)
-    mlp_gate_up_weight_rows_tap = TensorAccessPattern(
-        (weights_size,),
-        mlp_post_norm_weight_base,
-        [1, 1, 1, hidden_size + 2 * intermediate_size * hidden_size],
-        [0, 0, 0, 1],
-    )
-    mlp_down_weight_tap = TensorAccessPattern(
-        (weights_size,),
-        mlp_down_weight_base,
-        [1, 1, 1, hidden_size * intermediate_size],
-        [0, 0, 0, 1],
-    )
+    if mlp_down_columns == 1:
+        mlp_down_weight_taps = [
+            segment_major_weight_tap(segment_mlp_down_base, segment_mlp_down_size)
+        ]
+    elif mlp_gate_up_columns != 1:
+        mlp_down_weight_taps = segment_major_mlp_down_shard_weight_taps()
+    else:
+        mlp_down_weight_taps = segment_major_mlp_down_weight_taps()
     mlp_xnorm_output_tap = TensorAccessPattern(
         (output_tap_size,), mlp_xnorm_output_base, [1, 1, 1, hidden_size], [0, 0, 0, 1]
     )
@@ -1239,6 +1660,15 @@ def _qwen3_persistent_n_layer_final_only_impl(
     final_layer_residual_output_tap = TensorAccessPattern(
         (outputs_size,), 0, [1, 1, 1, hidden_size], [0, 0, 0, 1]
     )
+    final_layer_residual_output_taps = [
+        TensorAccessPattern(
+            (outputs_size,),
+            col * (hidden_size // mlp_down_columns),
+            [1, 1, 1, hidden_size // mlp_down_columns],
+            [0, 0, 0, 1],
+        )
+        for col in range(mlp_down_columns)
+    ]
     rt = Runtime()
     # Debug chunks use the proven group-of-4 schedule. The full-depth generate
     # path needs one cache task per FIFO; otherwise chunk=28 exhausts BD IDs.
@@ -1297,21 +1727,55 @@ def _qwen3_persistent_n_layer_final_only_impl(
                 segment_major_weight_tap(segment_o_weight_base, segment_o_weight_size),
                 task_group=tg,
             )
-        rt.fill(
-            mlp_gate_up_weight_rows.prod(),
-            weights,
-            segment_major_weight_tap(
-                segment_mlp_gate_up_base,
-                segment_mlp_gate_up_size,
-            ),
-            task_group=tg,
-        )
-        rt.fill(
-            mlp_down_weight.prod(),
-            weights,
-            segment_major_weight_tap(segment_mlp_down_base, segment_mlp_down_size),
-            task_group=tg,
-        )
+        if mlp_gate_up_columns == 1:
+            rt.fill(
+                mlp_gate_up_weight_rows.prod(),
+                weights,
+                segment_major_weight_tap(
+                    segment_mlp_gate_up_base,
+                    segment_mlp_gate_up_size,
+                ),
+                task_group=tg,
+            )
+        else:
+            rt.fill(
+                mlp_post_norm_weight.prod(),
+                weights,
+                segment_major_mlp_post_norm_weight_tap(),
+                task_group=tg,
+            )
+            for col in range(mlp_gate_up_columns):
+                rt.fill(
+                    mlp_gate_up_shard_weight_fifos[col].prod(),
+                    weights,
+                    segment_major_mlp_gate_up_shard_weight_taps()[col],
+                    task_group=tg,
+                )
+        if mlp_down_columns == 1:
+            rt.fill(
+                mlp_down_weight_fifos[0].prod(),
+                weights,
+                mlp_down_weight_taps[0],
+                task_group=tg,
+            )
+        elif mlp_gate_up_columns != 1:
+            mlp_down_shard_weight_taps = segment_major_mlp_down_shard_weight_taps()
+            for col in range(mlp_down_columns):
+                rt.fill(
+                    mlp_down_weight_fifos[col].prod(),
+                    weights,
+                    mlp_down_shard_weight_taps[col],
+                    task_group=tg,
+                )
+        else:
+            for layer_idx in range(layer_iterations):
+                for col in range(mlp_down_columns):
+                    rt.fill(
+                        mlp_down_weight_fifos[col].prod(),
+                        weights,
+                        per_layer_mlp_down_weight_tap(layer_idx, col),
+                        task_group=tg,
+                    )
 
     def fill_chunk_layer_group_cache_inputs(layer_start, layer_count, cache, tg):
         for col in range(num_columns):
@@ -1357,17 +1821,27 @@ def _qwen3_persistent_n_layer_final_only_impl(
         for layer_start, layer_count in layer_cache_dma_groups:
             fill_chunk_layer_group_cache_inputs(layer_start, layer_count, cache, tg)
         drain_chunk_cache(cache, tg)
-        rt.drain(
-            (
-                layer_residual.cons()
-                if layer_iterations == 1
-                else final_layer_residual.cons()
-            ),
-            outputs,
-            final_layer_residual_output_tap,
-            wait=True,
-            task_group=tg,
-        )
+        if mlp_down_columns == 1 or layer_iterations > 1:
+            rt.drain(
+                (
+                    layer_residual.cons()
+                    if layer_iterations == 1
+                    else final_layer_residual.cons()
+                ),
+                outputs,
+                final_layer_residual_output_tap,
+                wait=True,
+                task_group=tg,
+            )
+        else:
+            for col in range(mlp_down_columns):
+                rt.drain(
+                    layer_residual_fifos[col].cons(),
+                    outputs,
+                    final_layer_residual_output_taps[col],
+                    wait=True,
+                    task_group=tg,
+                )
         rt.finish_task_group(tg)
     return Program(dev, rt).resolve_program(SequentialPlacer())
 
@@ -1409,7 +1883,7 @@ def qwen3_persistent_n_layer_final_only(
         head_dim,
         max_seq_len,
         position,
-        num_columns,
+        1,
         tile_size_input,
         tile_size_output,
         trace_size,
@@ -1428,4 +1902,5 @@ def qwen3_persistent_n_layer_final_only(
         mul_kernel_object=mul_kernel_object,
         down_gemv_kernel_object=down_gemv_kernel_object,
         layer_iterations=layer_iterations,
+        mlp_down_columns=num_columns,
     )

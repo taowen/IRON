@@ -77,9 +77,18 @@ class Qwen3PersistentNLayerFinalOnly(MLIROperator):
                 "Qwen3-0.6B n-layer final-only expects intermediate_size=3072, "
                 f"got {self.intermediate_size}"
             )
-        if self.num_aie_columns != 1:
+        if self.num_aie_columns < 1:
+            raise ValueError("num_aie_columns must be positive")
+        if self.num_aie_columns not in {1, 2, 4}:
+            raise ValueError("num_aie_columns must be one of 1, 2, or 4")
+        if self.num_aie_columns > 2 and self.layer_iterations != 1:
             raise ValueError(
-                "n-layer final-only attention path is currently single-column only"
+                "n-layer final-only column scaling above 2 columns is currently "
+                "limited to layer_iterations=1 while multi-stage joins are developed"
+            )
+        if self.hidden_size % (self.tile_size_output * self.num_aie_columns) != 0:
+            raise ValueError(
+                "hidden_size must be divisible by tile_size_output * num_aie_columns"
             )
         if self.q_size % self.head_dim != 0 or self.kv_size % self.head_dim != 0:
             raise ValueError("q_size and kv_size must be divisible by head_dim")

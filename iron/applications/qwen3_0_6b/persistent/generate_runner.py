@@ -42,6 +42,7 @@ def make_single_layer_final_only_op_for_position(
         position=position,
         intermediate_size=model.config.intermediate_size,
         layer_iterations=1,
+        num_aie_columns=getattr(args, "num_aie_columns", 1),
         epsilon=model.config.rms_norm_eps,
         context=context,
     )
@@ -63,6 +64,7 @@ def make_n_layer_final_only_op_for_position(
         position=position,
         intermediate_size=model.config.intermediate_size,
         layer_iterations=layer_iterations,
+        num_aie_columns=getattr(args, "num_aie_columns", 1),
         epsilon=model.config.rms_norm_eps,
         context=context,
     )

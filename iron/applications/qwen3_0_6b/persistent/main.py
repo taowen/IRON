@@ -80,6 +80,12 @@ def parse_args():
     parser.add_argument("--build-dir", default="build_qwen3_persistent")
     parser.add_argument("--clean-build", action="store_true")
     parser.add_argument(
+        "--num-aie-columns",
+        type=int,
+        default=1,
+        help="Number of AIE columns for column-scaling experiments.",
+    )
+    parser.add_argument(
         "--prepare-weights",
         action="store_true",
         help=(
@@ -238,6 +244,7 @@ def main():
             hidden_size=model.config.hidden_size,
             q_size=model.config.num_attention_heads * model.config.head_dim,
             kv_size=model.config.num_key_value_heads * model.config.head_dim,
+            num_aie_columns=args.num_aie_columns,
             epsilon=model.config.rms_norm_eps,
             context=context,
         )
@@ -245,6 +252,7 @@ def main():
         op = Qwen3PersistentPostAttnRMSNormMLPGateUp(
             hidden_size=model.config.hidden_size,
             intermediate_size=model.config.intermediate_size,
+            num_aie_columns=args.num_aie_columns,
             epsilon=model.config.rms_norm_eps,
             context=context,
         )
@@ -252,12 +260,14 @@ def main():
         op = Qwen3PersistentPostAttnMLPDownResidual(
             hidden_size=model.config.hidden_size,
             intermediate_size=model.config.intermediate_size,
+            num_aie_columns=args.num_aie_columns,
             context=context,
         )
     elif args.stage == "post-attn-rmsnorm-full-mlp":
         op = Qwen3PersistentPostAttnRMSNormFullMLP(
             hidden_size=model.config.hidden_size,
             intermediate_size=model.config.intermediate_size,
+            num_aie_columns=args.num_aie_columns,
             epsilon=model.config.rms_norm_eps,
             context=context,
         )
@@ -271,6 +281,7 @@ def main():
             position=input_ids.shape[1],
             intermediate_size=model.config.intermediate_size,
             layer_iterations=args.layer_chunk_size,
+            num_aie_columns=args.num_aie_columns,
             epsilon=model.config.rms_norm_eps,
             context=context,
         )
