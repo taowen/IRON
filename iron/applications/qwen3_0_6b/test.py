@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from iron.applications.qwen3_0_6b.persistent.ops import (
+from iron.applications.qwen3_0_6b.persistent.ops_nlayer import (
     Qwen3PersistentNLayerFinalOnly,
 )
 from iron.applications.qwen3_0_6b.persistent.graph_probe import layer_groups

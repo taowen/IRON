@@ -16,12 +16,16 @@ from pathlib import Path
 repo_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(repo_root))
 
-from iron.applications.qwen3_0_6b.persistent.ops import (  # noqa: E402
+from iron.applications.qwen3_0_6b.persistent.ops_core import (  # noqa: E402
     Qwen3PersistentInputRMSNormQKV,
-    Qwen3PersistentNLayerFinalOnly,
+)
+from iron.applications.qwen3_0_6b.persistent.ops_mlp import (  # noqa: E402
     Qwen3PersistentPostAttnMLPDownResidual,
     Qwen3PersistentPostAttnRMSNormFullMLP,
     Qwen3PersistentPostAttnRMSNormMLPGateUp,
+)
+from iron.applications.qwen3_0_6b.persistent.ops_nlayer import (  # noqa: E402
+    Qwen3PersistentNLayerFinalOnly,
 )
 from iron.applications.qwen3_0_6b.qwen3_preflight import (  # noqa: E402
     Qwen3PreflightError,

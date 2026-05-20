@@ -17,7 +17,7 @@ from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor
 from iron.applications.qwen3_0_6b.qwen3_cpu import Qwen3ForCausalLM, rms_norm
 from iron.applications.qwen3_0_6b.persistent.checks import print_tensor_check
 from iron.applications.qwen3_0_6b.persistent.layout import host_owned_tensor
-from iron.applications.qwen3_0_6b.persistent.ops import (
+from iron.applications.qwen3_0_6b.persistent.ops_core import (
     Qwen3PersistentInputRMSNormQKV,
 )
 from iron.applications.qwen3_0_6b.qwen3_preflight import (
