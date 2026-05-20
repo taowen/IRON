@@ -53,6 +53,64 @@ Source /opt/xilinx/xrt/setup.sh before pytest, operator runs, and persistent
 bring-up scripts.
 ```
 
+## Experiment Flag Is Ignored By Generate
+
+Symptom:
+
+```text
+The command includes a new experiment flag, but generate_position prints an
+operator_name that still contains the old option value.
+
+Example:
+  command includes --mlp-gate-up-pair-rows
+  operator_name contains mlpgatepair0
+```
+
+Diagnostic:
+
+```text
+Do not trust the CLI command alone. Read the operator_name printed by the
+generate path, then trace which factory function constructs the op for that
+stage.
+```
+
+Commands used:
+
+```bash
+rg -n "Qwen3PersistentNLayerFinalOnly|mlp_gate_up_columns" \
+  iron/applications/qwen3_0_6b/persistent/main.py \
+  iron/applications/qwen3_0_6b/persistent/generate_runner.py
+```
+
+Evidence found:
+
+```text
+main.py passed mlp_gate_up_pair_rows to the single-stage n-layer op path.
+--stage generate returned earlier through run_generate().
+generate_runner.py constructed the fast-generate op and did not pass the new
+field.
+```
+
+Root cause:
+
+```text
+There were two Qwen3PersistentNLayerFinalOnly construction sites. Only one was
+updated for the new experiment flag.
+```
+
+Fix:
+
+```text
+Pass the flag through generate_runner.py and recheck the printed operator_name.
+```
+
+Accepted evidence:
+
+```text
+operator_name=..._mlpgatepair1_...
+token_match=True
+```
+
 ## Clean Graph Edits Appear To Do Nothing
 
 Symptom:
@@ -94,6 +152,58 @@ Fix:
 ```text
 Use --clean-build or a new build directory after runlist, buffer layout, or
 patch-site changes.
+```
+
+## Diagnostic Chunk Is Rejected Before Compile
+
+Symptom:
+
+```text
+The next column-scaling diagnostic command fails before MLIR generation:
+
+ValueError: Qwen3 n-layer final-only currently supports chunk sizes 1..8 or
+the experimental full-depth chunk size 28; got 12.
+```
+
+Diagnostic:
+
+```text
+Read the operator guard and then inspect the actual design grouping logic. A
+host-side validation error can be stale after the graph has learned a more
+general resource pattern.
+```
+
+Evidence found:
+
+```text
+ops_nlayer.py rejected intermediate chunks >8 and !=28.
+attention_design.py already used the same full-depth cache DMA grouping for
+all layer_iterations>8:
+
+  layer_writeback_dma_group_size = layer_iterations
+  layer_cache_dma_group_size = layer_iterations
+```
+
+Root cause:
+
+```text
+The guard encoded an old validation state. It blocked the diagnostic needed to
+locate the first numeric failure between chunk=8 and chunk=28, even though the
+generated graph strategy was no longer limited to those two cases.
+```
+
+Fix:
+
+```text
+Allow diagnostic chunks 1..28 and keep the hard Qwen3-0.6B model limit at 28.
+Update the unit test to construct 9, 12, and 28, and still reject 29.
+```
+
+Recheck:
+
+```text
+layer_iterations=12/16/18/19/20 all compile and preflight with
+max_dma_tasks_per_fifo=1.
 ```
 
 ## Runtime Segfaults In XRT BO Validation
@@ -282,6 +392,31 @@ layer_17_qkv_diagnostic_bundle_tensor_done: hidden shape=(1024,)
 layer_17_qkv_diagnostic_bundle: build_qwen3_persistent_multilayer/diagnostics/qkv_boundary_layer_17.npz
 ```
 
+Second occurrence during attention2 n-layer local diagnostics:
+
+```text
+Fatal Python error: Segmentation fault
+Current thread:
+  qwen3_cpu.py line 194 in rms_norm
+  stage_runner.py line 183 in _run_n_layer_local_cache_diagnostic
+```
+
+Evidence:
+
+```text
+The crashing tensor was the prefix chunk output returned by XRTTensor.to_torch().
+It was then passed into Torch RMSNorm. Converting it with host_owned_tensor()
+before CPU math removed the segfault.
+```
+
+Additional fix:
+
+```text
+Any tensor returned by XRTTensor.to_torch() and later used by PyTorch CPU math,
+serialization, or a second diagnostic phase must be wrapped with
+host_owned_tensor().
+```
+
 ## N-Layer Chunk 6/8 Compiles But Times Out At Runtime
 
 Symptom:
@@ -435,6 +570,116 @@ Accepted recheck:
 token_match: True for positions 6, 7, and 8
 decode_s: 0.249-0.257 per NPU-decoded token
 ```
+
+## Decode Compiles A New Artifact For Each Position
+
+Symptom:
+
+```text
+generate_position_26_n_layer_28_compile_s: about 68s
+generate_position_27_n_layer_28_compile_s: about 68s
+```
+
+The NPU body is correct, but practical decode still rebuilds an artifact for
+each position.
+
+Diagnostic:
+
+```text
+Diff adjacent-position artifacts before choosing a fix.
+Use method 46, not a guess between instruction patching and bucket variants.
+```
+
+Evidence found:
+
+```text
+pos26 -> pos27:
+  runtime .bin changed_bytes=8
+  eight u32 patch candidates, all current-K/V DMA offsets +256 bytes
+  main_aie_cdo_elfs.bin changed_bytes=56
+  six main_core_*.elf files changed
+
+pos63 -> pos64:
+  K/V cache read length 32768 -> 65536 bf16 elements
+  attention loops 1 active cache block -> 2 active cache blocks
+```
+
+Root cause:
+
+```text
+The graph has two position-specialized surfaces:
+  runtime instruction DMA offsets
+  AIE core immediate constants for position and valid softmax length
+```
+
+Fix direction:
+
+```text
+Do not patch only the runtime .bin; that leaves core ELFs compiled for the
+wrong position. Do not rely on bucketed precompile alone; a bucket artifact
+still bakes one exact position until position and valid length are runtime
+metadata.
+
+First move attention position metadata out of core immediates or prove ELF/CDO
+patch sites. Then patch the remaining runtime DMA offset words or precompile
+one variant per active cache-block count.
+```
+
+## Runtime Position Metadata Variant Times Out
+
+Symptom:
+
+```text
+HostRuntimeError: Kernel returned ert_cmd_state.ERT_CMD_STATE_TIMEOUT
+```
+
+This happened on the first real NPU decode after adding runtime position and
+valid-length metadata to attention streams.
+
+Diagnostics used:
+
+```text
+1. Re-run with --max-new-tokens 2, not 1.
+   max-new-tokens=1 only reports the prompt reference token and does not enter
+   the NPU decode loop.
+
+2. Try layer_chunk_size=1.
+   The timeout still happened, so it was not a 28-layer watchdog problem.
+
+3. Remove MLP with --attention-probe-only.
+   The attention-only graph returned, which moved the failure from pure
+   dataflow deadlock toward attention numeric corruption feeding the full layer.
+```
+
+Evidence:
+
+```text
+attention-probe-only:
+  npu_time_us: 5500.721
+  attention_probe_residual_max_abs: nan
+  layer0_keys_cache_current_errors: 802
+
+restored static-position path:
+  token_match: True at decode_position=26
+```
+
+Root cause found so far:
+
+```text
+The tested stream-widening design for runtime position metadata is unsafe.
+It either adds extra synchronization branches to the attention dataflow or
+produces NaN attention output before MLP.
+```
+
+Fix used:
+
+```text
+Restore static position arguments for the accepted path. Keep the artifact-diff
+diagnosis and pursue a different per-position reuse mechanism.
+```
+
+Do not diagnose this as "probably a long 28-layer dispatch" until
+`layer_chunk_size=1 --max-new-tokens 2` has been run.
 
 ## Column Scaling Looks Slower On A Single Run
 

@@ -13,9 +13,13 @@ Use these notes as a debugging map, not as a chronological log.
   found real bugs in this bring-up.
 - [Lessons](lessons.md): design constraints and preflight checks inferred from
   the diagnosed failures.
-- [Column scaling experiments](experiments-column-scaling.md): current
-  performance baseline, planned multi-column experiments, and acceptance
-  criteria.
+- [Column scaling experiments](experiments-column-scaling.md): active
+  performance baseline, current blocker, and next experiment queue.
+- Archived column-scaling evidence:
+  [initial log](archive/experiments-column-scaling-2026-05-21.md) and
+  [attention2/MLP2 log](archive/experiments-column-scaling-2026-05-21-attention2-mlp2.md)
+  and
+  [multi-layer attention2/MLP2 log](archive/experiments-column-scaling-2026-05-21-attention2-mlp2-multilayer.md).
 
 Scope:
 

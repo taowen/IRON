@@ -36,6 +36,11 @@
 #define ATTN_SCALE 0.08838834764831845f
 #endif
 
+static inline int32_t qwen3_metadata_position(const bfloat16 *__restrict metadata)
+{
+    return static_cast<int32_t>(static_cast<float>(metadata[3 * HEAD_DIM]));
+}
+
 extern "C" {
 
 void qwen3_copy_bf16(const bfloat16 *__restrict input, bfloat16 *__restrict output, int32_t size)
@@ -71,6 +76,22 @@ void qwen3_copy_ffn_shard_to_full_bf16(const bfloat16 *__restrict input_shard,
     qwen3_copy_tile_to_full_bf16(input_shard, output_full, row_offset, size);
 }
 
+void qwen3_copy_ffn_shard_to_pair_bf16(const bfloat16 *__restrict input_shard,
+                                       bfloat16 *__restrict output_pair,
+                                       int32_t row_offset,
+                                       int32_t size)
+{
+    qwen3_copy_tile_to_full_bf16(input_shard, output_pair, row_offset, size);
+}
+
+void qwen3_copy_ffn_pair_to_full_bf16(const bfloat16 *__restrict input_pair,
+                                      bfloat16 *__restrict output_full,
+                                      int32_t row_offset,
+                                      int32_t size)
+{
+    qwen3_copy_tile_to_full_bf16(input_pair, output_full, row_offset, size);
+}
+
 void qwen3_pack_qk_pair_bf16(const bfloat16 *__restrict q,
                              const bfloat16 *__restrict current_k,
                              bfloat16 *__restrict qk_pair,
@@ -86,6 +107,16 @@ void qwen3_pack_qk_pair_bf16(const bfloat16 *__restrict q,
     }
 
     event1();
+}
+
+void qwen3_pack_qk_pair_metadata_bf16(const bfloat16 *__restrict q,
+                                      const bfloat16 *__restrict current_k,
+                                      bfloat16 *__restrict qk_pair,
+                                      int32_t q_select)
+{
+    qwen3_pack_qk_pair_bf16(q, current_k, qk_pair, q_select);
+    qk_pair[3 * HEAD_DIM] = current_k[HEAD_DIM];
+    qk_pair[3 * HEAD_DIM + 1] = current_k[HEAD_DIM + 1];
 }
 
 void qwen3_attention_scores_bf16(const bfloat16 *__restrict qk_pair,
@@ -128,6 +159,19 @@ void qwen3_attention_scores_bf16(const bfloat16 *__restrict qk_pair,
     }
 
     event1();
+}
+
+void qwen3_attention_scores_metadata_bf16(const bfloat16 *__restrict qk_pair,
+                                          const bfloat16 *__restrict k_cache,
+                                          bfloat16 *__restrict debug_scores,
+                                          bfloat16 *__restrict softmax_scores,
+                                          int32_t row_base,
+                                          int32_t q_select)
+{
+    int32_t position = qwen3_metadata_position(qk_pair);
+    qwen3_attention_scores_bf16(qk_pair, k_cache, debug_scores, softmax_scores, position, row_base, q_select);
+    softmax_scores[MAX_SEQ_LEN] = qk_pair[3 * HEAD_DIM];
+    softmax_scores[MAX_SEQ_LEN + 1] = qk_pair[3 * HEAD_DIM + 1];
 }
 
 void qwen3_merge_current_v_bf16(const bfloat16 *__restrict v_cache,
@@ -243,6 +287,27 @@ void qwen3_add_full_slice_to_tile_bf16(const bfloat16 *__restrict lhs_full,
     event1();
 }
 
+void qwen3_attention_context_metadata_bf16(const bfloat16 *__restrict weights,
+                                           const bfloat16 *__restrict v_block,
+                                           bfloat16 *__restrict context,
+                                           int32_t row_base)
+{
+    int32_t position = static_cast<int32_t>(static_cast<float>(weights[MAX_SEQ_LEN]));
+    qwen3_attention_context_bf16(weights, v_block, context, position, row_base);
+}
+
+void qwen3_mask_metadata_bf16(bfloat16 *__restrict inout, int32_t total_size)
+{
+    event0();
+
+    int32_t valid_length = static_cast<int32_t>(static_cast<float>(inout[MAX_SEQ_LEN + 1]));
+    for (int32_t i = valid_length; i < total_size; i++) {
+        inout[i] = static_cast<bfloat16>(-__builtin_inff());
+    }
+
+    event1();
+}
+
 void qwen3_weighted_rms_norm_bf16(const bfloat16 *__restrict input,
                                   const bfloat16 *__restrict weight,
                                   bfloat16 *__restrict output,
@@ -317,6 +382,159 @@ void qwen3_mlp_matvec4_rows_shard_bf16(int32_t m,
                                        bfloat16 *__restrict output)
 {
     qwen3_mlp_matvec4_rows_bf16(m, row_offset, row0, row1, row2, row3, input, output);
+}
+
+void qwen3_mlp_gate_up_pair_matvec4_rows_shard_bf16(int32_t m,
+                                                    int32_t row_offset,
+                                                    const bfloat16 *__restrict gate_row0,
+                                                    const bfloat16 *__restrict gate_row1,
+                                                    const bfloat16 *__restrict gate_row2,
+                                                    const bfloat16 *__restrict gate_row3,
+                                                    const bfloat16 *__restrict up_row0,
+                                                    const bfloat16 *__restrict up_row1,
+                                                    const bfloat16 *__restrict up_row2,
+                                                    const bfloat16 *__restrict up_row3,
+                                                    const bfloat16 *__restrict input,
+                                                    bfloat16 *__restrict gate_output,
+                                                    bfloat16 *__restrict up_output)
+{
+    event0();
+    ::aie::set_rounding(aie::rounding_mode::conv_even);
+    constexpr int vec_len = 64;
+
+#define QWEN3_DOT_GATE_UP_ROW(gate_row_ptr, up_row_ptr, local_row)                                                     \
+    if (m > local_row) {                                                                                               \
+        aie::accum gate_acc = aie::zeros<accfloat, vec_len>();                                                         \
+        aie::accum up_acc = aie::zeros<accfloat, vec_len>();                                                           \
+        for (int32_t i = 0; i < HIDDEN_SIZE; i += vec_len) {                                                           \
+            aie::vector<bfloat16, vec_len> x_vec = aie::load_v<vec_len>(input + i);                                    \
+            aie::vector<bfloat16, vec_len> gate_vec = aie::load_v<vec_len>((gate_row_ptr) + i);                        \
+            aie::vector<bfloat16, vec_len> up_vec = aie::load_v<vec_len>((up_row_ptr) + i);                            \
+            gate_acc = aie::mac(gate_acc, gate_vec, x_vec);                                                            \
+            up_acc = aie::mac(up_acc, up_vec, x_vec);                                                                  \
+        }                                                                                                              \
+        gate_output[row_offset + local_row] =                                                                          \
+            static_cast<bfloat16>(aie::reduce_add(gate_acc.template to_vector<float>()));                              \
+        up_output[row_offset + local_row] =                                                                            \
+            static_cast<bfloat16>(aie::reduce_add(up_acc.template to_vector<float>()));                                \
+    }
+
+    QWEN3_DOT_GATE_UP_ROW(gate_row0, up_row0, 0)
+    QWEN3_DOT_GATE_UP_ROW(gate_row1, up_row1, 1)
+    QWEN3_DOT_GATE_UP_ROW(gate_row2, up_row2, 2)
+    QWEN3_DOT_GATE_UP_ROW(gate_row3, up_row3, 3)
+
+#undef QWEN3_DOT_GATE_UP_ROW
+
+    event1();
+}
+
+void qwen3_mlp_gate_up_pair_silu4_rows_shard_bf16(int32_t m,
+                                                  int32_t row_offset,
+                                                  const bfloat16 *__restrict gate_row0,
+                                                  const bfloat16 *__restrict gate_row1,
+                                                  const bfloat16 *__restrict gate_row2,
+                                                  const bfloat16 *__restrict gate_row3,
+                                                  const bfloat16 *__restrict up_row0,
+                                                  const bfloat16 *__restrict up_row1,
+                                                  const bfloat16 *__restrict up_row2,
+                                                  const bfloat16 *__restrict up_row3,
+                                                  const bfloat16 *__restrict input,
+                                                  bfloat16 *__restrict hidden_output)
+{
+    event0();
+    ::aie::set_rounding(aie::rounding_mode::conv_even);
+    constexpr int vec_len = 64;
+    constexpr int silu_vec_len = 16;
+    aie::vector<bfloat16, silu_vec_len> half = aie::broadcast<bfloat16, silu_vec_len>(0.5f);
+    aie::vector<bfloat16, silu_vec_len> one = aie::broadcast<bfloat16, silu_vec_len>(1.0f);
+
+#define QWEN3_DOT_GATE_UP_SILU_ROW(gate_row_ptr, up_row_ptr, local_row)                                                \
+    if (m > local_row) {                                                                                               \
+        aie::accum gate_acc = aie::zeros<accfloat, vec_len>();                                                         \
+        aie::accum up_acc = aie::zeros<accfloat, vec_len>();                                                           \
+        for (int32_t i = 0; i < HIDDEN_SIZE; i += vec_len) {                                                           \
+            aie::vector<bfloat16, vec_len> x_vec = aie::load_v<vec_len>(input + i);                                    \
+            aie::vector<bfloat16, vec_len> gate_vec = aie::load_v<vec_len>((gate_row_ptr) + i);                        \
+            aie::vector<bfloat16, vec_len> up_vec = aie::load_v<vec_len>((up_row_ptr) + i);                            \
+            gate_acc = aie::mac(gate_acc, gate_vec, x_vec);                                                            \
+            up_acc = aie::mac(up_acc, up_vec, x_vec);                                                                  \
+        }                                                                                                              \
+        bfloat16 gate_bf = static_cast<bfloat16>(aie::reduce_add(gate_acc.template to_vector<float>()));               \
+        bfloat16 up_bf = static_cast<bfloat16>(aie::reduce_add(up_acc.template to_vector<float>()));                   \
+        aie::vector<bfloat16, silu_vec_len> gate_vec = aie::broadcast<bfloat16, silu_vec_len>(gate_bf);                \
+        aie::vector<bfloat16, silu_vec_len> up_vec = aie::broadcast<bfloat16, silu_vec_len>(up_bf);                    \
+        auto half_gate = aie::mul(gate_vec, half);                                                                     \
+        auto tanh_half_gate = aie::tanh<bfloat16>(half_gate.to_vector<float>());                                       \
+        auto tanh_half_gate_approx = aie::add(tanh_half_gate, one);                                                    \
+        aie::vector<bfloat16, silu_vec_len> sigmoid_approx = aie::mul(tanh_half_gate_approx, half);                    \
+        auto silu = aie::mul(gate_vec, sigmoid_approx);                                                                \
+        auto out = aie::mul(silu.to_vector<bfloat16>(), up_vec).template to_vector<bfloat16>();                        \
+        hidden_output[row_offset + local_row] = out.get(0);                                                            \
+    }
+
+    QWEN3_DOT_GATE_UP_SILU_ROW(gate_row0, up_row0, 0)
+    QWEN3_DOT_GATE_UP_SILU_ROW(gate_row1, up_row1, 1)
+    QWEN3_DOT_GATE_UP_SILU_ROW(gate_row2, up_row2, 2)
+    QWEN3_DOT_GATE_UP_SILU_ROW(gate_row3, up_row3, 3)
+
+#undef QWEN3_DOT_GATE_UP_SILU_ROW
+
+    event1();
+}
+
+void qwen3_mlp_gate_up_pair_silu8_rows_shard_bf16(int32_t m,
+                                                  int32_t row_offset,
+                                                  const bfloat16 *__restrict gate_rows0_3,
+                                                  const bfloat16 *__restrict gate_rows4_7,
+                                                  const bfloat16 *__restrict up_rows0_3,
+                                                  const bfloat16 *__restrict up_rows4_7,
+                                                  const bfloat16 *__restrict input,
+                                                  bfloat16 *__restrict hidden_output)
+{
+    event0();
+    ::aie::set_rounding(aie::rounding_mode::conv_even);
+    constexpr int vec_len = 64;
+    constexpr int silu_vec_len = 16;
+    aie::vector<bfloat16, silu_vec_len> half = aie::broadcast<bfloat16, silu_vec_len>(0.5f);
+    aie::vector<bfloat16, silu_vec_len> one = aie::broadcast<bfloat16, silu_vec_len>(1.0f);
+
+#define QWEN3_DOT_GATE_UP_SILU8_ROW(gate_row_ptr, up_row_ptr, local_row)                                               \
+    if (m > local_row) {                                                                                               \
+        aie::accum gate_acc = aie::zeros<accfloat, vec_len>();                                                         \
+        aie::accum up_acc = aie::zeros<accfloat, vec_len>();                                                           \
+        for (int32_t i = 0; i < HIDDEN_SIZE; i += vec_len) {                                                           \
+            aie::vector<bfloat16, vec_len> x_vec = aie::load_v<vec_len>(input + i);                                    \
+            aie::vector<bfloat16, vec_len> gate_vec = aie::load_v<vec_len>((gate_row_ptr) + i);                        \
+            aie::vector<bfloat16, vec_len> up_vec = aie::load_v<vec_len>((up_row_ptr) + i);                            \
+            gate_acc = aie::mac(gate_acc, gate_vec, x_vec);                                                            \
+            up_acc = aie::mac(up_acc, up_vec, x_vec);                                                                  \
+        }                                                                                                              \
+        bfloat16 gate_bf = static_cast<bfloat16>(aie::reduce_add(gate_acc.template to_vector<float>()));               \
+        bfloat16 up_bf = static_cast<bfloat16>(aie::reduce_add(up_acc.template to_vector<float>()));                   \
+        aie::vector<bfloat16, silu_vec_len> gate_vec = aie::broadcast<bfloat16, silu_vec_len>(gate_bf);                \
+        aie::vector<bfloat16, silu_vec_len> up_vec = aie::broadcast<bfloat16, silu_vec_len>(up_bf);                    \
+        auto half_gate = aie::mul(gate_vec, half);                                                                     \
+        auto tanh_half_gate = aie::tanh<bfloat16>(half_gate.to_vector<float>());                                       \
+        auto tanh_half_gate_approx = aie::add(tanh_half_gate, one);                                                    \
+        aie::vector<bfloat16, silu_vec_len> sigmoid_approx = aie::mul(tanh_half_gate_approx, half);                    \
+        auto silu = aie::mul(gate_vec, sigmoid_approx);                                                                \
+        auto out = aie::mul(silu.to_vector<bfloat16>(), up_vec).template to_vector<bfloat16>();                        \
+        hidden_output[row_offset + local_row] = out.get(0);                                                            \
+    }
+
+    QWEN3_DOT_GATE_UP_SILU8_ROW(gate_rows0_3 + 0 * HIDDEN_SIZE, up_rows0_3 + 0 * HIDDEN_SIZE, 0)
+    QWEN3_DOT_GATE_UP_SILU8_ROW(gate_rows0_3 + 1 * HIDDEN_SIZE, up_rows0_3 + 1 * HIDDEN_SIZE, 1)
+    QWEN3_DOT_GATE_UP_SILU8_ROW(gate_rows0_3 + 2 * HIDDEN_SIZE, up_rows0_3 + 2 * HIDDEN_SIZE, 2)
+    QWEN3_DOT_GATE_UP_SILU8_ROW(gate_rows0_3 + 3 * HIDDEN_SIZE, up_rows0_3 + 3 * HIDDEN_SIZE, 3)
+    QWEN3_DOT_GATE_UP_SILU8_ROW(gate_rows4_7 + 0 * HIDDEN_SIZE, up_rows4_7 + 0 * HIDDEN_SIZE, 4)
+    QWEN3_DOT_GATE_UP_SILU8_ROW(gate_rows4_7 + 1 * HIDDEN_SIZE, up_rows4_7 + 1 * HIDDEN_SIZE, 5)
+    QWEN3_DOT_GATE_UP_SILU8_ROW(gate_rows4_7 + 2 * HIDDEN_SIZE, up_rows4_7 + 2 * HIDDEN_SIZE, 6)
+    QWEN3_DOT_GATE_UP_SILU8_ROW(gate_rows4_7 + 3 * HIDDEN_SIZE, up_rows4_7 + 3 * HIDDEN_SIZE, 7)
+
+#undef QWEN3_DOT_GATE_UP_SILU8_ROW
+
+    event1();
 }
 
 void qwen3_norm_rope_with_weight_offset_bf16(const bfloat16 *__restrict input,
@@ -394,6 +612,19 @@ void qwen3_norm_rope_with_metadata_bf16(const bfloat16 *__restrict input,
 {
     qwen3_norm_rope_with_weight_offset_bf16(
         input, metadata, metadata + 2 * size, norm_output, rope_output, weight_offset, size);
+}
+
+void qwen3_norm_rope_with_position_metadata_bf16(const bfloat16 *__restrict input,
+                                                 const bfloat16 *__restrict metadata,
+                                                 bfloat16 *__restrict norm_output,
+                                                 bfloat16 *__restrict rope_output,
+                                                 int32_t weight_offset,
+                                                 int32_t size)
+{
+    qwen3_norm_rope_with_weight_offset_bf16(
+        input, metadata, metadata + 2 * size, norm_output, rope_output, weight_offset, size);
+    rope_output[size] = metadata[3 * size];
+    rope_output[size + 1] = metadata[3 * size + 1];
 }
 
 void qwen3_silu_mul_bf16(const bfloat16 *__restrict gate,

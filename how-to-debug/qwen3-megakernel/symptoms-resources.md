@@ -218,6 +218,413 @@ If repeated GQA access would require illegal stride=0, reuse K blocks inside a
 worker instead of asking DMA to reread the same block.
 ```
 
+## RuntimeEndpoint Output Placement Exhaustion
+
+Symptom:
+
+```text
+ValueError: Failed to find a tile matching column 1: tried until column 8.
+Try using a device with more columns.
+```
+
+Diagnostic:
+
+```text
+This message is ambiguous by itself. Monkey-patch
+SequentialPlacer._place_endpoint and print the failing endpoint plus the
+`output` flag. If the failing object is RuntimeEndpoint with output=True, the
+problem is shim/runtime output endpoint pressure from too many Runtime.fill
+streams, not compute-tile placement and not a bad TAP stride.
+```
+
+Evidence found during attention2 column scaling:
+
+```text
+attention_columns=2 + MLP1 full-layer preflight failed before MLIR was emitted.
+The patched placer printed:
+
+  PLACE_FAIL_ENDPOINT RuntimeEndpoint
+  PLACE_FAIL_KW {'output': True}
+  tile AnyShimTile
+
+The attention-only probe with the same attention2 graph passed preflight once
+MLP weight fill endpoints were skipped:
+
+  compute_cores=27
+  total_dma_tasks=21
+  max_dma_tasks_per_fifo=1
+  max_tile_inputs=2
+  max_tile_outputs=1
+```
+
+Root cause:
+
+```text
+The graph had too many independent host -> NPU Runtime.fill output endpoints:
+hidden, RoPE, norm metadata, Q/K/V/O attention shards for two columns, cache
+K/V shards, and MLP weights. NPU2 shim placement ran out of compatible output
+endpoint slots even though the attention-only compute graph itself fit.
+```
+
+Fix direction:
+
+```text
+Separate attention-only resource probes from full-layer probes. Once attention
+is numerically correct, reduce Runtime.fill endpoint count by combining or
+staging weight streams before reconnecting MLP.
+```
+
+## Compute Tile Exhaustion After Parallelizing Multiple Phases
+
+Symptom:
+
+```text
+ValueError: Ran out of compute tiles for placement!
+```
+
+Evidence found during attention2 + MLP2:
+
+```text
+attention_columns=2 + num_aie_columns=2 + layer_iterations=1 failed placement
+with compute tile exhaustion, while attention_probe_only passed and the current
+attention_columns=1 + MLP2 full-depth baseline still passed.
+```
+
+Root cause:
+
+```text
+Expanding both attention and MLP to two columns creates too many persistent
+Workers for NPU2. This is a worker-count/resource problem, not an external
+kernel ABI problem and not a cache TAP problem.
+```
+
+Fix direction:
+
+```text
+Fuse adjacent lightweight workers or keep only one major phase expanded while
+validating the other. Do not keep adding columns to independent phases and hope
+SequentialPlacer will find capacity.
+```
+
+## Attention2 QKV Worker Exceeds Output Channels
+
+Symptom:
+
+```text
+real_graph_probe: fail stage=n-layer-final-only cols=1 layers=1 phase=preflight
+Qwen3PreflightError: Compute tile %tile_0_4 has 3 output ObjectFIFOs; limit=2.
+```
+
+Diagnostic:
+
+```text
+This happened after trying to reduce Runtime.fill endpoints by merging Q, K,
+and V projection weights into one per-column stream. The static preflight
+failed before NPU execution, so the external GEMV kernel was not the suspect.
+Count producer outputs on the new Worker before changing placement or TAPs.
+```
+
+Root cause:
+
+```text
+The merged qkv_matvec_worker consumed one xnorm stream and produced three
+independent output streams: q_raw, k_raw, and v. That violates the established
+two-output practical limit for this full-layer graph.
+```
+
+Fix used:
+
+```text
+Do not make one QKV worker. Merge only Q and K into one qk_matvec_worker with
+two outputs, and keep V as a separate matvec worker. This still removes one
+Runtime.fill endpoint per attention column and one compute Worker per column,
+while staying within max_tile_outputs=2.
+```
+
+Recheck:
+
+```text
+attention2 attention-only preflight after QK merge:
+  compute_cores=24
+  total_dma_tasks=18
+  max_tile_inputs=2
+  max_tile_outputs=2
+```
+
+## Attention2 Plus MLP2 Still Exhausts Runtime Output Endpoints
+
+Symptom:
+
+```text
+real_graph_probe: fail stage=n-layer-final-only cols=2 layers=1 phase=preflight
+ValueError: Failed to find a tile matching column 3: tried until column 8.
+```
+
+Diagnostic:
+
+```text
+Run real_graph_probe.py with --trace-placement. Do not assume the old
+compute-tile exhaustion diagnosis still applies after QK merge or after
+post-norm/gate-up fusion.
+
+Command used:
+  real_graph_probe.py --stages n-layer-final-only --columns 2
+    --attention-columns 2 --layer-iterations 1 --preflight-only
+    --allow-failures --trace-placement
+```
+
+Evidence found:
+
+```text
+after QK merge:
+  placement_trace_fail_counts:
+    {'runtime_output': 4, 'runtime_input': 0,
+     'other_output': 0, 'other_input': 0}
+  placement_trace_fail_key: runtime_output
+  placement_trace_fail_type: RuntimeEndpoint
+  placement_trace_fail_output: True
+  placement_trace_fail_common_col: 6
+
+after fusing post-norm into gate/up column 0:
+placement_trace_fail_counts:
+  {'runtime_output': 16, 'runtime_input': 6,
+   'other_output': 0, 'other_input': 0}
+  placement_trace_fail_key: runtime_output
+  placement_trace_fail_type: RuntimeEndpoint
+  placement_trace_fail_output: True
+  placement_trace_fail_common_col: 3
+  placement_trace_fail_remaining_tiles: []
+```
+
+Interpretation:
+
+```text
+The failure moved. Before QK merge, attention2 + MLP2 failed with direct
+compute tile exhaustion. After QK merge, the graph had fewer Workers but still
+placed too many host->NPU fill endpoints near busy columns. After fusing
+post-norm into gate/up column 0, the graph reaches the global shim-output
+capacity and then fails on the 17th runtime output stream.
+```
+
+Fix used for the one-layer performance probe:
+
+```text
+Do not combine the hot K/V cache streams as the accepted fix. A cache-pair
+ObjectFifo removed one Runtime.fill, but first generated an illegal 6D BD and
+then produced only a neutral/slower warm timing after reducing the TAP to 4D.
+
+The accepted one-layer probe combines the small hidden input and QK/RoPE
+metadata into one runtime input buffer:
+
+  hidden_qk_rope_runtime = hidden[1024] || q_norm[128] || k_norm[128]
+                           || rope_angles[128]
+
+The graph then splits that object into the existing hidden FIFO and
+qk_rope_metadata FIFO. K/V cache reads stay as separate proven streams.
+```
+
+Related diagnostic result:
+
+```text
+attention2 + down-only MLP2:
+  --columns 2 --attention-columns 2 --mlp-gate-up-columns 1
+  preflight ok
+  placement_trace_counts runtime_output=16, runtime_input=6
+  verify: chunk_hidden_errors=0
+  warm mean: 5684.301 us
+
+attention2 + full MLP2, hidden+metadata fused:
+  preflight ok
+  placement_trace_counts runtime_output=16, runtime_input=6, other_input=1
+  verify: chunk_hidden_errors=0
+  warm iterations 1-4:
+    3982.903, 5018.653, 4034.890, 4538.970 us
+  warm mean: 4393.854 us
+```
+
+Remaining limitation:
+
+```text
+This fix is currently a one-layer probe. Full-depth chunk=28 still needs the
+post-norm/gate-up fused weight stream to be expressed for multiple layers
+without reintroducing a separate post-norm Runtime.fill.
+```
+
+Later three-way gate/up experiment:
+
+```text
+accepted direct gate/up+SiLU baseline:
+  --columns 2 --attention-columns 2 --mlp-gate-up-columns 2
+  --mlp-gate-up-pair-rows --mlp-gate-up-direct-silu
+  layer_iterations=28 preflight ok
+  placement_trace_counts: {'runtime_output': 16, 'runtime_input': 5,
+                           'other_output': 0, 'other_input': 1}
+
+three-way gate/up branch:
+  --columns 2 --attention-columns 2 --mlp-gate-up-columns 3
+  --mlp-gate-up-pair-rows --mlp-gate-up-direct-silu
+  layer_iterations=1 and layer_iterations=28 both fail before MLIR preflight
+  placement_trace_fail_key: runtime_output
+  placement_trace_fail_type: RuntimeEndpoint
+  placement_trace_fail_output: True
+  placement_trace_fail_common_col: 3
+  placement_trace_fail_counts: {'runtime_output': 16, 'runtime_input': 6,
+                                'other_output': 0, 'other_input': 1}
+```
+
+Interpretation:
+
+```text
+The three-way branch did not fail because of token correctness, C++ kernel ABI,
+or layer depth. It failed because the extra gate/up weight stream required a
+17th runtime output endpoint after the graph had already reached the accepted
+runtime-output endpoint boundary. More gate/up parallelism needs a packed/split
+weight stream or another endpoint reduction before it can be a performance
+candidate.
+```
+
+Follow-up packed/split experiment:
+
+```text
+The follow-up packed gate/up shard1 and shard2 behind one runtime stream and
+used ObjectFifo.split inside the graph.
+
+preflight:
+  compute_cores=32
+  max_tile_inputs=2
+  max_tile_outputs=2
+  placement_trace_counts:
+    {'runtime_output': 16, 'runtime_input': 5,
+     'other_output': 0, 'other_input': 2}
+
+full generate:
+  token_match=True
+```
+
+Interpretation:
+
+```text
+ObjectFifo.split solved the 17th runtime output endpoint blocker. This was a
+resource fix, but not a performance acceptance: the three-way split graph was
+slower than the accepted two-way baseline on the Fibonacci multi-token prompt
+and used all 32 compute cores.
+```
+
+## Cache-Pair TAP Passes Preflight But Fails BD Or Numerics
+
+Symptom:
+
+```text
+Combining K-cache and V-cache reads into one ObjectFifo split makes
+attention2 + full MLP2 pass placement, but full aiecc or attention verification
+fails.
+```
+
+Diagnostics:
+
+```text
+1. Run preflight with --trace-placement to prove the RuntimeEndpoint failure is
+   gone.
+2. Run full compile, because preflight does not validate every BD lowering
+   constraint.
+3. If compile passes but attention residual is wrong, isolate with
+   --attention-probe-only before inspecting MLP.
+```
+
+Evidence found:
+
+```text
+first cache-pair TAP:
+  dimensions [layer, head, block, K/V, row, dim]
+  aiecc error:
+    At most four data layout transformation dimensions may be provided.
+
+second cache-pair TAP:
+  collapsed head*block into one dimension
+  compile passed, but attention_probe_residual_errors=610
+```
+
+Root cause:
+
+```text
+The collapsed head*block dimension used cache_block_seq * head_dim as the
+stride. That reads the next active block correctly only when all blocks for a
+head are included. At position 26 only one block is active, so the next logical
+head was read from the current head's future cache block.
+```
+
+Status:
+
+```text
+Rejected as the performance path for now. The corrected single-active-block
+variant verifies, but the warm mean was about 4484.962 us, slightly slower
+than the small-stream hidden+metadata fusion and not general for later decode
+positions.
+```
+
+## ObjectFIFO Depth Passes Preflight But Fails AIECC Block/BD Allocation
+
+Symptom:
+
+```text
+real_graph_probe.py --preflight-only passes:
+  max_fifo_buffered_bytes=32768
+  max_dma_tasks_per_fifo=1
+  max_tile_inputs=2
+  max_tile_outputs=2
+
+full aiecc later fails:
+  error: 'aie.mem' op has more than 16 blocks
+  note: no space for this BD
+  Pipeline failed while executing AIEObjectFifoStatefulTransform
+```
+
+Diagnostic:
+
+```text
+Do not stop at Python preflight for a new ObjectFIFO shape. Re-run full compile
+and read the `aie.mem` dump. If one FIFO acquired many small objects, count the
+number of FIFO blocks created on that memory tile, not only object bytes.
+```
+
+Evidence found during gate/up row-group 8:
+
+```text
+The first row-group 8 implementation used a hidden_weight_ty FIFO with depth 16
+so one worker could acquire:
+  8 gate rows + 8 up rows
+
+Preflight saw the same 32KB max buffered bytes as other accepted streams, but
+aiecc resource allocation rejected the memory tile because the FIFO created too
+many individual blocks/BD entries.
+```
+
+Root cause:
+
+```text
+The resource limit was block/BD count on the generated `aie.mem`, not endpoint
+placement, not token correctness, and not the 8-row external kernel math.
+```
+
+Fix used for diagnosis:
+
+```text
+Pack the widened non-fused gate/up stream as 4-row FIFO objects:
+  [4 gate rows][4 gate rows][4 up rows][4 up rows]
+
+This reduced the widened stream from 16 single-row FIFO objects to 4 block
+objects. The graph then passed full aiecc and matched the default prompt token.
+```
+
+Decision:
+
+```text
+The fixed row-group 8 branch was rejected for performance because it was slower
+than the accepted 4-row direct-SiLU baseline. Keep this symptom entry because
+it exposes a preflight blind spot: ObjectFIFO block count can fail later even
+when byte, task, and tile-port limits look safe.
+```
+
 ## Sharded Multi-Layer Weight TAP Exceeds BD Stride
 
 Symptom:
@@ -549,6 +956,61 @@ layers so each FIFO stays at eight or fewer DMA tasks, then spend remaining
 resources on the actual compute workers.
 ```
 
+## Generic GEMV Tile Input 16 Exceeds L1 On LM Head Probe
+
+Symptom:
+
+```text
+Failed to allocate buffer: "A_L3L1_0_cons_buff_0" with size: 32768 bytes.
+allocated buffers exceeded available memory
+Basic sequential allocation also failed.
+```
+
+Diagnostic:
+
+```text
+Read the aiecc MemoryMap before changing the math kernel. In the LM-head GEMV
+probe, the failure happened on a generic GEMV input tile, not on Qwen3 final
+logits math or argmax.
+```
+
+Evidence found:
+
+```text
+Configuration:
+  M = 151936
+  K = 1024
+  cols = 8
+  tile_size_input = 16
+  tile_size_output = 16
+
+MemoryMap excerpt:
+  A_L3L1_0_cons_buff_0: 32768 bytes
+  A_L3L1_0_cons_buff_1: 32768 bytes
+  B_L3L1_0_cons_buff_0: 2048 bytes
+  C_L1L3_0_buff_0: 32 bytes
+  C_L1L3_0_buff_1: 32 bytes
+```
+
+Root cause:
+
+```text
+The generic GEMV design double-buffers the matrix tile. With
+tile_size_input=16 and K=1024, the two matrix input buffers alone consume 64KB.
+That leaves no room for stack, vector, output buffers, or anonymous allocations
+on the same compute tile.
+```
+
+Fix:
+
+```text
+For this generic GEMV design at K=1024, keep tile_size_input <= 8. The tested
+compiling LM-head variants with tile_size_input in {1, 2, 4, 8} were
+numerically correct, but still slower than CPU F.linear for the final LM head.
+Do not treat the L1 fix as evidence that generic GEMV is the right performance
+branch.
+```
+
 ## Full-Layer MLP Worker Exceeds Input DMA Channels
 
 Symptom:
@@ -592,6 +1054,56 @@ Recheck:
 
 ```text
 preflight: ok ... max_tile_inputs=2 max_tile_outputs=2
+```
+
+## Direct Input-RMSNorm Fusion Exceeds Tile Input Limit
+
+Symptom:
+
+```text
+real_graph_probe: fail stage=n-layer-final-only cols=2 layers=28 phase=preflight
+Qwen3PreflightError: Compute tile %tile_0_2 has 3 input ObjectFIFOs; limit=2.
+Pack or stage inputs before changing external-kernel math.
+```
+
+Attempted change:
+
+```text
+Fuse the current input-normalization pair:
+  tile_0_2: copy hidden to chunk state + unweighted input RMSNorm
+  tile_0_3: multiply unweighted norm by input_layernorm.weight
+
+into one Worker:
+  copy hidden to chunk state + weighted input RMSNorm
+```
+
+Why it looked attractive:
+
+```text
+The promoted full-depth graph uses all 32 compute cores, and this fusion would
+remove one Worker and one intermediate FIFO if legal.
+```
+
+Root cause:
+
+```text
+For layer_iterations=28, the fused Worker needs three logical input streams:
+
+1. runtime hidden from the hidden/metadata split FIFO
+2. hidden feedback from the previous layer inside the chunk
+3. input_layernorm.weight for the current layer
+
+The current resource invariant is max_tile_inputs=2 for compute tiles. The
+fusion failed before MLIR lowering/aiecc, so this is a graph resource problem,
+not an external kernel math problem.
+```
+
+Decision:
+
+```text
+Do not use direct input-RMSNorm Worker fusion as the next core-freeing branch.
+Any replacement must first reduce or stage the inputs so the target tile still
+has at most two input ObjectFIFOs.
 ```
 
 ## Real Full-Layer Graph Is Locked To One Column

@@ -5,474 +5,386 @@ SPDX-License-Identifier: Apache-2.0
 
 # Column Scaling Experiments
 
-This file tracks the active Qwen3 persistent megakernel performance experiment.
-It is not a symptom database. Use it to decide what to try next and what result
-would prove that the experiment moved the design forward.
+This is the active decision page for Qwen3 persistent megakernel performance
+work. Keep raw logs and closed branch detail in `archive/`; keep this page
+focused on the current baseline, constraints, and the next executable steps.
 
-## Current Baseline
+Rule:
 
-Accepted fast-generate path:
+```text
+When a new failure appears, update the relevant symptom/method page first.
+Then record only the experiment decision here.
+```
+
+## Archive Map
+
+| archive | contents |
+| --- | --- |
+| `archive/experiments-column-scaling-2026-05-21.md` | original single-column baseline, early chunk/resource failures, first full-depth timings |
+| `archive/experiments-column-scaling-2026-05-21-attention2-mlp2.md` | attention2 and packed two-column MLP bring-up |
+| `archive/experiments-column-scaling-2026-05-21-attention2-mlp2-multilayer.md` | multi-layer attention2/MLP2 scaling and resource evidence |
+| `archive/experiments-column-scaling-2026-05-21-attention2-drift-diagnostics.md` | layer17/18/19 strict-reference drift diagnostics |
+| `archive/experiments-column-scaling-2026-05-21-softmax-fusion-projection-boundary.md` | score-side softmax fusion, prompt suite, O-proj widening limit |
+| `archive/experiments-column-scaling-2026-05-21-mlp-gateup-pair-fusion.md` | paired-row MLP gate/up layout and paired matvec baseline |
+| `archive/experiments-column-scaling-2026-05-21-current-baseline-phase-probe.md` | accepted-baseline timing, static estimator, phase sensitivity probe |
+| `archive/experiments-column-scaling-2026-05-21-direct-gateup-silu.md` | direct hidden-producing gate/up+SiLU compile fix, prompt suite, estimator, phase probe |
+| `archive/experiments-column-scaling-2026-05-21-three-way-gateup.md` | three-way gate/up rejection: RuntimeEndpoint output placement boundary |
+| `archive/experiments-column-scaling-2026-05-21-rowgroup8.md` | gate/up row-group 8 branch: BD/block failure, block-object fix, slower timing rejection |
+| `archive/experiments-column-scaling-2026-05-21-three-way-gateup-split.md` | packed/split three-way gate/up: endpoint blocker solved, token-correct, multi-token timing rejection |
+| `archive/experiments-column-scaling-2026-05-21-phase-probe-after-split.md` | accepted-graph phase probe after rejecting static MLP widening branches |
+| `archive/experiments-column-scaling-2026-05-21-state-machine-resource-probe.md` | resource-scaling check before descriptor/state-machine work |
+| `archive/experiments-column-scaling-2026-05-21-position-artifact-diff.md` | adjacent-position MLIR/bin/xclbin diff and bucket boundary diagnosis |
+| `archive/experiments-column-scaling-2026-05-21-runtime-position-metadata-rejected.md` | runtime position metadata stream attempt, timeout/NaN diagnosis, and rejection |
+
+Symptom and method notes remain split by diagnosis type:
+
+```text
+symptoms-resources.md
+symptoms-dataflow.md
+symptoms-numeric.md
+symptoms-runtime.md
+methods-static.md
+methods-runtime.md
+methods-numeric.md
+methods-layout.md
+```
+
+## Current Accepted Baseline
 
 ```text
 stage: generate --fast-generate
 operator: n-layer-final-only
 layer_chunk_size: 28
-runtime shape: one full-depth static stream per decode token
-final norm / LM head: CPU
+num_aie_columns: 2
+attention layout: two-column attention2 with fused score/softmax Workers
+MLP layout: packed two-column segment-major gate/up/down weights
+MLP gate/up rows: paired as [4 gate rows][4 matching up rows]
+MLP gate/up compute: qwen3_mlp_gate_up_pair_silu4_rows_shard_bf16
+MLP activation: fused into direct hidden-producing gate/up kernel
+final norm / LM head: CPU F.linear path
+weights: prepacked bf16 weights on disk
 ```
 
-Evidence:
+Known-good gate:
 
 ```text
-default prompt:
-  token_match=True
-  new_text='Paris'
-
-raw prompt "Fibonacci numbers: 1, 1, 2, 3,":
-  token_match=True for decode positions 17, 18, 19, and 20
-  new_text=' 5, 8'
-
-preflight:
-  compute_cores=21
-  max_fifo_buffered_bytes=32768
-  max_dma_tasks_per_fifo=1
-
-timing:
-  npu_layer_time_us_total: about 190-200ms per decoded token
+default prompt: token_match=True, new_text='Paris', NPU time 105.293 ms
+prompt suite:  5/5 token steps matched for Fibonacci, weekdays, numeric, opposite
+suite mean:    100.961 ms after direct gate/up+SiLU
+preflight:     compute_cores=30, ObjectFIFOs=53, max_tile_inputs=2,
+               max_tile_outputs=2, max_fifo_buffered_bytes=32768
+static calls:  76,160 calls/token; qwen3_silu_mul_shard_bf16 has no call sites
 ```
 
-The current path solved the `8 + 8 + 8 + 4` host-dispatch pattern by using one
-full-depth cache TAP for `layer_iterations=28`. It did not implement a
-descriptor-driven layer state machine; the compiled Runtime sequence is still
-static for a decode position.
-
-## Bottleneck Hypothesis
-
-After packed weights, cache residency, prefix K/V blocks, output-only drains,
-and full-depth chunking, host overhead is no longer the dominant cost. The
-remaining latency is mainly single-column NPU compute and dataflow.
-
-The next speedup must therefore increase useful column parallelism without
-reintroducing the resource failures already diagnosed:
+Current interpretation:
 
 ```text
-no per-layer DMA task replication
-no oversized ObjectFIFO objects
-no three-input score/context worker pattern
-no debug-only third output on hot tiles
-no unvalidated intermediate chunk sizes
+Host dispatch is no longer the main bottleneck. The accepted path is one NPU
+decode dispatch for the transformer body.
+
+The layer-iteration resource probe changed the state-machine diagnosis:
+the accepted graph already reuses the main Worker/ObjectFIFO graph across
+layer_iterations. Resources do not grow linearly with layers.
+
+The missing "true megakernel" piece is now narrower: position/cache-dependent
+compile artifacts and runtime metadata are still static per decode position.
+The next speed work should target position-specific compile/runtime constants,
+not worker-per-layer removal.
+
+The latest direct-graph phase probe says the MLP-side increment is still the
+larger measured target:
+  full-layer warm median: 3.882 ms
+  attention-only median:  1.661 ms
+  MLP-side increment:     2.221 ms, 57.2% of one-layer warm median
 ```
 
-## Known Column Status
+## Hard Constraints
 
-Use `persistent/real_graph_probe.py` to recheck this table after every graph
-change.
+Keep these constraints unless a new diagnostic proves they are too conservative:
 
 ```text
-QKV checkpoint: can preflight at multiple columns.
-MLP gate/up checkpoint: can preflight beyond one column.
-post-attn full-MLP checkpoint: verifies at columns=1,2,4 with down projection
-  sharded by column.
-n-layer chunk=1 path: verifies at columns=1,2,4 with attention still
-  single-column and MLP down projection sharded by column.
-full-depth n-layer path: currently accepted only at one column.
+max_tile_inputs <= 2
+max_tile_outputs <= 2
+no extra host dispatch in the accepted decode path
+preflight before numerical validation
+token validation before timing claims
+every rejected branch needs a named root cause
 ```
 
-The full-depth n-layer path is still single-column. Removing the old guard was
-not sufficient because `num_columns` originally controlled both attention and
-MLP. The current experiment deliberately keeps attention single-column and uses
-the public column knob only for MLP down sharding in `layer_iterations=1`.
-
-## Experiment 1: Two-Column MLP Closure
-
-Goal:
+Known rejected or deferred branches:
 
 ```text
-Make the MLP half consume and produce column shards inside the full-layer graph.
+direct input-RMSNorm Worker fusion:
+  rejected by preflight with max_tile_inputs=3 > 2
+
+direct O-proj row sharding:
+  needs more than the two freed cores unless residual/MLP boundary is redesigned
+
+three-way MLP gate/up with independent weight stream:
+  rejected by placement trace; adding the third gate/up Runtime.fill hits the
+  runtime-output endpoint boundary before MLIR preflight
+
+three-way MLP gate/up with packed/split parent stream:
+  rejected by timing; it solved the endpoint blocker but consumed all 32 cores
+  and regressed the multi-token Fibonacci mean
+
+generic NPU final LM head:
+  second-dispatch GEMV was slower than CPU F.linear
+
+gate/up row-group 8:
+  rejected by timing; the first FIFO shape exposed a BD/block resource failure,
+  and the block-object fix compiled but was slower
 ```
 
-Planned shape:
+## Closed Decisions
+
+The detailed logs live in `archive/`. Keep only decision-quality summaries here:
+
+| decision | result | root cause or proof |
+| --- | --- | --- |
+| packed two-column MLP | accepted | full-depth chunk=28 runs and materially beats the old single-column path |
+| two-column attention2 + fused score/softmax | accepted | prompt-suite token IDs matched and phase probe made MLP the larger remaining target |
+| paired gate/up row layout | accepted | reduced gate/up stream pressure while preserving token correctness |
+| direct hidden-producing gate/up+SiLU | accepted | removed separate `qwen3_silu_mul_shard_bf16` call sites; prompt-suite mean improved 101.683 -> 100.961 ms |
+| gate/up row-group 8 | rejected | first form failed full `aiecc` with `aie.mem` >16 blocks; block-object form compiled and matched tokens but slowed default prompt 106.233 -> 109.638 ms |
+| three-way gate/up with split parent stream | rejected | `ObjectFifo.split` kept runtime outputs at 16 and token IDs matched, but Fibonacci mean regressed 102.215 -> 104.442 ms and the graph consumed all 32 compute cores |
+| phase probe after split rejections | accepted | accepted graph still shows MLP-side median increment 2.221 ms, 57.2% of one-layer warm median |
+| layer-iteration resource probe | accepted | accepted graph compute cores/endpoints do not grow linearly with layers; descriptor work should target position-specific compile/runtime constants, not worker-per-layer removal |
+| adjacent-position artifact diff | accepted | pos26->pos27 changes only position/mask constants plus four current-K/V DMA offsets in MLIR, but both runtime `.bin` and embedded AIE ELFs change, so `.bin` patching alone is insufficient |
+| runtime position metadata through attention streams | rejected | score/mask metadata variants compiled and attention-probe ran, but full-layer generate timed out; attention-probe produced NaN residuals, so the branch is numerically unsafe and default code is restored to static position |
+| direct input RMSNorm fusion | rejected | preflight hit `max_tile_inputs=3 > 2` |
+| direct O-proj row sharding | deferred | two freed cores are not enough without redesigning residual/MLP boundary |
+| three-way gate/up with independent weight stream | rejected | placement trace shows accepted graph already uses 16 runtime outputs; third gate/up stream needs a 17th output endpoint |
+| NPU final LM head as a second dispatch | rejected | slower than CPU `F.linear` tail |
+
+## Next 10 Steps
+
+Every step must end as `accepted`, `rejected`, or `blocked` with a named root
+cause. Do not start the next graph rewrite until the current step has a
+diagnosis-quality result.
+
+| step | status | purpose | finish condition |
+| ---: | --- | --- | --- |
+| 1 | rejected | Try a no-new-runtime-output MLP optimization by increasing direct gate/up row group size | full 8-row row-FIFO form failed `aiecc` resource allocation; block-object non-fused form compiled and matched tokens but was slower than the accepted direct-SiLU baseline |
+| 2 | rejected | Test packed/split gate/up streams behind an existing endpoint | endpoint blocker solved with `ObjectFifo.split`, but the three-way graph did not beat the accepted two-way direct-SiLU baseline on Fibonacci |
+| 3 | accepted | Re-run phase probe on the best accepted graph | MLP-side median increment remains 2.221 ms, so the graph body is still MLP-side dominated |
+| 4 | accepted | Check whether the accepted graph's resources grow linearly with layer count | `layers=1/8/28` preflight shows compute cores 29/30/30 and runtime outputs 16/16/16, so worker-per-layer growth is not the current blocker |
+| 5 | accepted | Diff adjacent-position artifacts and identify what changes between decode positions | pos26/27 and pos63/64 artifact diffs identify runtime `.bin` DMA offsets, AIE-core position constants, and cache-block bucket boundaries |
+| 6 | rejected | Move position and valid length out through widened attention metadata streams | attempted score/mask/V metadata streams reached `ERT_CMD_STATE_TIMEOUT` or NaN attention-probe output; default path is restored and this exact stream-widening design is rejected |
+| 7 | active | Choose safer per-position reuse mechanism after metadata rejection | compare ELF/CDO patch-site proof, NpuControlPacketOp/BD rewrite risk, and cache-block bucket variants; no option is accepted until token correctness and artifact diffs prove it |
+| 8 | next | Build the selected no-per-token-compile path | multi-token generate reuses artifacts or bucket variants, token IDs match PyTorch, and no new host dispatch is introduced |
+| 9 | later | Revisit MLP body speed after metadata path is settled | new graph-body change must beat the accepted direct-SiLU baseline on a multi-token prompt suite, not only default prompt |
+| 10 | later | Revisit final norm / LM head only after the NPU body improves | end-to-end token time including output/argmax beats CPU `F.linear` tail |
+
+Rejected step 1 result:
 
 ```text
-residual full vector
-  -> broadcast xnorm/residual to 2 gate/up columns
-  -> each column computes intermediate_size / 2 gate and up rows
-  -> local SiLU * up
-  -> join ffn_hidden
-  -> broadcast ffn_hidden to 2 down columns
-  -> each column computes hidden_size / 2 output rows
-  -> join layer residual for next layer
+First form:
+  both gate/up streams used acquire(16) single-row FIFO objects
+  preflight passed, but full aiecc failed:
+    'aie.mem' op has more than 16 blocks
+    no space for this BD
+
+Diagnosed fix:
+  keep fused col0 at row-group 4 because post_norm shares that stream
+  use 4-row FIFO objects only for the non-fused widened stream
+
+Final result:
+  token_match=True, new_text='Paris'
+  static calls/token improved 76,160 -> 70,784
+  measured default prompt NPU time regressed 106.233 -> 109.638 ms
+
+Decision:
+  rejected as a speed branch; accepted baseline remains 4-row direct gate/up+SiLU
 ```
 
-Acceptance criteria:
+Rejected step 2 result:
 
 ```text
-preflight passes for columns=2
-compute_cores <= NPU2 budget
-max_dma_tasks_per_fifo <= 8
-max_fifo_buffered_bytes <= 64KB
-n-layer chunk=1 stage verify passes before trying chunk=28
-chunk=28 fast-generate token_match=True on the default and Fibonacci prompts
-```
-
-Expected risk:
-
-```text
-Join/broadcast FIFOs may increase tile input/output count.
-Down projection may need a different weight layout so each column receives
-only its row shard.
-```
-
-Progress on 2026-05-20:
-
-```text
-Implemented a partial full-MLP column closure:
-  gate/up remains one full-vector worker pair
-  ffn_hidden is broadcast to down workers
-  down projection uses one weight FIFO/TAP per column
-  residual add and output drain are hidden-row sharded
-
-preflight full-mlp:
-  cols=1 compute_cores=7  total_dma_tasks=13 max_dma_tasks_per_fifo=1
-  cols=2 compute_cores=9  total_dma_tasks=17 max_dma_tasks_per_fifo=1
-  cols=4 compute_cores=13 total_dma_tasks=25 max_dma_tasks_per_fifo=1
-  max_fifo_buffered_bytes=49152 for all three
-
-verify full-mlp:
-  cols=1 errors=0 for all debug buffers
-  cols=2 errors=0 for all debug buffers
-  cols=4 errors=0 for all debug buffers
-```
-
-Timing note:
-
-```text
-A single clean-build run was misleading because the first runtime call is cold.
-Using --verify-repeat 5 on cached builds, late iterations were approximately:
-  cols=1: 2.33-2.37 ms
-  cols=2: 1.85-1.88 ms after warmup
-  cols=4: 1.61-1.69 ms after warmup
-```
-
-Conclusion:
-
-```text
-The ffn_hidden broadcast + per-column down weight shard is correct and has real
-speedup after warmup. This is not the full Experiment 1 goal yet because
-gate/up is still single-column. The next useful patch is gate/up sharding with
-an explicit ffn_hidden join that can later be ported into the n-layer graph.
-```
-
-Progress on 2026-05-20, n-layer chunk=1:
-
-```text
-Implemented the same partial down-shard inside `n-layer-final-only` while
-keeping attention single-column:
-  attention Q/K/V/score/PV/O remains num_columns=1
-  public --num-aie-columns controls only MLP down sharding for layer_iterations=1
-  each down column drains compact 128-element residual tiles into the final
-  host output slice
-
-preflight n-layer-final-only, layer_iterations=1:
-  cols=1 compute_cores=19 total_dma_tasks=15 max_dma_tasks_per_fifo=1
-  cols=2 compute_cores=21 total_dma_tasks=17 max_dma_tasks_per_fifo=1
-  cols=4 compute_cores=25 total_dma_tasks=21 max_dma_tasks_per_fifo=1
-  max_fifo_buffered_bytes=32768 for all three
-
-verify n-layer-final-only, layer_iterations=1:
-  cols=2 chunk_hidden_errors=0, layer0 K/V current errors=0
-  cols=4 chunk_hidden_errors=0, layer0 K/V current errors=0
-```
-
-Timing note:
-
-```text
-Using --verify-repeat 5:
-  cols=1 late iterations: about 6.73-7.81 ms
-  cols=2 late iterations: about 5.92-6.32 ms
-  cols=4 late iterations: about 5.57-7.05 ms
-```
-
-Conclusion:
-
-```text
-The down-only shard survives inside the true full-layer graph and gives a
-modest n-layer chunk=1 speedup. It is not enough to unlock full-depth
-performance because layer_iterations>1 still needs a cross-column
-layer-residual join before feedback to the next layer. The next patch should
-build that join or shard gate/up plus join; continuing to tune down-only
-columns has limited leverage.
-```
-
-Progress on 2026-05-20, n-layer residual join:
-
-```text
-Implemented a two-column residual join for layer_iterations>1:
-  per-column down workers emit compact 128-element residual tiles
-  a two-input join Worker copies left/right tiles into one full hidden vector
-  the existing chunk feedback/router consumes that full joined residual
-
-preflight n-layer-final-only:
-  cols=2 layers=2 compute_cores=24 total_dma_tasks=18
-    max_dma_tasks_per_fifo=2 max_fifo_buffered_bytes=32768
-  cols=2 layers=4 compute_cores=24 total_dma_tasks=22
-    max_dma_tasks_per_fifo=4 max_fifo_buffered_bytes=32768
-  cols=2 layers=8 compute_cores=24 total_dma_tasks=34
-    max_dma_tasks_per_fifo=8 max_fifo_buffered_bytes=32768
-```
-
-Diagnosed issue:
-
-```text
-The first cross-layer sharded down-weight TAP used a layer stride of 3145728,
-which aiecc rejected:
-  'aie.dma_bd' op Stride 3 exceeds the [1:1048576] range
-
-The fix keeps the single-column path as one contiguous full-depth TAP and emits
-one linear down-weight shard fill per layer only for multi-column down.
-```
-
-Verification:
-
-```text
-cols=2 layers=2 verify:
-  chunk_hidden_errors=0
-  layer0/layer1 K/V current errors=0
-
-cols=2 layers=4 verify:
-  chunk_hidden_errors=0
-  layer0..layer3 K/V current errors=0
-```
+Resource result:
+  ObjectFifo.split packed gate/up shard1+shard2 behind one runtime stream
+  preflight passed with runtime_output=16 and compute_cores=32
+  full compile/generate token_match=True
 
 Timing:
+  default prompt warm run: three-way split 104.377 ms vs baseline 105.774 ms
+  Fibonacci positions 17-21:
+    three-way split mean 104.442 ms
+    accepted two-way baseline mean 102.215 ms
 
-```text
-layers=2, --verify-repeat 5:
-  cols=1 late iterations: about 14.21-14.51 ms
-  cols=2 late iterations: about 12.39-12.77 ms
-
-layers=4, --verify-repeat 3:
-  cols=1 late iterations: about 29.58-30.00 ms
-  cols=2 late iterations: about 24.47-25.33 ms
+Decision:
+  rejected as a performance path. It solved the endpoint blocker but did not
+  produce robust speedup, and it consumes all 32 compute cores.
 ```
 
-Conclusion:
+Accepted step 3 result:
 
 ```text
-The two-column down-shard plus residual join is now valid beyond one layer and
-has a consistent net speedup. The current limit is not correctness but scaling:
-because multi-column down weights are filled per layer, cols=2 reaches
-max_dma_tasks_per_fifo=8 at layers=8. Full-depth chunk=28 needs a better
-multi-column down weight layout/TAP, or gate/up/attention parallelism must be
-added before attempting full-depth multi-column generate.
+Phase probe after rejecting row-group 8 and three-way split:
+  full-layer warm median:    3.882 ms
+  attention-only median:     1.661 ms
+  MLP-side median increment: 2.221 ms
+  MLP median-increment share: 57.2%
+
+Decision:
+  the accepted graph is still MLP-side dominated, but static MLP shard-count
+  increases did not produce robust speedup. Move to descriptor/state-machine
+  resource reuse instead of another static gate/up split.
 ```
 
-Progress on 2026-05-20, packed two-column MLP:
+Accepted step 4 result:
 
 ```text
-Tried direct gate/up sharding after the residual join.
+Resource probe:
+  layers=1:  compute_cores=29 runtime_output=16 max_dma_tasks_per_fifo=1
+  layers=8:  compute_cores=30 runtime_output=16 max_dma_tasks_per_fifo=2
+  layers=28: compute_cores=30 runtime_output=16 max_dma_tasks_per_fifo=1
 
-Rejected intermediate shape:
-  per-layer runtime fills for post_norm/gate/up shards
-  failed resolve_program() because shim/runtime output endpoints were exhausted
-
-Rejected second shape:
-  one full gate/up Runtime.fill
-  NPU split-copy Worker produced post_norm + two shard streams
-  first failed preflight with 3 output FIFOs on one tile
-  after removing post_norm output it verified but took about 153 ms for layers=2
-
-Accepted shape:
-  host packs MLP weights in two-column order
-  post_norm for all layers is one contiguous segment
-  gate0+up0 and gate1+up1 are two contiguous per-column segments
-  down0 and down1 are two contiguous per-column segments
-  each gate/up shard Worker consumes only xnorm + one packed gate/up weight FIFO
+Decision:
+  the accepted graph already reuses workers/FIFOs across layer_iterations for
+  the main resource counts. A "state-machine" rewrite should not target
+  worker-per-layer removal. The useful target is position-specific compile and
+  runtime constants/TAP metadata.
 ```
 
-Preflight:
+Accepted step 5 result:
 
 ```text
-cols=2 layers=2:
-  compute_cores=26 total_dma_tasks=18 max_dma_tasks_per_fifo=1
-  max_tile_inputs=2 max_tile_outputs=2
+Same-bucket pos26 -> pos27:
+  MLIR line_count=1434/1434
+  changed_diff_lines=64
+  runtime .bin size=2756/2756, changed_bytes=8
+  eight u32 runtime patch candidates, all DMA byte offsets +256
+  main_aie_cdo_elfs.bin changed_bytes=56
+  six core ELFs changed because position/mask are compiled as immediates
 
-cols=2 layers=4:
-  compute_cores=26 total_dma_tasks=18 max_dma_tasks_per_fifo=1
-  max_tile_inputs=2 max_tile_outputs=2
+Cache-block boundary pos63 -> pos64:
+  MLIR line_count=1434/1434
+  changed_diff_lines=140
+  K/V cache read length 32768 -> 65536 bf16 elements
+  score/context/V-merge loops 1 block -> 2 blocks
 
-cols=2 layers=8:
-  compute_cores=26 total_dma_tasks=22 max_dma_tasks_per_fifo=2
-  max_tile_inputs=2 max_tile_outputs=2
+Decision:
+  raw runtime .bin patching alone is insufficient, because AIE core ELFs also
+  bake position and valid length. Bucketed precompile alone is also insufficient
+  until those scalar values become runtime metadata or proven ELF/CDO patch
+  sites. The next implementation target is dynamic position metadata for
+  attention score, mask, V merge, and context workers.
 ```
 
-Verification and timing:
+Current step 6 candidate:
 
 ```text
-cols=2 layers=2, --verify-repeat 3:
-  chunk_hidden_errors=0
-  layer0/layer1 K/V current errors=0
-  late iterations: about 9.84-9.92 ms
+Problem to solve:
+  AIE core code currently bakes position into:
+    qwen3_attention_scores_bf16(..., position, ...)
+    qwen3_merge_current_v_bf16(..., position, ...)
+    qwen3_attention_context_bf16(..., position, ...)
+    mask_bf16(..., position + 1, max_seq_len)
 
-cols=2 layers=4, --verify-repeat 3:
-  chunk_hidden_errors=0
-  layer0..layer3 K/V current errors=0
-  late iterations: about 19.02-19.81 ms
+Candidate:
+  extend the existing attention2 runtime metadata stream. It already carries
+  per-layer q_norm, k_norm, and RoPE LUT metadata. Add dynamic position/valid
+  length metadata, or a small adjacent metadata FIFO if packing as bf16 is too
+  fragile.
 
-cols=2 layers=8, --verify-repeat 2:
-  chunk_hidden_errors=0
-  warm iteration: about 39.93 ms
-  current K cache has a few tolerance errors in layers 2/4/5
-
-cols=1 layers=8 comparison:
-  chunk_hidden_errors=0
-  current K cache shows the same layers 2/4/5 tolerance class
-
-token-level generate:
-  chunk=2 cols=2 default prompt token_match=True
-  new_text='Paris'
-  npu_layer_time_us_total about 140995 us
-
-  chunk=4 cols=2 default prompt token_match=True
-  new_text='Paris'
-  npu_layer_time_us_total about 140480 us
-
-  chunk=8 cols=2 default prompt token_match=True
-  new_text='Paris'
-  npu_layer_time_us_total about 145024 us
-
-  chunk=28 cols=2 default prompt token_match=True
-  new_text='Paris'
-  npu_layer_time_us_total about 137079 us
-
-  chunk=28 cols=2 raw Fibonacci prompt token_match=True for positions 17-20
-  new_text=' 5, 8'
-  npu_layer_time_us_total per position about 128429-131611 us
+Acceptance:
+  pos26 -> pos27 full artifact diff no longer changes core ELFs/CDO due to
+  attention position constants
+  token_match=True for default and one multi-token raw prompt
+  runtime endpoint counts stay within the accepted limits
 ```
 
-Conclusion:
+## Canonical Recheck Commands
 
-```text
-Packed MLP2 is the accepted next performance path. It improves layers=2 from
-about 12.4-12.8 ms to about 9.8-9.9 ms, and layers=4 from about 24.5-25.3 ms
-to about 19.0-19.8 ms. It also removes the per-layer down-weight DMA scaling
-limit for the two-column path. Full-depth chunk=28 now preflights and runs:
-compute_cores=26, total_dma_tasks=18, max_dma_tasks_per_fifo=1, and the default
-prompt NPU layer time is about 137 ms, materially faster than the earlier
-single-column 190-200 ms baseline.
+Accepted baseline default prompt:
 
-The layers=8 cache verifier failure is not specific to packed MLP2 because the
-single-column layers=8 comparison has the same current-K tolerance class while
-final hidden still passes. Token-level generate also matches for chunk=8, so
-treat this as a verifier/tolerance follow-up before using cache-current errors
-alone to reject the path.
+```bash
+source /opt/xilinx/xrt/setup.sh
+. .venv/bin/activate
+
+PYTHONUNBUFFERED=1 python -X faulthandler \
+  iron/applications/qwen3_0_6b/persistent/main.py \
+  --stage generate --fast-generate --verify-generate \
+  --max-new-tokens 2 \
+  --layer-chunk-size 28 \
+  --num-aie-columns 2 \
+  --attention-columns 2 \
+  --mlp-gate-up-columns 2 \
+  --mlp-gate-up-pair-rows \
+  --mlp-gate-up-direct-silu \
+  --require-packed-weights \
+  --build-dir build_qwen3_mlp_gateup_direct_silu_generate_default
 ```
 
-## Experiment 2: Two-Column Attention Head Shard
+Raw prompt pattern:
 
-Goal:
-
-```text
-Shard Q/K/V, score, softmax, PV, context packing, and O projection by attention
-head groups.
+```bash
+PYTHONUNBUFFERED=1 python -X faulthandler \
+  iron/applications/qwen3_0_6b/persistent/main.py \
+  --stage generate --fast-generate --verify-generate \
+  --raw-prompt --prompt "<prompt>" \
+  --max-new-tokens 6 \
+  --layer-chunk-size 28 \
+  --num-aie-columns 2 \
+  --attention-columns 2 \
+  --mlp-gate-up-columns 2 \
+  --mlp-gate-up-pair-rows \
+  --mlp-gate-up-direct-silu \
+  --require-packed-weights \
+  --build-dir build_qwen3_mlp_gateup_direct_silu_generate_<name>
 ```
 
-Planned shape for Qwen3-0.6B:
+Preflight accepted baseline before timing:
 
-```text
-16 Q heads / 8 KV heads / GQA repeat 2
-2 columns -> each column owns 4 KV heads and 8 Q heads
+```bash
+python iron/applications/qwen3_0_6b/persistent/real_graph_probe.py \
+  --stages n-layer-final-only \
+  --columns 2 \
+  --attention-columns 2 \
+  --mlp-gate-up-columns 2 \
+  --mlp-gate-up-pair-rows \
+  --mlp-gate-up-direct-silu \
+  --layer-iterations 28 \
+  --preflight-only \
+  --build-dir build_qwen3_mlp_gateup_direct_silu_preflight \
+  --clean-build
 ```
 
-Data movement requirements:
+Static estimator:
 
-```text
-K/V cache TAP adds a column head offset.
-Each column reads only its KV heads.
-Q/K/V weights are segment-major and column-sharded.
-Context shards must be joined or placed into the correct slice before O-proj.
+```bash
+python iron/applications/qwen3_0_6b/persistent/work_estimator.py \
+  --mlir <generated-pos26-mlir> \
+  --layers 28 \
+  --position 26 \
+  --show-kernels
 ```
 
-Acceptance criteria:
+Phase sensitivity probe:
 
-```text
-attention-only boundary verifies before full MLP integration
-softmax row sums stay valid per owned Q head
-no future KV reads
-token_match=True after reconnecting O-proj
+```bash
+python iron/applications/qwen3_0_6b/persistent/phase_timing_probe.py \
+  --repeat 5 \
+  --mlp-gate-up-direct-silu \
+  --build-dir-prefix build_qwen3_phase_probe_direct \
+  --json-output build_qwen3_phase_probe_direct_summary.json
 ```
 
-Expected risk:
+Rejected row-group 8 preflight repro:
 
-```text
-The current context/O-proj worker packs two Q heads per KV head into one flat
-context object. The flat context object may become the next join bottleneck.
-```
-
-## Experiment 3: Two-Column Full-Depth Generate
-
-Goal:
-
-```text
-Run layer_chunk_size=28 with the two-column full-layer graph.
-```
-
-Acceptance criteria:
-
-```text
-chunk=28 compile/preflight passes
-max_dma_tasks_per_fifo remains bounded by full-depth TAPs
-default prompt token_match=True
-Fibonacci prompt token_match=True for at least four decode steps
-npu_layer_time_us_total improves materially from the 190-200ms baseline
-```
-
-Stop condition:
-
-```text
-If NPU time does not improve, split timing/trace by phase before changing more
-graph structure. Possible causes are extra join/broadcast overhead, L3 DMA
-contention, or only a small fraction of GEMV work actually moving to column 1.
-```
-
-## Experiment 4: Instruction Offset Patching
-
-Goal:
-
-```text
-Reduce per-position compile cost without changing math.
-```
-
-Current observation:
-
-```text
-chunk=28 first-position compile is about 66s.
-Following position compiles are about 3.8-4.0s.
-The runtime sequence still bakes position-dependent TAP and mask constants.
-```
-
-Candidate method:
-
-```text
-Reuse the strided_copy / Llama pattern: emit magic offset values, locate them
-in the instruction stream or ELF, patch position/cache offsets at runtime, and
-assert exact patch-site counts.
-```
-
-Do not attempt this until the two-column compute path is understood. It reduces
-compile overhead, not the 190-200ms NPU execution time.
-
-## Current Next Step
-
-Continue Experiment 1 from the accepted packed MLP2 path. Next targets:
-
-```text
-1. Treat chunk=28 cols=2 packed MLP2 as the current fastest validated path.
-2. Re-run a same-build warm timing suite if timing variance becomes a decision
-   point; current single-token timings are chunk=2 ~141 ms, chunk=4 ~140 ms,
-   chunk=8 ~145 ms, chunk=28 ~137 ms.
-3. Decide whether the layers=8 current-K verifier should use looser per-layer
-   tolerance or a local reference at the actual feedback boundary.
-4. Move to Experiment 2 attention head sharding or reduce per-position compile
-   overhead with instruction offset patching.
+```bash
+python iron/applications/qwen3_0_6b/persistent/real_graph_probe.py \
+  --stages n-layer-final-only \
+  --columns 2 \
+  --attention-columns 2 \
+  --mlp-gate-up-columns 2 \
+  --mlp-gate-up-pair-rows \
+  --mlp-gate-up-direct-silu \
+  --mlp-gate-up-row-group 8 \
+  --layer-iterations 28 \
+  --preflight-only \
+  --trace-placement \
+  --build-dir build_qwen3_mlp_gateup_rg8_preflight \
+  --clean-build
 ```

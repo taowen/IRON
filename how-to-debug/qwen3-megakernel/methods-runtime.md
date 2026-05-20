@@ -291,3 +291,128 @@ repeat cols=4 late iterations: about 1609-1691
 For performance decisions, compare warm iterations or a latency distribution,
 not iteration 0. Keep `--verify` enabled while changing graph shape so a fast
 number does not hide a broken FIFO/TAP layout.
+
+## 42. Run A Phase Sensitivity Probe Before Widening
+
+Use when the graph is correct, NPU time dominates, and the next performance
+target is unclear. This is a dynamic probe built from existing verified stages;
+it is not hardware trace and not a strict additive decomposition.
+
+Command used:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+. .venv/bin/activate
+
+python iron/applications/qwen3_0_6b/persistent/phase_timing_probe.py \
+  --repeat 5 \
+  --json-output build_qwen3_phase_probe_summary.json
+```
+
+For the current direct gate/up+SiLU baseline, add:
+
+```bash
+python iron/applications/qwen3_0_6b/persistent/phase_timing_probe.py \
+  --repeat 5 \
+  --mlp-gate-up-direct-silu \
+  --build-dir-prefix build_qwen3_phase_probe_direct \
+  --json-output build_qwen3_phase_probe_direct_summary.json
+```
+
+What it runs:
+
+```text
+full_layer_current_l1:
+  current one-layer n-layer-final-only graph
+
+attention_only_current_l1:
+  same graph stopped after attention/O-proj/residual
+
+qkv_standalone_l1:
+  standalone input RMSNorm + QKV projection
+
+mlp_full_standalone_l1:
+  standalone post-attention RMSNorm + full MLP
+
+mlp_gate_up_standalone_l1:
+  standalone post-attention RMSNorm + gate/up + SiLU/mul
+
+mlp_down_standalone_l1:
+  standalone MLP down projection + residual-add
+```
+
+Read the result as a sensitivity test:
+
+```text
+current full-layer - current attention-only:
+  meaningful MLP-side increment for the current graph family
+
+standalone stage times:
+  useful diagnostic signals, but not an additive timing split
+```
+
+Current direct-graph evidence:
+
+```text
+current full-layer warm median:    3.896 ms
+current attention-only median:     1.684 ms
+current MLP-side median increment: 2.212 ms
+MLP median-increment share:        56.8%
+
+standalone QKV warm median:        0.823 ms
+attention-only median minus QKV:   0.861 ms
+```
+
+Diagnosis:
+
+```text
+The next local optimization should stay on the MLP side unless hardware trace
+contradicts this. QKV has the highest call count statically, but this probe
+shows the current-graph MLP-side increment is still larger than the
+attention-only side.
+```
+
+Two caveats:
+
+```text
+Do not pass --require-packed-weights to non-fast-generate stage probes. The CLI
+guard rejects it because packed-weight enforcement is only used by
+--fast-generate.
+
+Standalone MLP/down probes can show higher variance than current-graph probes.
+Use warm median/min and the current full-vs-attention differential for target
+selection.
+```
+
+## 48. Treat Control Packets As A Last-Resort Runtime Patch Path
+
+Use this when considering `NpuControlPacketOp` to avoid per-position rebuilds.
+
+Observed constraint:
+
+```text
+NpuControlPacketOp can write 32-bit payloads to tile registers, so in theory it
+can rewrite DMA Buffer Descriptor fields such as transfer size, stride, repeat,
+or offset.
+```
+
+Why it was not used as the first fix:
+
+```text
+IRON ObjectFifo/Runtime does not expose a safe "rewrite BD while quiescent"
+workflow.
+The compiler currently emits control packets as static initialization data.
+Using it directly requires proving tile register addresses, payload encoding,
+stream routing, and that no DMA engine is reading the BD being modified.
+```
+
+Decision rule:
+
+```text
+Prefer artifact diff, runtime metadata, or bucket variants first. Only use
+control packets after a small isolated BD rewrite proof demonstrates:
+  exact target BD register address
+  before/after register payload
+  DMA quiescence point
+  token-correct run after the rewrite
+```

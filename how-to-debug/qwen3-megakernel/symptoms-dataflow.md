@@ -95,6 +95,51 @@ Use explicit data dependencies, phase tokens, or a different dataflow shape.
 For attention score, packing Q/current-K before score avoids the phase barrier.
 ```
 
+## Worker Closure Calls An Unresolved Kernel
+
+Symptom:
+
+```text
+real_graph_probe: fail stage=n-layer-final-only cols=2 layers=1 phase=preflight
+ValueError: Kernel must be resolved before it can be called.
+```
+
+Diagnostic:
+
+```text
+Re-run the Program generator directly with a Python traceback. If the stack
+points inside a Worker body and the failing call is a Kernel object from the
+outer Python closure, inspect the Worker(...) argument list.
+```
+
+Evidence found:
+
+```text
+The fused postnorm/gate-up worker called hidden_copy from the outer closure:
+
+  hidden_copy(xnorm_buffer, xnorm_out, hidden_size)
+
+but Worker(...) did not include hidden_copy in its argument list. IRON resolves
+Kernel objects that are passed into the worker arguments; the closure reference
+remained unresolved when the core body was emitted.
+```
+
+Fix:
+
+```text
+Add the copy Kernel as an explicit Worker argument and call that parameter from
+the Worker body:
+
+  copy_kernel(xnorm_buffer, xnorm_out, hidden_size)
+```
+
+Recheck:
+
+```text
+The next preflight progressed past Worker resolution and reached the real graph
+resource/TAP checks.
+```
+
 ## Attention Scores Overwrite The First GQA Head
 
 Symptom:
@@ -321,3 +366,187 @@ When a debug stream is optional, guard object FIFOs, workers, fills, drains,
 and TAPs with the same boolean.
 ```
 
+## Producer Order Deadlocks Despite Balanced FIFO Counts
+
+Symptom:
+
+```text
+preflight: ok ... compute_cores=24 max_tile_inputs=2 max_tile_outputs=2
+aie.utils.hostruntime.hostruntime.HostRuntimeError:
+  Kernel returned ert_cmd_state.ERT_CMD_STATE_TIMEOUT
+```
+
+Diagnostic:
+
+```text
+After preflight passes, compare the production order inside the new Worker
+against the first acquire order in the downstream Worker. Balanced token counts
+are not enough; a bounded FIFO can still deadlock if the first required token
+is produced late.
+```
+
+Evidence found during attention2 QK merge:
+
+```text
+The first qk_matvec_worker prototype consumed one combined QK weight stream and
+produced all Q heads first, then all K heads.
+
+Downstream qk_pair_final_worker consumed in the opposite phase order:
+  current K first
+  then the two Q heads mapped to that KV head
+
+Q RoPE output filled its small FIFO while qk_pair waited for K, and the QK
+matvec Worker could not advance far enough to produce K.
+```
+
+Root cause:
+
+```text
+The QK weight stream was contiguous as all Q shard rows followed by all K shard
+rows. That layout was statically legal but temporally incompatible with the
+attention score pipeline.
+```
+
+Fix used:
+
+```text
+Pack each attention2 QK shard by KV-head group:
+  K head h
+  Q heads mapped to K head h
+  next K head
+  next mapped Q heads
+
+Then make qk_matvec_worker emit K first and the corresponding Q heads second,
+matching qk_pair_final_worker.
+```
+
+Recheck:
+
+```text
+attention2 attention-only verify after interleaved QK:
+  npu_time_us=3938.720
+  attention_probe_residual_errors=0
+  layer0_keys_cache_current_errors=0
+  layer0_values_cache_current_errors=0
+```
+
+## Attention2 Multi-Layer Pack Order Mismatches Runtime TAP
+
+Symptom:
+
+```text
+attention2 + full MLP2 with hidden+metadata fusion works for layer_iterations=1
+but fails at layer_iterations=2:
+
+chunk_hidden_errors: 788
+layer0_values_cache_current_errors: nonzero
+layer1_keys_cache_current_errors: nonzero
+layer1_values_cache_current_errors: nonzero
+```
+
+Diagnostic:
+
+```text
+Do not inspect the external QKV kernel first. Compare the packed weight
+artifact order against the Runtime.fill TAP order. The TAP can be legal while
+still consuming a different segment order than the packer wrote.
+```
+
+Evidence found:
+
+```text
+The packer wrote:
+
+  qk_l0, v_l0, qk_l1, v_l1
+
+The attention2 runtime TAP consumed per column:
+
+  qk_col0_all_layers, v_col0_all_layers,
+  qk_col1_all_layers, v_col1_all_layers
+```
+
+Root cause:
+
+```text
+The multi-layer packed weight artifact was layer-major, but the multi-column
+runtime stream was segment-major. All offsets were in bounds, so preflight and
+compilation could not catch the semantic order mismatch.
+```
+
+Fix:
+
+```text
+Pack attention2 weights in the same segment-major order used by Runtime.fill:
+
+  qk_col0_all_layers
+  v_col0_all_layers
+  qk_col1_all_layers
+  v_col1_all_layers
+```
+
+Recheck:
+
+```text
+pytest -q \
+  iron/applications/qwen3_0_6b/test.py::test_qwen3_attention2_segment_major_weight_chunk_matches_layer_major_artifact
+
+layer_iterations=2 verify:
+  chunk_hidden_errors=0
+  current K/V cache errors=0
+```
+
+## Hidden/Metadata Split Times Out At Larger Chunks
+
+Symptom:
+
+```text
+attention2 + full MLP2 with hidden+metadata runtime fusion passes preflight
+and compiles for layer_iterations=8, but runtime returns:
+
+ERT_CMD_STATE_TIMEOUT
+```
+
+Diagnostic:
+
+```text
+After preflight passes, inspect the temporal order of split child stream
+consumption. A split can create balanced token counts but still stall if one
+child stream is drained far ahead of the other with small FIFO depths.
+```
+
+Evidence found:
+
+```text
+The runtime input object is split into:
+
+  hidden child token
+  QK/RoPE metadata child token
+
+for every layer. The fused initial/RMS worker consumed layer0 hidden and then
+discarded all later hidden child tokens up front, while downstream workers
+needed metadata tokens in layer order.
+```
+
+Root cause:
+
+```text
+The two split child streams advanced in different phase orders. At larger
+chunks, early hidden-token discard could backpressure the split/metadata path
+and prevent the layer-ordered dataflow from reaching the later metadata token.
+```
+
+Fix:
+
+```text
+Discard exactly one unused hidden child token per subsequent layer immediately
+before that layer consumes feedback. This keeps hidden and metadata child
+streams advancing in the same layer order.
+```
+
+Recheck:
+
+```text
+layer_iterations=8:
+  no runtime timeout
+  chunk_hidden_errors=0
+```

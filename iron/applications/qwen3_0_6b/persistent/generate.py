@@ -18,6 +18,7 @@ from iron.applications.qwen3_0_6b.persistent.layout import (
     load_packed_weight_tensor,
     pack_full_layer_weights_for_layer,
     pack_layer_cache,
+    pack_qk_rope_metadata_for_layers,
     pack_segment_major_weight_chunk_from_layer_major,
     pack_segment_major_weights_for_layers,
     packed_weight_layer_slice,
@@ -53,6 +54,8 @@ class FastGenerateBuffers:
     rope_angles_buf: XRTTensor
     chunk_outputs_buf: XRTTensor
     timing: FastGenerateSetupTiming
+    chunk_hidden_bufs: list[XRTTensor] | None = None
+    chunk_rope_bufs: list[XRTTensor] | None = None
     weight_parent_buf: XRTTensor | None = None
     packed_weight_manifest: dict[str, object] | None = None
 
@@ -63,6 +66,43 @@ def copy_tensor_to_xrt(buffer: XRTTensor, tensor: torch.Tensor) -> float:
     view.copy_(tensor.reshape(view.shape))
     buffer.to("npu")
     return time.perf_counter() - start
+
+
+def pack_attention2_runtime_inputs(
+    model: Qwen3ForCausalLM,
+    current_hidden: torch.Tensor,
+    position: int,
+    layer_start: int,
+    chunk_len: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    rope_angles = rope_lut_for_position(
+        model.config.head_dim,
+        model.config.rope_theta,
+        position,
+    )
+    metadata = pack_qk_rope_metadata_for_layers(
+        [
+            {
+                "W_q_norm": model.w(
+                    f"model.layers.{layer_idx}.self_attn.q_norm.weight"
+                ),
+                "W_k_norm": model.w(
+                    f"model.layers.{layer_idx}.self_attn.k_norm.weight"
+                ),
+                "rope_angles": rope_angles,
+            }
+            for layer_idx in range(layer_start, layer_start + chunk_len)
+        ],
+        position=None,
+    )
+    metadata_rows = metadata.view(chunk_len, -1)
+    runtime_hidden = torch.cat(
+        [
+            torch.cat([current_hidden.flatten(), metadata_rows[layer_idx]])
+            for layer_idx in range(chunk_len)
+        ]
+    ).contiguous()
+    return runtime_hidden, metadata
 
 
 def prepare_fast_generate_buffers(
@@ -78,6 +118,10 @@ def prepare_fast_generate_buffers(
 
     timing = FastGenerateSetupTiming()
     mlp_columns = op.num_aie_columns if getattr(op, "num_aie_columns", 1) == 2 else 1
+    mlp_gate_up_columns = getattr(op, "effective_mlp_gate_up_columns", 0)
+    mlp_gate_up_pair_rows = getattr(op, "mlp_gate_up_pair_rows", False)
+    mlp_gate_up_row_group = getattr(op, "mlp_gate_up_row_group", 4)
+    attention_columns = getattr(op, "attention_columns", 1)
 
     weight_parent_buf = None
     packed_weight_manifest = None
@@ -135,6 +179,10 @@ def prepare_fast_generate_buffers(
                             layer_idx,
                             chunk_len,
                             mlp_columns=mlp_columns,
+                            mlp_gate_up_columns=mlp_gate_up_columns,
+                            attention_columns=attention_columns,
+                            mlp_gate_up_pair_rows=mlp_gate_up_pair_rows,
+                            mlp_gate_up_row_group=mlp_gate_up_row_group,
                         )
                     )
                 )
@@ -176,6 +224,10 @@ def prepare_fast_generate_buffers(
                             model,
                             range(layer_idx, layer_idx + chunk_len),
                             mlp_columns=mlp_columns,
+                            mlp_gate_up_columns=mlp_gate_up_columns,
+                            attention_columns=attention_columns,
+                            mlp_gate_up_pair_rows=mlp_gate_up_pair_rows,
+                            mlp_gate_up_row_group=mlp_gate_up_row_group,
                         )
                     )
                 )
@@ -203,6 +255,42 @@ def prepare_fast_generate_buffers(
     timing.cache_xrt_s = time.perf_counter() - start
 
     dtype = chunk_weight_bufs[0].dtype
+    chunk_hidden_bufs = None
+    chunk_rope_bufs = None
+    fused_attention_runtime = (
+        getattr(op, "runtime_hidden_size", model.config.hidden_size)
+        != model.config.hidden_size
+    )
+    if attention_columns == 2:
+        chunk_hidden_bufs = []
+        chunk_rope_bufs = []
+        for layer_idx in range(0, model.config.num_hidden_layers, layer_chunk_size):
+            chunk_len = min(
+                layer_chunk_size,
+                model.config.num_hidden_layers - layer_idx,
+            )
+            qk_rope_metadata_size = getattr(
+                op,
+                "qk_rope_metadata_size",
+                3 * model.config.head_dim,
+            )
+            runtime_hidden_numel = (
+                chunk_len * (model.config.hidden_size + qk_rope_metadata_size)
+                if fused_attention_runtime
+                else model.config.hidden_size
+            )
+            chunk_hidden_bufs.append(
+                XRTTensor(
+                    (runtime_hidden_numel,),
+                    dtype=dtype,
+                )
+            )
+            chunk_rope_bufs.append(
+                XRTTensor(
+                    (chunk_len * qk_rope_metadata_size,),
+                    dtype=dtype,
+                )
+            )
     return FastGenerateBuffers(
         chunk_weight_bufs=chunk_weight_bufs,
         chunk_cache_bufs=chunk_cache_bufs,
@@ -210,6 +298,8 @@ def prepare_fast_generate_buffers(
         rope_angles_buf=XRTTensor((model.config.head_dim,), dtype=dtype),
         chunk_outputs_buf=XRTTensor((op.packed_outputs_size,), dtype=dtype),
         timing=timing,
+        chunk_hidden_bufs=chunk_hidden_bufs,
+        chunk_rope_bufs=chunk_rope_bufs,
         weight_parent_buf=weight_parent_buf,
         packed_weight_manifest=packed_weight_manifest,
     )
@@ -244,29 +334,62 @@ def run_n_layer_decode_hidden_fast(
     chunk_outputs_buf = fast_buffers.chunk_outputs_buf
     chunk_weight_bufs = fast_buffers.chunk_weight_bufs
     chunk_cache_bufs = fast_buffers.chunk_cache_bufs
+    chunk_hidden_bufs = fast_buffers.chunk_hidden_bufs
+    chunk_rope_bufs = fast_buffers.chunk_rope_bufs
+    attention_columns = getattr(
+        next(iter(chunk_ops.values()))[0], "attention_columns", 1
+    )
 
     total_npu_time = 0.0
     timing = FastGenerateStepTiming()
-    rope_angles = rope_lut_for_position(
-        model.config.head_dim,
-        model.config.rope_theta,
-        position,
-    )
-    timing.rope_sync_s += copy_tensor_to_xrt(rope_angles_buf, rope_angles)
+    if attention_columns == 1:
+        rope_angles = rope_lut_for_position(
+            model.config.head_dim,
+            model.config.rope_theta,
+            position,
+        )
+        timing.rope_sync_s += copy_tensor_to_xrt(rope_angles_buf, rope_angles)
+    elif chunk_hidden_bufs is None or chunk_rope_bufs is None:
+        raise RuntimeError("attention2 fast generate requires per-chunk buffers")
     chunk_idx = 0
     layer_idx = 0
     while layer_idx < model.config.num_hidden_layers:
         chunk_len = min(layer_chunk_size, model.config.num_hidden_layers - layer_idx)
         op, op_func = chunk_ops[chunk_len]
-        timing.hidden_sync_s += copy_tensor_to_xrt(hidden_buf, current_hidden)
+        if getattr(op, "attention_columns", 1) == 2:
+            fused_attention_runtime = (
+                getattr(op, "runtime_hidden_size", model.config.hidden_size)
+                != model.config.hidden_size
+            )
+            packed_hidden, rope_metadata = pack_attention2_runtime_inputs(
+                model,
+                current_hidden,
+                position,
+                layer_idx,
+                chunk_len,
+            )
+            runtime_hidden = (
+                packed_hidden if fused_attention_runtime else current_hidden
+            )
+            active_hidden_buf = chunk_hidden_bufs[chunk_idx]
+            active_rope_buf = chunk_rope_bufs[chunk_idx]
+            timing.hidden_sync_s += copy_tensor_to_xrt(
+                active_hidden_buf, runtime_hidden
+            )
+            if not fused_attention_runtime:
+                timing.rope_sync_s += copy_tensor_to_xrt(active_rope_buf, rope_metadata)
+        else:
+            active_hidden_buf = hidden_buf
+            active_rope_buf = rope_angles_buf
+            timing.hidden_sync_s += copy_tensor_to_xrt(hidden_buf, current_hidden)
 
         chunk_outputs_buf.device = "npu"
         cache_buf = chunk_cache_bufs[chunk_idx]
         start = time.perf_counter()
         result = op_func(
-            hidden_buf,
+            active_hidden_buf,
             chunk_weight_bufs[chunk_idx],
-            rope_angles_buf,
+            active_rope_buf,
             chunk_outputs_buf,
             cache_buf,
         )

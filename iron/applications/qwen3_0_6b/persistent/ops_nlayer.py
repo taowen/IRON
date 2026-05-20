@@ -32,6 +32,12 @@ class Qwen3PersistentNLayerFinalOnly(MLIROperator):
     position: int = 0
     intermediate_size: int = 3072
     num_aie_columns: int = 1
+    attention_columns: int = 1
+    mlp_gate_up_columns: int = 0
+    mlp_gate_up_pair_rows: bool = False
+    mlp_gate_up_direct_silu: bool = False
+    mlp_gate_up_row_group: int = 4
+    attention_probe_only: bool = False
     tile_size_input: int = 4
     tile_size_output: int = 128
     epsilon: float = 1e-6
@@ -51,6 +57,12 @@ class Qwen3PersistentNLayerFinalOnly(MLIROperator):
         "position": "pos",
         "intermediate_size": "ffn",
         "num_aie_columns": "col",
+        "attention_columns": "attncol",
+        "mlp_gate_up_columns": "mlpgatecol",
+        "mlp_gate_up_pair_rows": "mlpgatepair",
+        "mlp_gate_up_direct_silu": "mlpgatedirect",
+        "mlp_gate_up_row_group": "mlpgaterg",
+        "attention_probe_only": "attnprobe",
         "tile_size_input": "tsi",
         "tile_size_output": "tso",
         "layer_iterations": "layers",
@@ -81,6 +93,53 @@ class Qwen3PersistentNLayerFinalOnly(MLIROperator):
             raise ValueError("num_aie_columns must be positive")
         if self.num_aie_columns not in {1, 2, 4}:
             raise ValueError("num_aie_columns must be one of 1, 2, or 4")
+        if self.attention_columns not in {1, 2}:
+            raise ValueError("attention_columns must be one of 1 or 2")
+        if self.attention_columns == 2 and self.num_aie_columns not in {1, 2}:
+            raise ValueError(
+                "attention_columns=2 currently supports num_aie_columns=1 for "
+                "the attention probe or num_aie_columns=2 for the packed MLP2 "
+                "path"
+            )
+        if self.mlp_gate_up_columns not in {0, 1, 2, 3}:
+            raise ValueError("mlp_gate_up_columns must be one of 0, 1, 2, or 3")
+        if self.effective_mlp_gate_up_columns in {2, 3} and self.num_aie_columns != 2:
+            raise ValueError(
+                "mlp_gate_up_columns=2 or 3 currently requires num_aie_columns=2"
+            )
+        if self.mlp_gate_up_pair_rows:
+            if self.effective_mlp_gate_up_columns not in {2, 3}:
+                raise ValueError(
+                    "mlp_gate_up_pair_rows currently requires "
+                    "mlp_gate_up_columns=2 or 3"
+                )
+            if self.tile_size_input != 4:
+                raise ValueError("mlp_gate_up_pair_rows requires tile_size_input=4")
+        if self.mlp_gate_up_direct_silu and not self.mlp_gate_up_pair_rows:
+            raise ValueError("mlp_gate_up_direct_silu requires mlp_gate_up_pair_rows")
+        if self.mlp_gate_up_row_group not in {4, 8}:
+            raise ValueError("mlp_gate_up_row_group must be one of 4 or 8")
+        if self.mlp_gate_up_row_group != 4 and not (
+            self.mlp_gate_up_pair_rows and self.mlp_gate_up_direct_silu
+        ):
+            raise ValueError(
+                "mlp_gate_up_row_group=8 currently requires "
+                "mlp_gate_up_pair_rows and mlp_gate_up_direct_silu"
+            )
+        if self.mlp_gate_up_row_group != 4 and self.effective_mlp_gate_up_columns != 2:
+            raise ValueError(
+                "mlp_gate_up_row_group=8 currently supports only "
+                "mlp_gate_up_columns=2"
+            )
+        if (
+            self.intermediate_size
+            % (self.effective_mlp_gate_up_columns * self.mlp_gate_up_row_group)
+            != 0
+        ):
+            raise ValueError(
+                "intermediate_size per gate/up column must be divisible by "
+                "mlp_gate_up_row_group"
+            )
         if self.num_aie_columns > 2 and self.layer_iterations != 1:
             raise ValueError(
                 "n-layer final-only column scaling above 2 columns is currently "
@@ -116,6 +175,11 @@ class Qwen3PersistentNLayerFinalOnly(MLIROperator):
             raise ValueError(f"epsilon must be positive, got {self.epsilon}")
         if self.layer_iterations < 1:
             raise ValueError("layer_iterations must be positive")
+        if self.attention_probe_only and self.layer_iterations != 1:
+            raise ValueError(
+                "attention_probe_only is a single-layer boundary probe; "
+                f"got layer_iterations={self.layer_iterations}"
+            )
         if self.layer_iterations > self.max_supported_layer_iterations:
             raise ValueError(
                 "Qwen3 n-layer final-only currently supports at most "
@@ -123,13 +187,6 @@ class Qwen3PersistentNLayerFinalOnly(MLIROperator):
                 f"got {self.layer_iterations}. Larger chunks need a runtime "
                 "state-machine design that reuses cache DMA descriptors instead "
                 "of statically issuing more layer groups."
-            )
-        if self.layer_iterations > 8 and self.layer_iterations != 28:
-            raise ValueError(
-                "Qwen3 n-layer final-only currently supports chunk sizes 1..8 "
-                "or the experimental full-depth chunk size 28; "
-                f"got {self.layer_iterations}. Intermediate chunks need their "
-                "own cache-grouping and numerical validation."
             )
         MLIROperator.__init__(self, context=self.context)
 
@@ -177,7 +234,8 @@ class Qwen3PersistentNLayerFinalOnly(MLIROperator):
     @property
     def _o_gemv_kernel_object(self):
         return (
-            f"qwen3_persistent_gemv_{self.q_size}k_{self.kernel_vector_size}vs_o_proj.o"
+            f"qwen3_persistent_gemv_{self.o_gemv_k_size}k_"
+            f"{self.kernel_vector_size}vs_o_proj.o"
         )
 
     @property
@@ -243,6 +301,40 @@ class Qwen3PersistentNLayerFinalOnly(MLIROperator):
         return self.layer_iterations * self.packed_cache_size
 
     @property
+    def effective_mlp_gate_up_columns(self):
+        if self.mlp_gate_up_columns != 0:
+            return self.mlp_gate_up_columns
+        return 2 if self.num_aie_columns == 2 else 1
+
+    @property
+    def qk_rope_metadata_size(self):
+        if self.attention_columns == 2:
+            return 3 * self.head_dim
+        return self.head_dim
+
+    @property
+    def rope_runtime_size(self):
+        if self.attention_columns == 2:
+            return self.layer_iterations * self.qk_rope_metadata_size
+        return self.head_dim
+
+    @property
+    def runtime_hidden_size(self):
+        if (
+            self.attention_columns == 2
+            and self.num_aie_columns == 2
+            and self.effective_mlp_gate_up_columns in {2, 3}
+        ):
+            return self.layer_iterations * (
+                self.hidden_size + self.qk_rope_metadata_size
+            )
+        return self.hidden_size
+
+    @property
+    def o_gemv_k_size(self):
+        return self.q_size // self.attention_columns
+
+    @property
     def packed_weights_size(self):
         return (
             self.hidden_size
@@ -284,6 +376,12 @@ class Qwen3PersistentNLayerFinalOnly(MLIROperator):
                     0,
                 ),
                 {
+                    "attention_columns": self.attention_columns,
+                    "mlp_gate_up_columns": self.effective_mlp_gate_up_columns,
+                    "mlp_gate_up_pair_rows": self.mlp_gate_up_pair_rows,
+                    "mlp_gate_up_direct_silu": self.mlp_gate_up_direct_silu,
+                    "mlp_gate_up_row_group": self.mlp_gate_up_row_group,
+                    "attention_probe_only": self.attention_probe_only,
                     "rms_kernel_object": self._rms_kernel_object,
                     "gemv_kernel_object": self._gemv_kernel_object,
                     "rope_kernel_object": self._rope_kernel_object,
@@ -384,7 +482,7 @@ class Qwen3PersistentNLayerFinalOnly(MLIROperator):
                     )
                 ],
                 extra_flags=[
-                    f"-DDIM_K={self.q_size}",
+                    f"-DDIM_K={self.o_gemv_k_size}",
                     f"-DVEC_SIZE={self.kernel_vector_size}",
                     f"-DMATVEC_SCALAR_FN={self._o_gemv_scalar_fn}",
                     f"-DMATVEC_VECTORIZED_FN={self._o_gemv_vectorized_fn}",
@@ -446,9 +544,9 @@ class Qwen3PersistentNLayerFinalOnly(MLIROperator):
 
     def get_arg_spec(self):
         return [
-            AIERuntimeArgSpec("in", (self.hidden_size,)),
+            AIERuntimeArgSpec("in", (self.runtime_hidden_size,)),
             AIERuntimeArgSpec("in", (self.packed_weight_chunk_size,)),
-            AIERuntimeArgSpec("in", (self.head_dim,)),
+            AIERuntimeArgSpec("in", (self.rope_runtime_size,)),
             AIERuntimeArgSpec("out", (self.packed_outputs_size,)),
             AIERuntimeArgSpec("inout", (self.packed_cache_chunk_size,)),
         ]

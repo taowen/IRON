@@ -16,8 +16,9 @@ methods are split by diagnostic boundary.
 | Cached build artifacts or stale graph | 3 |
 | Runtime BO metadata crash | 4 |
 | Wrong final token or stage value | 5, 7, 8 |
-| Runtime patch-site risk | 6 |
-| Placement, ObjectFIFO, DMA, or L1 resource failure | 9, 11, 13, 14, 15, 16 |
+| Runtime patch-site risk | 6, 48 |
+| Placement, ObjectFIFO, DMA, or L1 resource failure | 9, 11, 13, 14, 15, 16, 44, 45, 47 |
+| External AIE kernel C++ compile/API failure | 43 |
 | Full-ELF scratch layout changes correctness | 10 |
 | Operator-specific numeric mismatch | 12 |
 | Persistent phase ordering or timeout | 17 |
@@ -27,7 +28,8 @@ methods are split by diagnostic boundary.
 | Multi-layer tensor handoff or diagnostic serialization crash | 31 |
 | Composed checkpoint fails but standalone producer may pass | 30 |
 | Decode is correct but much slower than NPU time suggests | 32 |
-| Decode is correct and NPU time dominates | 35 |
+| Decode is correct and NPU time dominates | 35, 41, 42 |
+| Decode is correct but compile still happens per position | 6, 46 |
 | Packed weight artifact, offset, or XRT sub-buffer risk | 33, 34 |
 
 ### Runtime
@@ -42,6 +44,8 @@ methods are split by diagnostic boundary.
 - [31. Clone XRT Tensor Views Before Crossing Debug Boundaries](methods-runtime.md#31-clone-xrt-tensor-views-before-crossing-debug-boundaries)
 - [32. Split Wall Time From NPU Time](methods-runtime.md#32-split-wall-time-from-npu-time)
 - [33. Prove Packed Weight BO Slices With Token Match](methods-runtime.md#33-prove-packed-weight-bo-slices-with-token-match)
+- [42. Run A Phase Sensitivity Probe Before Widening](methods-runtime.md#42-run-a-phase-sensitivity-probe-before-widening)
+- [48. Treat Control Packets As A Last-Resort Runtime Patch Path](methods-runtime.md#48-treat-control-packets-as-a-last-resort-runtime-patch-path)
 
 ### Static
 
@@ -58,6 +62,12 @@ methods are split by diagnostic boundary.
 - [25. Optional Debug Streams Need One Boolean](methods-static.md#25-optional-debug-streams-need-one-boolean)
 - [34. Validate Packed Weight Artifact Before Runtime](methods-static.md#34-validate-packed-weight-artifact-before-runtime)
 - [35. Probe Real Graph Column Scaling](methods-static.md#35-probe-real-graph-column-scaling)
+- [41. Estimate Static Work Before Choosing A Widening Target](methods-static.md#41-estimate-static-work-before-choosing-a-widening-target)
+- [43. Read AIE API Compile Errors As Kernel-Boundary Evidence](methods-static.md#43-read-aie-api-compile-errors-as-kernel-boundary-evidence)
+- [44. Full AIECC After ObjectFIFO Shape Changes](methods-static.md#44-full-aiecc-after-objectfifo-shape-changes)
+- [45. Use ObjectFifo Split To Reduce Runtime Endpoints](methods-static.md#45-use-objectfifo-split-to-reduce-runtime-endpoints)
+- [46. Diff Position Artifacts Before Choosing Patch Or Buckets](methods-static.md#46-diff-position-artifacts-before-choosing-patch-or-buckets)
+- [47. Check ObjectFIFO Object Alignment After Metadata Tails](methods-static.md#47-check-objectfifo-object-alignment-after-metadata-tails)
 
 ### Numeric
 

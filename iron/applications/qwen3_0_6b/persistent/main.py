@@ -86,6 +86,56 @@ def parse_args():
         help="Number of AIE columns for column-scaling experiments.",
     )
     parser.add_argument(
+        "--attention-columns",
+        type=int,
+        default=1,
+        help="Number of attention columns for n-layer attention sharding probes.",
+    )
+    parser.add_argument(
+        "--mlp-gate-up-columns",
+        type=int,
+        default=0,
+        help=(
+            "Gate/up MLP columns for n-layer probes. 0 keeps the default tied "
+            "to --num-aie-columns; 1 with --num-aie-columns 2 probes down-only "
+            "MLP2; 3 runs the experimental three-way gate/up branch."
+        ),
+    )
+    parser.add_argument(
+        "--mlp-gate-up-pair-rows",
+        action="store_true",
+        help=(
+            "Use paired gate/up row-group weight layout for MLP2 experiments. "
+            "This is a boundary probe for a future fused gate+up kernel."
+        ),
+    )
+    parser.add_argument(
+        "--mlp-gate-up-direct-silu",
+        action="store_true",
+        help=(
+            "Use the paired-row gate/up kernel variant that writes the SiLU*up "
+            "hidden shard directly. Requires --mlp-gate-up-pair-rows."
+        ),
+    )
+    parser.add_argument(
+        "--mlp-gate-up-row-group",
+        type=int,
+        default=4,
+        choices=(4, 8),
+        help=(
+            "Paired gate/up row group size for n-layer direct-SiLU MLP2 "
+            "experiments. 8 is a no-new-endpoint call-count reduction probe."
+        ),
+    )
+    parser.add_argument(
+        "--attention-probe-only",
+        action="store_true",
+        help=(
+            "For n-layer-final-only, stop after attention/O-proj/residual and "
+            "verify that boundary instead of running the MLP."
+        ),
+    )
+    parser.add_argument(
         "--prepare-weights",
         action="store_true",
         help=(
@@ -146,6 +196,16 @@ def parse_args():
         type=Path,
         default=None,
         help="Run an isolated QKV diagnostic bundle",
+    )
+    parser.add_argument(
+        "--diagnose-nlayer-layer",
+        type=int,
+        default=None,
+        help=(
+            "For n-layer-final-only, run an auxiliary prefix chunk and compare "
+            "the selected layer's cache current slice against local references "
+            "from the actual NPU layer input."
+        ),
     )
     parser.add_argument("--dump-proof", action="store_true")
     return parser.parse_args()
@@ -282,6 +342,12 @@ def main():
             intermediate_size=model.config.intermediate_size,
             layer_iterations=args.layer_chunk_size,
             num_aie_columns=args.num_aie_columns,
+            attention_columns=args.attention_columns,
+            mlp_gate_up_columns=args.mlp_gate_up_columns,
+            mlp_gate_up_pair_rows=args.mlp_gate_up_pair_rows,
+            mlp_gate_up_direct_silu=args.mlp_gate_up_direct_silu,
+            mlp_gate_up_row_group=args.mlp_gate_up_row_group,
+            attention_probe_only=args.attention_probe_only,
             epsilon=model.config.rms_norm_eps,
             context=context,
         )

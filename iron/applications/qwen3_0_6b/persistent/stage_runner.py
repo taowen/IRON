@@ -3,15 +3,26 @@
 # SPDX-FileCopyrightText: Copyright (C) 2026 Advanced Micro Devices, Inc. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
+
 import torch
 import torch.nn.functional as F
 from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor
 
-from iron.applications.qwen3_0_6b.qwen3_cpu import Qwen3ForCausalLM
+from iron.applications.qwen3_0_6b.qwen3_cpu import Qwen3ForCausalLM, rms_norm
+from iron.applications.qwen3_0_6b.qwen3_decode_reference import (
+    Qwen3CachedReference,
+    clone_decode_state,
+)
 from iron.applications.qwen3_0_6b.persistent.checks import print_tensor_check
+from iron.applications.qwen3_0_6b.persistent.diagnostics import (
+    write_qkv_boundary_diagnostic_bundle,
+)
 from iron.applications.qwen3_0_6b.persistent.layout import (
     build_full_layer_inputs_for_layer,
+    host_owned_tensor,
     pack_full_layer_weights,
+    pack_qk_rope_metadata_for_layers,
     pack_segment_major_full_layer_weights,
 )
 from iron.applications.qwen3_0_6b.persistent.ops_core import verification_tolerance
@@ -22,9 +33,333 @@ from iron.applications.qwen3_0_6b.persistent.refs import (
     build_reference_mlp_down_residual,
     build_reference_mlp_gate_up,
     build_reference_qkv,
+    one_layer_reference_tensors,
 )
 from iron.applications.qwen3_0_6b.persistent.stages import N_LAYER_FINAL_ONLY_STAGE
+from iron.applications.qwen3_0_6b.qwen3_preflight import (
+    run_persistent_artifact_preflight,
+)
 from iron.common.test_utils import verify_buffer
+
+
+def _pack_n_layer_runtime_buffers(op, initial_hidden, inputs_by_layer):
+    if (
+        op.layer_iterations == 1
+        and op.num_aie_columns == 1
+        and getattr(op, "attention_columns", 1) == 1
+    ):
+        packed_weights = pack_full_layer_weights(inputs_by_layer[0])
+    else:
+        packed_weights = pack_segment_major_full_layer_weights(
+            inputs_by_layer,
+            mlp_columns=op.num_aie_columns if op.num_aie_columns == 2 else 1,
+            mlp_gate_up_columns=getattr(op, "effective_mlp_gate_up_columns", 0),
+            attention_columns=getattr(op, "attention_columns", 1),
+            mlp_gate_up_pair_rows=getattr(op, "mlp_gate_up_pair_rows", False),
+            mlp_gate_up_row_group=getattr(op, "mlp_gate_up_row_group", 4),
+        )
+    if getattr(op, "attention_columns", 1) == 2:
+        rope_runtime = pack_qk_rope_metadata_for_layers(
+            inputs_by_layer,
+            position=None,
+        )
+    else:
+        rope_runtime = inputs_by_layer[0]["rope_angles"]
+    if getattr(op, "runtime_hidden_size", op.hidden_size) != op.hidden_size:
+        metadata_rows = rope_runtime.view(op.layer_iterations, -1)
+        runtime_hidden = torch.cat(
+            [
+                torch.cat([initial_hidden.flatten(), metadata_rows[layer_idx]])
+                for layer_idx in range(op.layer_iterations)
+            ]
+        ).contiguous()
+    else:
+        runtime_hidden = initial_hidden
+    initial_cache = torch.cat(
+        [inputs["initial_cache"].clone() for inputs in inputs_by_layer]
+    ).contiguous()
+    return packed_weights, rope_runtime, runtime_hidden, initial_cache
+
+
+def _run_n_layer_prefix_hidden(
+    *,
+    base_op,
+    prefix_layers: int,
+    initial_hidden: torch.Tensor,
+    initial_state,
+    inputs_by_layer: list[dict[str, torch.Tensor]],
+) -> torch.Tensor:
+    prefix_inputs = inputs_by_layer[:prefix_layers]
+    prefix_op = type(base_op)(
+        hidden_size=base_op.hidden_size,
+        q_size=base_op.q_size,
+        kv_size=base_op.kv_size,
+        head_dim=base_op.head_dim,
+        max_seq_len=base_op.max_seq_len,
+        position=base_op.position,
+        intermediate_size=base_op.intermediate_size,
+        layer_iterations=prefix_layers,
+        num_aie_columns=base_op.num_aie_columns,
+        attention_columns=getattr(base_op, "attention_columns", 1),
+        mlp_gate_up_columns=getattr(base_op, "mlp_gate_up_columns", 0),
+        mlp_gate_up_pair_rows=getattr(base_op, "mlp_gate_up_pair_rows", False),
+        mlp_gate_up_direct_silu=getattr(base_op, "mlp_gate_up_direct_silu", False),
+        mlp_gate_up_row_group=getattr(base_op, "mlp_gate_up_row_group", 4),
+        attention_probe_only=False,
+        tile_size_input=base_op.tile_size_input,
+        tile_size_output=base_op.tile_size_output,
+        epsilon=base_op.epsilon,
+        context=base_op.context,
+    )
+    prefix_op.compile()
+    preflight = run_persistent_artifact_preflight(
+        mlir_path=Path(prefix_op.xclbin_artifact.mlir_input.filename),
+        arg_specs=len(prefix_op.get_arg_spec()),
+    )
+    print(
+        "nlayer_prefix_preflight: ok "
+        f"layers={prefix_layers} "
+        f"runtime_memrefs={preflight.runtime_memrefs} "
+        f"compute_cores={preflight.compute_cores} "
+        f"max_dma_tasks_per_fifo={preflight.max_dma_tasks_per_fifo} "
+        f"max_tile_inputs={preflight.max_compute_tile_inputs} "
+        f"max_tile_outputs={preflight.max_compute_tile_outputs}"
+    )
+    packed_weights, rope_runtime, runtime_hidden, initial_cache = (
+        _pack_n_layer_runtime_buffers(prefix_op, initial_hidden, prefix_inputs)
+    )
+    hidden_buf = XRTTensor.from_torch(runtime_hidden)
+    weights_buf = XRTTensor.from_torch(packed_weights)
+    rope_buf = XRTTensor.from_torch(rope_runtime)
+    output_buf = XRTTensor((prefix_op.packed_outputs_size,), dtype=hidden_buf.dtype)
+    cache_buf = XRTTensor.from_torch(initial_cache.clone())
+    result = prefix_op.get_callable()(
+        hidden_buf,
+        weights_buf,
+        rope_buf,
+        output_buf,
+        cache_buf,
+    )
+    print(
+        f"nlayer_prefix_npu_time_us: layers={prefix_layers} "
+        f"{result.npu_time / 1e3:.3f}"
+    )
+    output_buf.device = "npu"
+    return host_owned_tensor(output_buf.to_torch())
+
+
+def _run_single_layer_from_boundary(
+    *,
+    base_op,
+    layer_input: torch.Tensor,
+    layer_inputs: dict[str, torch.Tensor],
+) -> torch.Tensor:
+    single_op = type(base_op)(
+        hidden_size=base_op.hidden_size,
+        q_size=base_op.q_size,
+        kv_size=base_op.kv_size,
+        head_dim=base_op.head_dim,
+        max_seq_len=base_op.max_seq_len,
+        position=base_op.position,
+        intermediate_size=base_op.intermediate_size,
+        layer_iterations=1,
+        num_aie_columns=base_op.num_aie_columns,
+        attention_columns=getattr(base_op, "attention_columns", 1),
+        mlp_gate_up_columns=getattr(base_op, "mlp_gate_up_columns", 0),
+        mlp_gate_up_pair_rows=getattr(base_op, "mlp_gate_up_pair_rows", False),
+        mlp_gate_up_direct_silu=getattr(base_op, "mlp_gate_up_direct_silu", False),
+        mlp_gate_up_row_group=getattr(base_op, "mlp_gate_up_row_group", 4),
+        attention_probe_only=False,
+        tile_size_input=base_op.tile_size_input,
+        tile_size_output=base_op.tile_size_output,
+        epsilon=base_op.epsilon,
+        context=base_op.context,
+    )
+    single_op.compile()
+    preflight = run_persistent_artifact_preflight(
+        mlir_path=Path(single_op.xclbin_artifact.mlir_input.filename),
+        arg_specs=len(single_op.get_arg_spec()),
+    )
+    print(
+        "nlayer_single_boundary_preflight: ok "
+        f"runtime_memrefs={preflight.runtime_memrefs} "
+        f"compute_cores={preflight.compute_cores} "
+        f"max_dma_tasks_per_fifo={preflight.max_dma_tasks_per_fifo} "
+        f"max_tile_inputs={preflight.max_compute_tile_inputs} "
+        f"max_tile_outputs={preflight.max_compute_tile_outputs}"
+    )
+    packed_weights, rope_runtime, runtime_hidden, initial_cache = (
+        _pack_n_layer_runtime_buffers(single_op, layer_input, [layer_inputs])
+    )
+    hidden_buf = XRTTensor.from_torch(runtime_hidden)
+    weights_buf = XRTTensor.from_torch(packed_weights)
+    rope_buf = XRTTensor.from_torch(rope_runtime)
+    output_buf = XRTTensor((single_op.packed_outputs_size,), dtype=hidden_buf.dtype)
+    cache_buf = XRTTensor.from_torch(initial_cache.clone())
+    result = single_op.get_callable()(
+        hidden_buf,
+        weights_buf,
+        rope_buf,
+        output_buf,
+        cache_buf,
+    )
+    print(f"nlayer_single_boundary_npu_time_us: {result.npu_time / 1e3:.3f}")
+    output_buf.device = "npu"
+    return host_owned_tensor(output_buf.to_torch())
+
+
+def _local_single_layer_reference(
+    *,
+    model: Qwen3ForCausalLM,
+    args,
+    layer_idx: int,
+    layer_input: torch.Tensor,
+    initial_state,
+) -> torch.Tensor:
+    ref = Qwen3CachedReference(
+        model, args.max_seq_len, num_layers=max(1, layer_idx + 1)
+    )
+    state = clone_decode_state(initial_state)
+    layer_prefix = f"model.layers.{layer_idx}"
+    residual = layer_input.view(1, 1, -1)
+    x_norm = rms_norm(
+        residual,
+        model.w(f"{layer_prefix}.input_layernorm.weight"),
+        model.config.rms_norm_eps,
+    )
+    x = residual + ref._attention_decode(x_norm, layer_idx, state)
+    residual = x
+    x_norm = rms_norm(
+        x,
+        model.w(f"{layer_prefix}.post_attention_layernorm.weight"),
+        model.config.rms_norm_eps,
+    )
+    x = residual + ref._mlp(x_norm, layer_idx)
+    return x.flatten().contiguous()
+
+
+def _run_n_layer_local_cache_diagnostic(
+    *,
+    args,
+    model: Qwen3ForCausalLM,
+    op,
+    layer_idx: int,
+    next_token: int,
+    initial_hidden: torch.Tensor,
+    initial_state,
+    expected_state,
+    inputs_by_layer: list[dict[str, torch.Tensor]],
+    packed_cache_chunk: torch.Tensor,
+    actual_hidden: torch.Tensor,
+) -> bool:
+    if not (0 <= layer_idx < op.layer_iterations):
+        raise ValueError(
+            f"diagnose layer must be in [0, {op.layer_iterations}), got {layer_idx}"
+        )
+    if layer_idx == 0:
+        layer_input = initial_hidden.flatten().contiguous()
+    else:
+        layer_input = _run_n_layer_prefix_hidden(
+            base_op=op,
+            prefix_layers=layer_idx,
+            initial_hidden=initial_hidden,
+            initial_state=initial_state,
+            inputs_by_layer=inputs_by_layer,
+        )
+
+    if layer_idx == 0:
+        expected_layer_input = initial_hidden.view(1, 1, -1).contiguous()
+    else:
+        prefix_ref = Qwen3CachedReference(model, args.max_seq_len, num_layers=layer_idx)
+        expected_layer_input, _ = prefix_ref.decode_hidden(
+            next_token,
+            clone_decode_state(initial_state),
+        )
+    layer_inputs = inputs_by_layer[layer_idx]
+    layer_cache = packed_cache_chunk[
+        layer_idx * op.packed_cache_size : (layer_idx + 1) * op.packed_cache_size
+    ]
+    values_cache = layer_cache[op.cache_half_size :].view(
+        op.kv_heads, args.max_seq_len, op.head_dim
+    )
+    actual_v_current = values_cache[:, op.position, :].flatten().contiguous()
+    actual_v_current = host_owned_tensor(actual_v_current)
+    x_norm_local = rms_norm(
+        layer_input.view(1, 1, -1),
+        layer_inputs["input_norm_weight"],
+        model.config.rms_norm_eps,
+    ).flatten()
+    values_local = F.linear(
+        x_norm_local.view(1, 1, -1),
+        layer_inputs["W_v"],
+    ).flatten()
+    print(f"nlayer_local_diag_layer: {layer_idx}")
+    errors = {}
+    errors["layer_input_full_ref"] = print_tensor_check(
+        f"layer{layer_idx}_diag_layer_input_full_ref",
+        layer_input,
+        expected_layer_input.flatten().contiguous(),
+        rel_tol=0.06,
+        abs_tol=0.04 * max(1, layer_idx),
+    )
+    errors["values_cache_local"] = print_tensor_check(
+        f"layer{layer_idx}_diag_values_cache_vs_local_input",
+        actual_v_current,
+        values_local,
+        rel_tol=0.04,
+        abs_tol=1e-6,
+    )
+    errors["values_cache_full_ref"] = print_tensor_check(
+        f"layer{layer_idx}_diag_values_cache_vs_full_ref",
+        actual_v_current,
+        expected_state.values[layer_idx][:, op.position, :].flatten(),
+        rel_tol=0.05,
+        abs_tol=0.025 * (layer_idx + 1),
+    )
+    if errors["values_cache_local"]:
+        bundle_inputs = {
+            **layer_inputs,
+            "hidden": layer_input,
+        }
+        write_qkv_boundary_diagnostic_bundle(
+            build_dir=args.build_dir,
+            layer_idx=layer_idx,
+            inputs=bundle_inputs,
+            full_layer_v=actual_v_current,
+        )
+        print(f"nlayer_local_diag_result: layer_{layer_idx}_values_cache_local_failed")
+    elif errors["values_cache_full_ref"]:
+        print(f"nlayer_local_diag_result: layer_{layer_idx}_full_ref_drift")
+    else:
+        print(f"nlayer_local_diag_result: layer_{layer_idx}_values_cache_local_passed")
+    if layer_idx == op.layer_iterations - 1:
+        single_hidden = _run_single_layer_from_boundary(
+            base_op=op,
+            layer_input=layer_input,
+            layer_inputs=layer_inputs,
+        )
+        local_hidden = _local_single_layer_reference(
+            model=model,
+            args=args,
+            layer_idx=layer_idx,
+            layer_input=layer_input,
+            initial_state=initial_state,
+        )
+        print_tensor_check(
+            f"layer{layer_idx}_diag_main_vs_single_layer_hidden",
+            actual_hidden,
+            single_hidden,
+            rel_tol=0.04,
+            abs_tol=1e-6,
+        )
+        print_tensor_check(
+            f"layer{layer_idx}_diag_single_layer_hidden_vs_local_ref",
+            single_hidden,
+            local_hidden,
+            rel_tol=0.06,
+            abs_tol=0.04,
+        )
+    return bool(errors["values_cache_local"])
 
 
 def run_n_layer_final_only(
@@ -65,19 +400,12 @@ def run_n_layer_final_only(
         )
         for layer_idx in range(op.layer_iterations)
     ]
-    hidden_buf = XRTTensor.from_torch(initial_hidden)
-    if op.layer_iterations == 1 and op.num_aie_columns == 1:
-        packed_weights = pack_full_layer_weights(inputs_by_layer[0])
-    else:
-        packed_weights = pack_segment_major_full_layer_weights(
-            inputs_by_layer,
-            mlp_columns=op.num_aie_columns if op.num_aie_columns == 2 else 1,
-        )
+    packed_weights, rope_runtime, runtime_hidden, initial_cache = (
+        _pack_n_layer_runtime_buffers(op, initial_hidden, inputs_by_layer)
+    )
     weights_buf = XRTTensor.from_torch(packed_weights)
-    rope_angles_buf = XRTTensor.from_torch(inputs_by_layer[0]["rope_angles"])
-    initial_cache = torch.cat(
-        [inputs["initial_cache"].clone() for inputs in inputs_by_layer]
-    ).contiguous()
+    hidden_buf = XRTTensor.from_torch(runtime_hidden)
+    rope_angles_buf = XRTTensor.from_torch(rope_runtime)
 
     failed = False
     repeat_count = max(1, args.verify_repeat)
@@ -101,14 +429,30 @@ def run_n_layer_final_only(
         actual_hidden = output_buf.to_torch()
         packed_cache_chunk = cache_buf.to_torch()
 
-        checks = {
-            "chunk_hidden": (
-                actual_hidden,
-                expected_hidden,
-                0.06,
-                0.04 * op.layer_iterations,
-            ),
-        }
+        if getattr(op, "attention_probe_only", False):
+            reference_tensors = one_layer_reference_tensors(
+                model,
+                next_token,
+                initial_state,
+                args.max_seq_len,
+            )
+            checks = {
+                "attention_probe_residual": (
+                    actual_hidden,
+                    reference_tensors["attn_residual"].flatten().contiguous(),
+                    0.06,
+                    0.04,
+                ),
+            }
+        else:
+            checks = {
+                "chunk_hidden": (
+                    actual_hidden,
+                    expected_hidden,
+                    0.06,
+                    0.04 * op.layer_iterations,
+                ),
+            }
         for layer_idx in range(op.layer_iterations):
             layer_cache = packed_cache_chunk[
                 layer_idx
@@ -136,6 +480,23 @@ def run_n_layer_final_only(
         for name, (actual, expected, rel_tol, abs_tol) in checks.items():
             errors = print_tensor_check(name, actual, expected, rel_tol, abs_tol)
             failed = failed or bool(errors)
+        if args.diagnose_nlayer_layer is not None:
+            failed = (
+                _run_n_layer_local_cache_diagnostic(
+                    args=args,
+                    model=model,
+                    op=op,
+                    layer_idx=args.diagnose_nlayer_layer,
+                    next_token=next_token,
+                    initial_hidden=initial_hidden,
+                    initial_state=initial_state,
+                    expected_state=expected_state,
+                    inputs_by_layer=inputs_by_layer,
+                    packed_cache_chunk=packed_cache_chunk,
+                    actual_hidden=actual_hidden,
+                )
+                or failed
+            )
 
     return failed
 

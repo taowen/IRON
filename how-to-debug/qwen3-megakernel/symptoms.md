@@ -20,7 +20,10 @@ were used in this repository. Detailed entries are split by failure class.
 - [First Iteration Is Zero, Later Iterations Improve](symptoms-runtime.md#first-iteration-is-zero-later-iterations-improve)
 - [Diagnostic Bundle Crashes While Serializing A Layer Tensor](symptoms-runtime.md#diagnostic-bundle-crashes-while-serializing-a-layer-tensor)
 - [Decode Wall Time Is Much Larger Than NPU Time](symptoms-runtime.md#decode-wall-time-is-much-larger-than-npu-time)
+- [Decode Compiles A New Artifact For Each Position](symptoms-runtime.md#decode-compiles-a-new-artifact-for-each-position)
+- [Runtime Position Metadata Variant Times Out](symptoms-runtime.md#runtime-position-metadata-variant-times-out)
 - [N-Layer Chunk 6/8 Compiles But Times Out At Runtime](symptoms-runtime.md#n-layer-chunk-68-compiles-but-times-out-at-runtime)
+- [Diagnostic Chunk Is Rejected Before Compile](symptoms-runtime.md#diagnostic-chunk-is-rejected-before-compile)
 
 ### Numeric
 
@@ -33,6 +36,8 @@ were used in this repository. Detailed entries are split by failure class.
 - [SiLU Negative Inputs Exceed The Positive-Only Operator Tolerance](symptoms-numeric.md#silu-negative-inputs-exceed-the-positive-only-operator-tolerance)
 - [Full-Depth Multi-Layer Hidden Fails After Short Ladder Passes](symptoms-numeric.md#full-depth-multi-layer-hidden-fails-after-short-ladder-passes)
 - [N-Layer Final-Only Cache Fails Full Reference But Debug Path Passes Local Boundary](symptoms-numeric.md#n-layer-final-only-cache-fails-full-reference-but-debug-path-passes-local-boundary)
+- [Attention2 N-Layer Hidden Fails Strict Full Reference But Boundary Replay Matches](symptoms-numeric.md#attention2-n-layer-hidden-fails-strict-full-reference-but-boundary-replay-matches)
+- [Attention Probe Returns NaN After Metadata Stream Change](symptoms-numeric.md#attention-probe-returns-nan-after-metadata-stream-change)
 
 ### Resources
 
@@ -51,13 +56,20 @@ were used in this repository. Detailed entries are split by failure class.
 - [Multidimensional TAP Is Legal But NPU BD Rejects It](symptoms-resources.md#multidimensional-tap-is-legal-but-npu-bd-rejects-it)
 - [New Stage Exceeds SequentialPlacer Worker Capacity](symptoms-resources.md#new-stage-exceeds-sequentialplacer-worker-capacity)
 - [Real Full-Layer Graph Is Locked To One Column](symptoms-resources.md#real-full-layer-graph-is-locked-to-one-column)
+- [Attention2 QKV Worker Exceeds Output Channels](symptoms-resources.md#attention2-qkv-worker-exceeds-output-channels)
+- [Attention2 Plus MLP2 Still Exhausts Runtime Output Endpoints](symptoms-resources.md#attention2-plus-mlp2-still-exhausts-runtime-output-endpoints)
+- [Cache-Pair TAP Passes Preflight But Fails BD Or Numerics](symptoms-resources.md#cache-pair-tap-passes-preflight-but-fails-bd-or-numerics)
 
 ### Dataflow
 
 - [Static MLIR Shows One FIFO Drained Twice](symptoms-dataflow.md#static-mlir-shows-one-fifo-drained-twice)
 - [Runtime Start Does Not Create A Phase Barrier](symptoms-dataflow.md#runtime-start-does-not-create-a-phase-barrier)
+- [Worker Closure Calls An Unresolved Kernel](symptoms-dataflow.md#worker-closure-calls-an-unresolved-kernel)
 - [Attention Scores Overwrite The First GQA Head](symptoms-dataflow.md#attention-scores-overwrite-the-first-gqa-head)
 - [PV/context Fails During L1 Buffer Allocation](symptoms-dataflow.md#pvcontext-fails-during-l1-buffer-allocation)
 - [PV/context Inputs Pass But Context Has A Few Large Errors](symptoms-dataflow.md#pvcontext-inputs-pass-but-context-has-a-few-large-errors)
 - [New FIFO Has Consumer But No Producer](symptoms-dataflow.md#new-fifo-has-consumer-but-no-producer)
 - [Disabled Debug Stream Creates Zero-Length TAP](symptoms-dataflow.md#disabled-debug-stream-creates-zero-length-tap)
+- [Producer Order Deadlocks Despite Balanced FIFO Counts](symptoms-dataflow.md#producer-order-deadlocks-despite-balanced-fifo-counts)
+- [Attention2 Multi-Layer Pack Order Mismatches Runtime TAP](symptoms-dataflow.md#attention2-multi-layer-pack-order-mismatches-runtime-tap)
+- [Hidden/Metadata Split Times Out At Larger Chunks](symptoms-dataflow.md#hiddenmetadata-split-times-out-at-larger-chunks)

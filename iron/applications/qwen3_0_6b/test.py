@@ -36,13 +36,18 @@ from iron.applications.qwen3_0_6b.qwen3_preflight import (
 )
 
 
-def _fake_qwen3_model(num_layers=3):
+def _fake_qwen3_model(
+    num_layers=3,
+    num_attention_heads=2,
+    num_key_value_heads=1,
+    intermediate_size=64,
+):
     config = SimpleNamespace(
         hidden_size=32,
-        intermediate_size=64,
+        intermediate_size=intermediate_size,
         num_hidden_layers=num_layers,
-        num_attention_heads=2,
-        num_key_value_heads=1,
+        num_attention_heads=num_attention_heads,
+        num_key_value_heads=num_key_value_heads,
         head_dim=16,
         rms_norm_eps=1e-6,
         rope_theta=1000000.0,
@@ -176,6 +181,94 @@ def test_qwen3_segment_major_weight_chunk_matches_layer_major_artifact(tmp_path)
         pack_segment_major_weight_chunk_from_layer_major(packed, manifest, 0, 3),
         pack_segment_major_weights_for_layers(model, range(3)),
     )
+
+
+def test_qwen3_attention2_segment_major_weight_chunk_matches_layer_major_artifact(
+    tmp_path,
+):
+    model = _fake_qwen3_model(
+        num_layers=3,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+    )
+    expected_per_layer = pack_full_layer_weights_for_layer(model, 0).numel()
+    manifest = write_packed_weight_artifact(
+        model,
+        tmp_path,
+        expected_per_layer_numel=expected_per_layer,
+    )
+    packed = load_packed_weight_tensor(tmp_path, manifest)
+
+    for (
+        mlp_columns,
+        mlp_gate_up_columns,
+        mlp_gate_up_pair_rows,
+        mlp_gate_up_row_group,
+    ) in (
+        (1, 1, False, 4),
+        (2, 1, False, 4),
+        (2, 2, False, 4),
+        (2, 2, True, 4),
+        (2, 2, True, 8),
+    ):
+        actual = pack_segment_major_weight_chunk_from_layer_major(
+            packed,
+            manifest,
+            0,
+            3,
+            mlp_columns=mlp_columns,
+            mlp_gate_up_columns=mlp_gate_up_columns,
+            attention_columns=2,
+            mlp_gate_up_pair_rows=mlp_gate_up_pair_rows,
+            mlp_gate_up_row_group=mlp_gate_up_row_group,
+        )
+        expected = pack_segment_major_weights_for_layers(
+            model,
+            range(3),
+            mlp_columns=mlp_columns,
+            mlp_gate_up_columns=mlp_gate_up_columns,
+            attention_columns=2,
+            mlp_gate_up_pair_rows=mlp_gate_up_pair_rows,
+            mlp_gate_up_row_group=mlp_gate_up_row_group,
+        )
+        assert torch.equal(actual, expected)
+        assert actual.numel() == 3 * expected_per_layer
+
+    model = _fake_qwen3_model(
+        num_layers=3,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        intermediate_size=96,
+    )
+    expected_per_layer = pack_full_layer_weights_for_layer(model, 0).numel()
+    manifest = write_packed_weight_artifact(
+        model,
+        tmp_path,
+        expected_per_layer_numel=expected_per_layer,
+    )
+    packed = load_packed_weight_tensor(tmp_path, manifest)
+    actual = pack_segment_major_weight_chunk_from_layer_major(
+        packed,
+        manifest,
+        0,
+        3,
+        mlp_columns=2,
+        mlp_gate_up_columns=3,
+        attention_columns=2,
+        mlp_gate_up_pair_rows=True,
+        mlp_gate_up_row_group=4,
+    )
+    expected = pack_segment_major_weights_for_layers(
+        model,
+        range(3),
+        mlp_columns=2,
+        mlp_gate_up_columns=3,
+        attention_columns=2,
+        mlp_gate_up_pair_rows=True,
+        mlp_gate_up_row_group=4,
+    )
+    assert torch.equal(actual, expected)
+    assert actual.numel() == 3 * expected_per_layer
 
 
 def test_qwen3_packed_weight_manifest_fails_fast(tmp_path):
@@ -353,15 +446,35 @@ def test_qwen3_graph_probe_layer_groups():
         layer_groups(4, 0)
 
 
-def test_qwen3_n_layer_final_only_rejects_unsupported_chunk():
+def test_qwen3_n_layer_final_only_accepts_diagnostic_chunks():
     Qwen3PersistentNLayerFinalOnly(layer_iterations=8)
+    Qwen3PersistentNLayerFinalOnly(layer_iterations=9)
+    Qwen3PersistentNLayerFinalOnly(layer_iterations=12)
     Qwen3PersistentNLayerFinalOnly(layer_iterations=28)
-
-    with pytest.raises(ValueError, match="supports chunk sizes 1\\.\\.8 or"):
-        Qwen3PersistentNLayerFinalOnly(layer_iterations=9)
+    Qwen3PersistentNLayerFinalOnly(
+        layer_iterations=8,
+        num_aie_columns=2,
+        attention_columns=2,
+        mlp_gate_up_columns=2,
+        mlp_gate_up_pair_rows=True,
+        mlp_gate_up_direct_silu=True,
+        mlp_gate_up_row_group=8,
+    )
+    Qwen3PersistentNLayerFinalOnly(
+        layer_iterations=8,
+        num_aie_columns=2,
+        attention_columns=2,
+        mlp_gate_up_columns=3,
+        mlp_gate_up_pair_rows=True,
+        mlp_gate_up_direct_silu=True,
+    )
 
     with pytest.raises(ValueError, match="at most 28 layers per chunk"):
         Qwen3PersistentNLayerFinalOnly(layer_iterations=29)
+    with pytest.raises(ValueError, match="requires mlp_gate_up_pair_rows"):
+        Qwen3PersistentNLayerFinalOnly(mlp_gate_up_direct_silu=True)
+    with pytest.raises(ValueError, match="requires mlp_gate_up_pair_rows"):
+        Qwen3PersistentNLayerFinalOnly(mlp_gate_up_row_group=8)
 
 
 def test_qwen3_preflight_catches_non_advancing_acquire(tmp_path):

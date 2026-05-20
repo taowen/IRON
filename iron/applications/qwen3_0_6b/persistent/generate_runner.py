@@ -43,6 +43,11 @@ def make_single_layer_final_only_op_for_position(
         intermediate_size=model.config.intermediate_size,
         layer_iterations=1,
         num_aie_columns=getattr(args, "num_aie_columns", 1),
+        attention_columns=getattr(args, "attention_columns", 1),
+        mlp_gate_up_columns=getattr(args, "mlp_gate_up_columns", 0),
+        mlp_gate_up_pair_rows=getattr(args, "mlp_gate_up_pair_rows", False),
+        mlp_gate_up_direct_silu=getattr(args, "mlp_gate_up_direct_silu", False),
+        mlp_gate_up_row_group=getattr(args, "mlp_gate_up_row_group", 4),
         epsilon=model.config.rms_norm_eps,
         context=context,
     )
@@ -65,6 +70,11 @@ def make_n_layer_final_only_op_for_position(
         intermediate_size=model.config.intermediate_size,
         layer_iterations=layer_iterations,
         num_aie_columns=getattr(args, "num_aie_columns", 1),
+        attention_columns=getattr(args, "attention_columns", 1),
+        mlp_gate_up_columns=getattr(args, "mlp_gate_up_columns", 0),
+        mlp_gate_up_pair_rows=getattr(args, "mlp_gate_up_pair_rows", False),
+        mlp_gate_up_direct_silu=getattr(args, "mlp_gate_up_direct_silu", False),
+        mlp_gate_up_row_group=getattr(args, "mlp_gate_up_row_group", 4),
         epsilon=model.config.rms_norm_eps,
         context=context,
     )

@@ -144,8 +144,68 @@ def _pack_segment_major_full_layer_weights_default(
     ).contiguous()
 
 
+def _gate_up_shard(
+    gate: torch.Tensor,
+    up: torch.Tensor,
+    col: int,
+    *,
+    columns: int = 2,
+    pair_rows: bool = False,
+    row_group: int = 4,
+) -> torch.Tensor:
+    hidden_size = gate.shape[1]
+    if gate.shape[0] % columns != 0:
+        raise ValueError(
+            f"gate/up rows {gate.shape[0]} must be divisible by {columns} columns"
+        )
+    shard_rows = gate.shape[0] // columns
+    start = col * shard_rows
+    end = start + shard_rows
+    gate_shard = gate[start:end].contiguous()
+    up_shard = up[start:end].contiguous()
+    if not pair_rows:
+        return torch.cat([gate_shard.flatten(), up_shard.flatten()])
+    if shard_rows % row_group != 0:
+        raise ValueError(
+            f"gate/up shard rows {shard_rows} must be divisible by {row_group}"
+        )
+    pieces = []
+    for row_start in range(0, shard_rows, row_group):
+        row_end = row_start + row_group
+        pieces.append(gate_shard[row_start:row_end].reshape(row_group, hidden_size))
+        pieces.append(up_shard[row_start:row_end].reshape(row_group, hidden_size))
+    return torch.cat([piece.flatten() for piece in pieces])
+
+
+def _interleave_same_size_chunks(
+    tensors: list[torch.Tensor],
+    *,
+    chunk_size: int,
+) -> torch.Tensor:
+    if not tensors:
+        raise ValueError("tensors must not be empty")
+    first_numel = tensors[0].numel()
+    if first_numel % chunk_size != 0:
+        raise ValueError(
+            f"tensor length {first_numel} must be divisible by chunk_size {chunk_size}"
+        )
+    num_chunks = first_numel // chunk_size
+    for tensor in tensors[1:]:
+        if tensor.numel() != first_numel:
+            raise ValueError("all tensors must have the same number of elements")
+    pieces = []
+    for chunk_idx in range(num_chunks):
+        start = chunk_idx * chunk_size
+        end = start + chunk_size
+        pieces.extend(tensor[start:end] for tensor in tensors)
+    return torch.cat(pieces).contiguous()
+
+
 def _pack_segment_major_full_layer_weights_mlp2(
     segment_inputs_by_layer: list[dict[str, torch.Tensor]],
+    *,
+    mlp_gate_up_pair_rows: bool = False,
+    mlp_gate_up_row_group: int = 4,
 ) -> torch.Tensor:
     def gate_up_shard(
         segment_inputs: dict[str, torch.Tensor], col: int
@@ -153,10 +213,13 @@ def _pack_segment_major_full_layer_weights_mlp2(
         hidden_size = segment_inputs["post_norm_weight"].numel()
         gate = segment_inputs["W_gate"].view(-1, hidden_size)
         up = segment_inputs["W_up"].view(-1, hidden_size)
-        shard_rows = gate.shape[0] // 2
-        start = col * shard_rows
-        end = start + shard_rows
-        return torch.cat([gate[start:end].flatten(), up[start:end].flatten()])
+        return _gate_up_shard(
+            gate,
+            up,
+            col,
+            pair_rows=mlp_gate_up_pair_rows,
+            row_group=mlp_gate_up_row_group,
+        )
 
     def down_shard(segment_inputs: dict[str, torch.Tensor], col: int) -> torch.Tensor:
         hidden_size = segment_inputs["post_norm_weight"].numel()
@@ -195,9 +258,229 @@ def _pack_segment_major_full_layer_weights_mlp2(
     return torch.cat(common + post_norm + gate_up + down).contiguous()
 
 
+def _pack_segment_major_full_layer_weights_attention2_mlp2(
+    segment_inputs_by_layer: list[dict[str, torch.Tensor]],
+    *,
+    mlp_gate_up_columns: int = 2,
+    mlp_gate_up_pair_rows: bool = False,
+    mlp_gate_up_row_group: int = 4,
+) -> torch.Tensor:
+    def row_shard(
+        segment_inputs: dict[str, torch.Tensor], name: str, col: int
+    ) -> torch.Tensor:
+        hidden_size = segment_inputs["post_norm_weight"].numel()
+        matrix = segment_inputs[name].view(-1, hidden_size)
+        shard_rows = matrix.shape[0] // 2
+        start = col * shard_rows
+        end = start + shard_rows
+        return matrix[start:end].flatten()
+
+    def qk_interleaved_shard(
+        segment_inputs: dict[str, torch.Tensor], col: int
+    ) -> torch.Tensor:
+        hidden_size = segment_inputs["post_norm_weight"].numel()
+        head_dim = segment_inputs["W_qk_norm"].numel() // 2
+        q_matrix = segment_inputs["W_q"].view(-1, hidden_size)
+        k_matrix = segment_inputs["W_k"].view(-1, hidden_size)
+        q_repeat = q_matrix.shape[0] // k_matrix.shape[0]
+        kv_heads_per_col = (k_matrix.shape[0] // head_dim) // 2
+        q_head_start = col * kv_heads_per_col * q_repeat
+        k_head_start = col * kv_heads_per_col
+        pieces = []
+        for local_kv_head in range(kv_heads_per_col):
+            k_head = k_head_start + local_kv_head
+            q_head = q_head_start + local_kv_head * q_repeat
+            pieces.append(
+                k_matrix[k_head * head_dim : (k_head + 1) * head_dim].flatten()
+            )
+            pieces.append(
+                q_matrix[q_head * head_dim : (q_head + q_repeat) * head_dim].flatten()
+            )
+        return torch.cat(pieces)
+
+    def o_context_shard(
+        segment_inputs: dict[str, torch.Tensor], col: int
+    ) -> torch.Tensor:
+        hidden_size = segment_inputs["post_norm_weight"].numel()
+        matrix = segment_inputs["W_o"].view(hidden_size, -1)
+        shard_cols = matrix.shape[1] // 2
+        start = col * shard_cols
+        end = start + shard_cols
+        return matrix[:, start:end].contiguous().flatten()
+
+    def gate_up_shard(
+        segment_inputs: dict[str, torch.Tensor], col: int
+    ) -> torch.Tensor:
+        hidden_size = segment_inputs["post_norm_weight"].numel()
+        gate = segment_inputs["W_gate"].view(-1, hidden_size)
+        up = segment_inputs["W_up"].view(-1, hidden_size)
+        row_group = 4 if col == 0 else mlp_gate_up_row_group
+        return _gate_up_shard(
+            gate,
+            up,
+            col,
+            columns=mlp_gate_up_columns,
+            pair_rows=mlp_gate_up_pair_rows,
+            row_group=row_group,
+        )
+
+    def down_shard(segment_inputs: dict[str, torch.Tensor], col: int) -> torch.Tensor:
+        hidden_size = segment_inputs["post_norm_weight"].numel()
+        down = segment_inputs["W_down"].view(hidden_size, -1)
+        shard_rows = down.shape[0] // 2
+        start = col * shard_rows
+        end = start + shard_rows
+        return down[start:end].flatten()
+
+    input_norm = [
+        segment_inputs["input_norm_weight"].flatten()
+        for segment_inputs in segment_inputs_by_layer
+    ]
+    qkv_shards = []
+    for col in range(2):
+        qkv_shards.extend(
+            qk_interleaved_shard(segment_inputs, col)
+            for segment_inputs in segment_inputs_by_layer
+        )
+        qkv_shards.extend(
+            row_shard(segment_inputs, "W_v", col)
+            for segment_inputs in segment_inputs_by_layer
+        )
+    qk_norm = [
+        segment_inputs["W_qk_norm"].flatten()
+        for segment_inputs in segment_inputs_by_layer
+    ]
+    o_shards = [
+        o_context_shard(segment_inputs, col)
+        for col in range(2)
+        for segment_inputs in segment_inputs_by_layer
+    ]
+    gate_up_col0 = [
+        torch.cat(
+            [
+                segment_inputs["post_norm_weight"].flatten(),
+                gate_up_shard(segment_inputs, 0),
+            ]
+        )
+        for segment_inputs in segment_inputs_by_layer
+    ]
+    if mlp_gate_up_columns == 3:
+        gate_up_rest = [
+            _interleave_same_size_chunks(
+                [
+                    gate_up_shard(segment_inputs, 1),
+                    gate_up_shard(segment_inputs, 2),
+                ],
+                chunk_size=segment_inputs["post_norm_weight"].numel(),
+            )
+            for segment_inputs in segment_inputs_by_layer
+        ]
+    else:
+        gate_up_rest = [
+            gate_up_shard(segment_inputs, col)
+            for col in range(1, mlp_gate_up_columns)
+            for segment_inputs in segment_inputs_by_layer
+        ]
+    down = [
+        down_shard(segment_inputs, col)
+        for col in range(2)
+        for segment_inputs in segment_inputs_by_layer
+    ]
+    return torch.cat(
+        input_norm
+        + qkv_shards
+        + qk_norm
+        + o_shards
+        + gate_up_col0
+        + gate_up_rest
+        + down
+    ).contiguous()
+
+
+def _pack_segment_major_full_layer_weights_attention2_default_mlp(
+    segment_inputs_by_layer: list[dict[str, torch.Tensor]],
+) -> torch.Tensor:
+    def row_shard(
+        segment_inputs: dict[str, torch.Tensor], name: str, col: int
+    ) -> torch.Tensor:
+        hidden_size = segment_inputs["post_norm_weight"].numel()
+        matrix = segment_inputs[name].view(-1, hidden_size)
+        shard_rows = matrix.shape[0] // 2
+        start = col * shard_rows
+        end = start + shard_rows
+        return matrix[start:end].flatten()
+
+    def qk_interleaved_shard(
+        segment_inputs: dict[str, torch.Tensor], col: int
+    ) -> torch.Tensor:
+        hidden_size = segment_inputs["post_norm_weight"].numel()
+        head_dim = segment_inputs["W_qk_norm"].numel() // 2
+        q_matrix = segment_inputs["W_q"].view(-1, hidden_size)
+        k_matrix = segment_inputs["W_k"].view(-1, hidden_size)
+        q_repeat = q_matrix.shape[0] // k_matrix.shape[0]
+        kv_heads_per_col = (k_matrix.shape[0] // head_dim) // 2
+        q_head_start = col * kv_heads_per_col * q_repeat
+        k_head_start = col * kv_heads_per_col
+        pieces = []
+        for local_kv_head in range(kv_heads_per_col):
+            k_head = k_head_start + local_kv_head
+            q_head = q_head_start + local_kv_head * q_repeat
+            pieces.append(
+                k_matrix[k_head * head_dim : (k_head + 1) * head_dim].flatten()
+            )
+            pieces.append(
+                q_matrix[q_head * head_dim : (q_head + q_repeat) * head_dim].flatten()
+            )
+        return torch.cat(pieces)
+
+    def o_context_shard(
+        segment_inputs: dict[str, torch.Tensor], col: int
+    ) -> torch.Tensor:
+        hidden_size = segment_inputs["post_norm_weight"].numel()
+        matrix = segment_inputs["W_o"].view(hidden_size, -1)
+        shard_cols = matrix.shape[1] // 2
+        start = col * shard_cols
+        end = start + shard_cols
+        return matrix[:, start:end].contiguous().flatten()
+
+    input_norm = [
+        segment_inputs["input_norm_weight"].flatten()
+        for segment_inputs in segment_inputs_by_layer
+    ]
+    qkv_shards = []
+    for col in range(2):
+        qkv_shards.extend(
+            qk_interleaved_shard(segment_inputs, col)
+            for segment_inputs in segment_inputs_by_layer
+        )
+        qkv_shards.extend(
+            row_shard(segment_inputs, "W_v", col)
+            for segment_inputs in segment_inputs_by_layer
+        )
+    qk_norm = [
+        segment_inputs["W_qk_norm"].flatten()
+        for segment_inputs in segment_inputs_by_layer
+    ]
+    o_shards = [
+        o_context_shard(segment_inputs, col)
+        for col in range(2)
+        for segment_inputs in segment_inputs_by_layer
+    ]
+    mlp = [
+        segment_inputs[name].flatten()
+        for name in ("post_norm_gate_up", "W_down")
+        for segment_inputs in segment_inputs_by_layer
+    ]
+    return torch.cat(input_norm + qkv_shards + qk_norm + o_shards + mlp).contiguous()
+
+
 def pack_segment_major_full_layer_weights(
     inputs_by_layer: list[dict[str, torch.Tensor]],
     mlp_columns: int = 1,
+    mlp_gate_up_columns: int = 0,
+    attention_columns: int = 1,
+    mlp_gate_up_pair_rows: bool = False,
+    mlp_gate_up_row_group: int = 4,
 ) -> torch.Tensor:
     """Pack a layer chunk by segment, then by layer within each segment.
 
@@ -212,10 +495,49 @@ def pack_segment_major_full_layer_weights(
         _segment_major_inputs_from_full_layer_inputs(inputs)
         for inputs in inputs_by_layer
     ]
+    if mlp_gate_up_columns == 0:
+        mlp_gate_up_columns = 2 if mlp_columns == 2 else 1
+    if attention_columns == 2:
+        if mlp_columns == 1:
+            if mlp_gate_up_columns != 1:
+                raise ValueError("mlp_columns=1 requires mlp_gate_up_columns=1")
+            return _pack_segment_major_full_layer_weights_attention2_default_mlp(
+                segment_inputs_by_layer
+            )
+        if mlp_columns != 2:
+            raise ValueError("unsupported attention2 MLP column layout")
+        if mlp_gate_up_columns == 1:
+            return _pack_segment_major_full_layer_weights_attention2_default_mlp(
+                segment_inputs_by_layer
+            )
+        if mlp_gate_up_columns not in {2, 3}:
+            raise ValueError("unsupported attention2 gate/up column layout")
+        return _pack_segment_major_full_layer_weights_attention2_mlp2(
+            segment_inputs_by_layer,
+            mlp_gate_up_columns=mlp_gate_up_columns,
+            mlp_gate_up_pair_rows=mlp_gate_up_pair_rows,
+            mlp_gate_up_row_group=mlp_gate_up_row_group,
+        )
+    if attention_columns != 1:
+        raise ValueError(
+            f"unsupported segment-major attention column layout: {attention_columns}"
+        )
     if mlp_columns == 1:
+        if mlp_gate_up_columns != 1:
+            raise ValueError("mlp_columns=1 requires mlp_gate_up_columns=1")
         return _pack_segment_major_full_layer_weights_default(segment_inputs_by_layer)
     if mlp_columns == 2:
-        return _pack_segment_major_full_layer_weights_mlp2(segment_inputs_by_layer)
+        if mlp_gate_up_columns == 1:
+            return _pack_segment_major_full_layer_weights_default(
+                segment_inputs_by_layer
+            )
+        if mlp_gate_up_columns != 2:
+            raise ValueError("unsupported MLP gate/up column layout")
+        return _pack_segment_major_full_layer_weights_mlp2(
+            segment_inputs_by_layer,
+            mlp_gate_up_pair_rows=mlp_gate_up_pair_rows,
+            mlp_gate_up_row_group=mlp_gate_up_row_group,
+        )
     raise ValueError(f"unsupported segment-major MLP column layout: {mlp_columns}")
 
 
@@ -223,6 +545,10 @@ def pack_segment_major_weights_for_layers(
     model: Qwen3ForCausalLM,
     layer_indices: list[int] | range,
     mlp_columns: int = 1,
+    mlp_gate_up_columns: int = 0,
+    attention_columns: int = 1,
+    mlp_gate_up_pair_rows: bool = False,
+    mlp_gate_up_row_group: int = 4,
 ) -> torch.Tensor:
     return pack_segment_major_full_layer_weights(
         [
@@ -230,7 +556,49 @@ def pack_segment_major_weights_for_layers(
             for layer_idx in layer_indices
         ],
         mlp_columns=mlp_columns,
+        mlp_gate_up_columns=mlp_gate_up_columns,
+        attention_columns=attention_columns,
+        mlp_gate_up_pair_rows=mlp_gate_up_pair_rows,
+        mlp_gate_up_row_group=mlp_gate_up_row_group,
     )
+
+
+def pack_qk_rope_metadata_for_layers(
+    inputs_by_layer: list[dict[str, torch.Tensor]],
+    *,
+    position: int | None = None,
+    valid_length: int | None = None,
+) -> torch.Tensor:
+    """Pack q_norm, k_norm, RoPE LUT, and optional decode metadata."""
+    position_metadata = None
+    if position is not None:
+        if valid_length is None:
+            valid_length = position + 1
+        position_metadata = torch.tensor(
+            [position, valid_length, 0, 0, 0, 0, 0, 0],
+            dtype=torch.float32,
+        ).to(dtype=inputs_by_layer[0]["rope_angles"].dtype)
+    return torch.cat(
+        [
+            torch.cat(
+                (
+                    [
+                        inputs["W_q_norm"].flatten(),
+                        inputs["W_k_norm"].flatten(),
+                        inputs["rope_angles"].flatten(),
+                    ]
+                    if position_metadata is None
+                    else [
+                        inputs["W_q_norm"].flatten(),
+                        inputs["W_k_norm"].flatten(),
+                        inputs["rope_angles"].flatten(),
+                        position_metadata,
+                    ]
+                )
+            )
+            for inputs in inputs_by_layer
+        ]
+    ).contiguous()
 
 
 def pack_full_layer_weights_for_layer(
@@ -539,11 +907,17 @@ def pack_segment_major_weight_chunk_from_layer_major(
     layer_start: int,
     layer_count: int,
     mlp_columns: int = 1,
+    mlp_gate_up_columns: int = 0,
+    attention_columns: int = 1,
+    mlp_gate_up_pair_rows: bool = False,
+    mlp_gate_up_row_group: int = 4,
 ) -> torch.Tensor:
     """Build a segment-major chunk from the existing layer-major artifact."""
     if layer_count < 1:
         raise ValueError(f"layer_count must be positive, got {layer_count}")
     layers = range(layer_start, layer_start + layer_count)
+    if mlp_gate_up_columns == 0:
+        mlp_gate_up_columns = 2 if mlp_columns == 2 else 1
 
     def segment_for_layer(layer_idx: int, name: str) -> torch.Tensor:
         if name == "W_qk_norm":
@@ -573,7 +947,157 @@ def pack_segment_major_weight_chunk_from_layer_major(
             )
         return _manifest_segment_slice(packed_weights, manifest, layer_idx, name)
 
+    if attention_columns == 1 and mlp_columns == 1:
+        return torch.cat(
+            [
+                segment_for_layer(layer_idx, name)
+                for name in SEGMENT_MAJOR_WEIGHT_ORDER
+                for layer_idx in layers
+            ]
+        ).contiguous()
+    if attention_columns == 2:
+
+        def row_shard(layer_idx: int, name: str, col: int) -> torch.Tensor:
+            hidden_size = segment_for_layer(layer_idx, "post_norm_weight").numel()
+            matrix = segment_for_layer(layer_idx, name).view(-1, hidden_size)
+            shard_rows = matrix.shape[0] // 2
+            start = col * shard_rows
+            end = start + shard_rows
+            return matrix[start:end].flatten()
+
+        def qk_interleaved_shard(layer_idx: int, col: int) -> torch.Tensor:
+            hidden_size = segment_for_layer(layer_idx, "post_norm_weight").numel()
+            head_dim = segment_for_layer(layer_idx, "W_qk_norm").numel() // 2
+            q_matrix = segment_for_layer(layer_idx, "W_q").view(-1, hidden_size)
+            k_matrix = segment_for_layer(layer_idx, "W_k").view(-1, hidden_size)
+            q_repeat = q_matrix.shape[0] // k_matrix.shape[0]
+            kv_heads_per_col = (k_matrix.shape[0] // head_dim) // 2
+            q_head_start = col * kv_heads_per_col * q_repeat
+            k_head_start = col * kv_heads_per_col
+            pieces = []
+            for local_kv_head in range(kv_heads_per_col):
+                k_head = k_head_start + local_kv_head
+                q_head = q_head_start + local_kv_head * q_repeat
+                pieces.append(
+                    k_matrix[k_head * head_dim : (k_head + 1) * head_dim].flatten()
+                )
+                pieces.append(
+                    q_matrix[
+                        q_head * head_dim : (q_head + q_repeat) * head_dim
+                    ].flatten()
+                )
+            return torch.cat(pieces)
+
+        def o_context_shard(layer_idx: int, col: int) -> torch.Tensor:
+            hidden_size = segment_for_layer(layer_idx, "post_norm_weight").numel()
+            matrix = segment_for_layer(layer_idx, "W_o").view(hidden_size, -1)
+            shard_cols = matrix.shape[1] // 2
+            start = col * shard_cols
+            end = start + shard_cols
+            return matrix[:, start:end].contiguous().flatten()
+
+        def gate_up_shard(layer_idx: int, col: int) -> torch.Tensor:
+            hidden_size = segment_for_layer(layer_idx, "post_norm_weight").numel()
+            gate = segment_for_layer(layer_idx, "W_gate").view(-1, hidden_size)
+            up = segment_for_layer(layer_idx, "W_up").view(-1, hidden_size)
+            row_group = 4 if col == 0 else mlp_gate_up_row_group
+            return _gate_up_shard(
+                gate,
+                up,
+                col,
+                columns=mlp_gate_up_columns,
+                pair_rows=mlp_gate_up_pair_rows,
+                row_group=row_group,
+            )
+
+        def down_shard(layer_idx: int, col: int) -> torch.Tensor:
+            hidden_size = segment_for_layer(layer_idx, "post_norm_weight").numel()
+            down = segment_for_layer(layer_idx, "W_down").view(hidden_size, -1)
+            shard_rows = down.shape[0] // 2
+            start = col * shard_rows
+            end = start + shard_rows
+            return down[start:end].flatten()
+
+        input_norm = [
+            segment_for_layer(layer_idx, "input_norm_weight") for layer_idx in layers
+        ]
+        qkv_shards = []
+        for col in range(2):
+            qkv_shards.extend(
+                qk_interleaved_shard(layer_idx, col) for layer_idx in layers
+            )
+            qkv_shards.extend(row_shard(layer_idx, "W_v", col) for layer_idx in layers)
+        qk_norm = [segment_for_layer(layer_idx, "W_qk_norm") for layer_idx in layers]
+        o_shards = [
+            o_context_shard(layer_idx, col) for col in range(2) for layer_idx in layers
+        ]
+        if mlp_columns == 1:
+            if mlp_gate_up_columns != 1:
+                raise ValueError("mlp_columns=1 requires mlp_gate_up_columns=1")
+            mlp = [
+                segment_for_layer(layer_idx, name)
+                for name in ("post_norm_gate_up", "W_down")
+                for layer_idx in layers
+            ]
+            return torch.cat(
+                input_norm + qkv_shards + qk_norm + o_shards + mlp
+            ).contiguous()
+        if mlp_columns != 2:
+            raise ValueError("unsupported attention2 MLP column layout")
+        if mlp_gate_up_columns == 1:
+            mlp = [
+                segment_for_layer(layer_idx, name)
+                for name in ("post_norm_gate_up", "W_down")
+                for layer_idx in layers
+            ]
+            return torch.cat(
+                input_norm + qkv_shards + qk_norm + o_shards + mlp
+            ).contiguous()
+        if mlp_gate_up_columns not in {2, 3}:
+            raise ValueError("unsupported attention2 gate/up column layout")
+        gate_up_col0 = [
+            torch.cat(
+                [
+                    segment_for_layer(layer_idx, "post_norm_weight"),
+                    gate_up_shard(layer_idx, 0),
+                ]
+            )
+            for layer_idx in layers
+        ]
+        if mlp_gate_up_columns == 3:
+            gate_up_rest = [
+                _interleave_same_size_chunks(
+                    [
+                        gate_up_shard(layer_idx, 1),
+                        gate_up_shard(layer_idx, 2),
+                    ],
+                    chunk_size=segment_for_layer(layer_idx, "post_norm_weight").numel(),
+                )
+                for layer_idx in layers
+            ]
+        else:
+            gate_up_rest = [
+                gate_up_shard(layer_idx, col)
+                for col in range(1, mlp_gate_up_columns)
+                for layer_idx in layers
+            ]
+        down = [down_shard(layer_idx, col) for col in range(2) for layer_idx in layers]
+        return torch.cat(
+            input_norm
+            + qkv_shards
+            + qk_norm
+            + o_shards
+            + gate_up_col0
+            + gate_up_rest
+            + down
+        ).contiguous()
+    if attention_columns != 1:
+        raise ValueError(
+            f"unsupported segment-major attention column layout: {attention_columns}"
+        )
     if mlp_columns == 1:
+        if mlp_gate_up_columns != 1:
+            raise ValueError("mlp_columns=1 requires mlp_gate_up_columns=1")
         return torch.cat(
             [
                 segment_for_layer(layer_idx, name)
@@ -583,15 +1107,28 @@ def pack_segment_major_weight_chunk_from_layer_major(
         ).contiguous()
     if mlp_columns != 2:
         raise ValueError(f"unsupported segment-major MLP column layout: {mlp_columns}")
+    if mlp_gate_up_columns == 1:
+        return torch.cat(
+            [
+                segment_for_layer(layer_idx, name)
+                for name in SEGMENT_MAJOR_WEIGHT_ORDER
+                for layer_idx in layers
+            ]
+        ).contiguous()
+    if mlp_gate_up_columns != 2:
+        raise ValueError("unsupported MLP gate/up column layout")
 
     def gate_up_shard(layer_idx: int, col: int) -> torch.Tensor:
         hidden_size = segment_for_layer(layer_idx, "post_norm_weight").numel()
         gate = segment_for_layer(layer_idx, "W_gate").view(-1, hidden_size)
         up = segment_for_layer(layer_idx, "W_up").view(-1, hidden_size)
-        shard_rows = gate.shape[0] // 2
-        start = col * shard_rows
-        end = start + shard_rows
-        return torch.cat([gate[start:end].flatten(), up[start:end].flatten()])
+        return _gate_up_shard(
+            gate,
+            up,
+            col,
+            pair_rows=mlp_gate_up_pair_rows,
+            row_group=mlp_gate_up_row_group,
+        )
 
     def down_shard(layer_idx: int, col: int) -> torch.Tensor:
         hidden_size = segment_for_layer(layer_idx, "post_norm_weight").numel()

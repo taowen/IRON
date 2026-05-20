@@ -517,3 +517,133 @@ layer3_values_cache_current_errors: 0
 generate --fast-generate --layer-chunk-size 4 --verify-generate:
 token_match: True for positions 6 and 7
 ```
+
+## Attention2 N-Layer Hidden Fails Strict Full Reference But Boundary Replay Matches
+
+Symptom:
+
+```text
+n-layer-final-only attention_columns=2 mlp_gate_up_columns=2:
+
+layer_iterations=18:
+  chunk_hidden_errors=0
+  layer17_values_cache_current_errors=77 against full reference
+
+layer_iterations=19:
+  chunk_hidden_errors=1
+  first error: index=574 expected=-5.406250 got=-6.187500
+```
+
+Diagnostic:
+
+```text
+Do not rewrite TAP or placement after preflight passes. First prove whether the
+failing deep-layer value is wrong relative to the actual NPU layer input.
+```
+
+Commands used:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+. .venv/bin/activate
+
+PYTHONUNBUFFERED=1 python -X faulthandler \
+  iron/applications/qwen3_0_6b/persistent/main.py \
+  --stage n-layer-final-only --verify \
+  --layer-chunk-size 19 \
+  --num-aie-columns 2 --attention-columns 2 --mlp-gate-up-columns 2 \
+  --diagnose-nlayer-layer 17 \
+  --build-dir build_qwen3_attncol_probe_attn2_mlp2_hiddenmeta_layers19_diag17
+
+PYTHONUNBUFFERED=1 python -X faulthandler \
+  iron/applications/qwen3_0_6b/persistent/main.py \
+  --qkv-diagnostic-bundle \
+  build_qwen3_attncol_probe_attn2_mlp2_hiddenmeta_layers19_diag17/diagnostics/qkv_boundary_layer_17.npz \
+  --build-dir build_qwen3_attncol_probe_attn2_mlp2_hiddenmeta_layers19_diag17_qkv
+
+PYTHONUNBUFFERED=1 python -X faulthandler \
+  iron/applications/qwen3_0_6b/persistent/main.py \
+  --stage n-layer-final-only --verify \
+  --layer-chunk-size 19 \
+  --num-aie-columns 2 --attention-columns 2 --mlp-gate-up-columns 2 \
+  --diagnose-nlayer-layer 18 \
+  --build-dir build_qwen3_attncol_probe_attn2_mlp2_hiddenmeta_layers19_diag18
+```
+
+Evidence found:
+
+```text
+layer17:
+  layer_17_diag_qkv_values_local_errors: 0
+  layer_17_diag_full_v_vs_qkv_values_errors: 0
+  qkv_diagnostic_result: layer_17_diag_py_ref_drift
+
+layer18:
+  layer_18_diag_qkv_values_local_errors: 0
+  layer_18_diag_full_v_vs_qkv_values_errors: 0
+  qkv_diagnostic_result: layer_18_diag_py_ref_drift
+
+boundary replay:
+  layer18_diag_main_vs_single_layer_hidden_errors: 0
+  layer18_diag_single_layer_hidden_vs_local_ref_errors: 5
+  layer18_diag_single_layer_hidden_vs_local_ref_max_abs: 0.125000
+```
+
+Root cause:
+
+```text
+The deep V cache values are locally correct: the n-layer V cache matches an
+isolated QKV operator run from the actual prefix NPU hidden. The layer18 output
+is also locally correct: replaying layer18 as a single-layer boundary from the
+prefix=18 NPU hidden matches the main n-layer19 output exactly.
+
+The remaining one-element chunk_hidden failure is accumulated full-reference
+numeric drift crossing the current strict tolerance, not an ObjectFIFO, TAP,
+writeback, or persistent routing bug.
+```
+
+Fix direction:
+
+```text
+Keep the local-boundary diagnostic as the correctness gate for this branch.
+Next validate generated tokens for attention2 + full MLP2 instead of blocking
+performance work on a single strict full-reference element.
+```
+
+## Attention Probe Returns NaN After Metadata Stream Change
+
+Symptom:
+
+```text
+--attention-probe-only returns, but:
+  attention_probe_residual_max_abs: nan
+```
+
+Diagnostic used:
+
+```text
+Run the attention-only boundary before changing MLP or final-layer code. If
+attention already returns NaN, the later full-layer timeout is a downstream
+effect, not proof that MLP placement or SiLU is the root cause.
+```
+
+Evidence from runtime-position metadata attempt:
+
+```text
+attention_probe_residual_max_abs: nan
+layer0_keys_cache_current_errors: 802
+```
+
+Rejected interpretation:
+
+```text
+"The dynamic metadata path compiled, so it is probably correct and the timeout
+is just MLP."
+```
+
+Actual conclusion:
+
+```text
+The attention boundary was already corrupted. Restore the last token-correct
+attention path before optimizing MLP or adding more metadata FIFOs.
+```

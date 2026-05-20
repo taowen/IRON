@@ -545,10 +545,25 @@ SequentialPlacer message:
 Failed to find a tile matching column N: tried until column 8
 ```
 
-Do not assume this means "too many compute workers." Monkey-patch
-`SequentialPlacer._place_endpoint` in a one-off probe to print whether the
-failed endpoint is a runtime input/output endpoint, a memtile endpoint, or a
-compute endpoint:
+Do not assume this means "too many compute workers." First use the built-in
+real graph probe trace:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+. .venv/bin/activate
+python iron/applications/qwen3_0_6b/persistent/real_graph_probe.py \
+  --stages n-layer-final-only \
+  --columns 2 \
+  --attention-columns 2 \
+  --layer-iterations 1 \
+  --preflight-only \
+  --allow-failures \
+  --trace-placement
+```
+
+If you need a custom probe, monkey-patch
+`SequentialPlacer._place_endpoint` to print whether the failed endpoint is a
+runtime input/output endpoint, a memtile endpoint, or a compute endpoint:
 
 ```python
 from aie.iron.placers import SequentialPlacer
@@ -586,6 +601,41 @@ The graph exhausted shim/runtime output endpoints because it emitted too many
 Runtime.fill tasks. The correct fix was packed host-side weight layout, not
 changing the compute kernel.
 ```
+
+Attention2 + full MLP2 used the same method again:
+
+```text
+before fix:
+  runtime_output=16 placed, then the 17th output endpoint failed
+
+accepted one-layer fix:
+  combine hidden and QK/RoPE metadata into one runtime input and split it
+  inside the graph
+  placement_trace_counts runtime_output=16, runtime_input=6, other_input=1
+```
+
+Do not treat every endpoint overflow as permission to combine large hot
+streams. The attempted K/V cache-pair stream passed placement, but exposed BD
+dimension and access-order problems. Prefer combining small metadata streams
+first, then verify with full compile and local numeric boundaries.
+
+The three-way gate/up branch repeated this class:
+
+```text
+accepted direct gate/up+SiLU baseline:
+  placement_trace_counts runtime_output=16, runtime_input=5, other_input=1
+
+three-way gate/up:
+  placement_trace_fail_key=runtime_output
+  placement_trace_fail_type=RuntimeEndpoint
+  placement_trace_fail_common_col=3
+  placement_trace_fail_counts runtime_output=16, runtime_input=6, other_input=1
+```
+
+This proved the branch was blocked by an extra host->NPU weight stream before
+any numerical or C++ kernel claim could be made. The next version must reduce
+runtime endpoints, for example by packing/splitting gate/up shard streams,
+before adding another gate/up Worker.
 
 ## 39. Treat Tile Input/Output Count As A Packing Constraint
 
@@ -662,4 +712,427 @@ Interpretation:
 A routing Worker is reasonable for small activation tiles such as residual
 joins. It is usually wrong for multi-megabyte weight repacking. Put that
 layout work in the prepacked weight artifact or host packing step instead.
+```
+
+## 41. Estimate Static Work Before Choosing A Widening Target
+
+Use when a graph fits and runs, but the next speed branch is unclear.
+
+```bash
+python iron/applications/qwen3_0_6b/persistent/work_estimator.py \
+  --mlir build_qwen3_score_softmax_fused_generate_default/\
+Qwen3PersistentNLayerFinalOnly_h1024_q2048_kv1024_hd128_msl256_pos26_\
+ffn3072_col2_attncol2_mlpgatecol2_attnprobe0_tsi4_tso128_\
+epsilon1en06_layers28_npu2.mlir \
+  --layers 28 \
+  --position 26 \
+  --show-kernels
+```
+
+What the estimator does:
+
+```text
+parse generated MLIR
+count func.call operations under finite scf.for trip counts
+ignore the persistent infinite outer loop
+apply simple Qwen3-specific work models for matvec, attention QK/PV, softmax,
+copy, RMSNorm, and join kernels
+```
+
+What it is not:
+
+```text
+It is not hardware trace, does not model NoC stalls, and does not prove runtime
+latency. Use it to choose the next experiment, then validate with preflight,
+token checks, and timing.
+```
+
+Current accepted graph result at position 26:
+
+```text
+MLP gate/up matvec:      176.161M estimated MACs/token
+QKV projection matvec:   117.441M estimated MACs/token
+MLP down matvec:          88.080M estimated MACs/token
+O-proj matvec:            58.720M estimated MACs/token
+attention QK + PV:         3.096M estimated MACs/token
+```
+
+Diagnosis:
+
+```text
+The next short-position graph-body target is MLP gate/up. Direct O-proj widening
+is lower priority, and short-position attention QK/PV is not the current
+compute target.
+```
+
+## 43. Read AIE API Compile Errors As Kernel-Boundary Evidence
+
+Use when MLIR/preflight succeeds but full compile fails inside an external
+kernel.
+
+The direct gate/up+SiLU experiment hit this after the graph had already passed
+preflight:
+
+```text
+preflight:
+  compute_cores=30
+  max_tile_inputs=2
+  max_tile_outputs=2
+
+clang++:
+  error: no matching function for call to 'tanh'
+  candidate template ignored: could not match 'vector<float, Elems>' against
+  'float'
+```
+
+Root cause:
+
+```text
+The AIE API tanh overload used in this repo is vector-only. The fused kernel
+reduced each gate row to a scalar and then tried to call aie::tanh(float).
+This was not an IRON graph/resource failure and not a token-level numeric
+failure. It was an external-kernel API boundary.
+```
+
+Fix pattern:
+
+```text
+1. Read the exact overload error and inspect the existing repo kernel that
+   implements the same operation.
+2. Preserve the existing approximation path when possible.
+3. Recompile the real full graph, not only a host C++ snippet.
+```
+
+Accepted fix:
+
+```text
+Broadcast the scalar bf16 gate/up row results into a 16-lane vector.
+Run the same tanh-form SiLU approximation as qwen3_silu_mul_bf16.
+Store lane 0 into the direct hidden shard.
+```
+
+Second-order trap:
+
+```text
+The first fix placed vector constants in the wrong function scope. The next
+clang++ failure was:
+  use of undeclared identifier 'silu_vec_len'
+  use of undeclared identifier 'half'
+  use of undeclared identifier 'one'
+
+That was a C++ macro/scope issue, not a new IRON placement problem.
+```
+
+Recheck:
+
+```text
+clang-format --dry-run --Werror aie_kernels/generic/qwen3_attention.cc
+full generate compile/run with --mlp-gate-up-direct-silu
+token_match=True before any performance claim
+```
+
+## 44. Full AIECC After ObjectFIFO Shape Changes
+
+Use when a graph changes ObjectFIFO object type, depth, or acquire count.
+Python preflight is necessary, but it does not prove that the later
+`AIEObjectFifoStatefulTransform` resource allocation can assign all memory
+blocks and BDs.
+
+Command pattern:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+. .venv/bin/activate
+
+python iron/applications/qwen3_0_6b/persistent/real_graph_probe.py \
+  --stages n-layer-final-only \
+  --columns 2 \
+  --attention-columns 2 \
+  --mlp-gate-up-columns 2 \
+  --mlp-gate-up-pair-rows \
+  --mlp-gate-up-direct-silu \
+  --mlp-gate-up-row-group 8 \
+  --layer-iterations 28 \
+  --preflight-only \
+  --trace-placement \
+  --build-dir build_qwen3_mlp_gateup_rg8_preflight \
+  --clean-build
+
+PYTHONUNBUFFERED=1 python -X faulthandler \
+  iron/applications/qwen3_0_6b/persistent/main.py \
+  --stage generate --fast-generate --verify-generate \
+  --max-new-tokens 2 \
+  --layer-chunk-size 28 \
+  --num-aie-columns 2 \
+  --attention-columns 2 \
+  --mlp-gate-up-columns 2 \
+  --mlp-gate-up-pair-rows \
+  --mlp-gate-up-direct-silu \
+  --mlp-gate-up-row-group 8 \
+  --require-packed-weights \
+  --build-dir build_qwen3_mlp_gateup_rg8_generate_default \
+  --clean-build
+```
+
+The row-group 8 experiment proved why both commands are needed:
+
+```text
+preflight:
+  ok, max_fifo_buffered_bytes=32768, max_dma_tasks_per_fifo=1
+
+full aiecc:
+  error: 'aie.mem' op has more than 16 blocks
+  note: no space for this BD
+```
+
+Diagnosis:
+
+```text
+The FIFO object byte budget was not the failing resource. The graph created too
+many individual FIFO blocks on the memory tile by using depth=16 of
+hidden_weight_ty objects. This only surfaced in the full AIE ObjectFIFO
+stateful transform.
+```
+
+Fix pattern:
+
+```text
+If the logical kernel wants many adjacent rows, prefer fewer larger FIFO
+objects over a deep FIFO of single rows, as long as the stream layout remains
+block-aligned:
+
+bad for row-group 8:
+  16 objects of hidden_weight_ty
+
+better:
+  4 objects of (4, hidden_size) bf16
+```
+
+Do not accept the branch after compile/token correctness alone. Re-run the
+static estimator and timing; the fixed row-group 8 graph reduced calls/token
+but still slowed the default prompt, so it was rejected as a performance path.
+
+## 45. Use ObjectFifo Split To Reduce Runtime Endpoints
+
+Use when a graph fails because a new independent `Runtime.fill` would consume
+one more host->NPU endpoint, but the data can be packed as adjacent slices of
+one logical stream.
+
+Pattern used for the three-way gate/up follow-up:
+
+```python
+parent = ObjectFifo(pair_ty, name="gate_up_weight_12_pair", depth=8)
+child1, child2 = parent.cons().split(
+    offsets=[0, hidden_size],
+    obj_types=[hidden_weight_ty, hidden_weight_ty],
+    names=["gate_up_weight_1", "gate_up_weight_2"],
+    depths=[8, 8],
+)
+```
+
+Host-side packing must match the split object boundary exactly:
+
+```text
+[child1 object 0][child2 object 0]
+[child1 object 1][child2 object 1]
+...
+```
+
+Recheck sequence:
+
+```text
+1. layout test: segment-major packing from model weights equals packing from
+   the prepacked layer-major artifact
+2. real_graph_probe --preflight-only --trace-placement
+3. full generate compile/run, because preflight does not prove all AIECC
+   ObjectFIFO lowering constraints
+4. token_match=True before timing
+5. same-prompt timing against the accepted baseline
+```
+
+Evidence:
+
+```text
+independent three-way gate/up:
+  fails placing the 17th RuntimeEndpoint output
+
+split parent stream:
+  preflight ok
+  placement_trace_counts runtime_output=16, runtime_input=5, other_input=2
+  token_match=True
+```
+
+Decision rule:
+
+```text
+Endpoint reduction is a resource fix, not a speed claim. The three-way split
+graph solved placement and matched tokens, but it was slower than the accepted
+two-way graph on the Fibonacci multi-token prompt. Keep the method; reject the
+branch unless measured token time improves.
+```
+
+## 46. Diff Position Artifacts Before Choosing Patch Or Buckets
+
+Use when decode is correct but compile still happens per position. Do not
+choose runtime instruction patching or bucketed precompile from intuition; first
+compare the generated artifacts.
+
+Generate adjacent same-bucket artifacts:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+. .venv/bin/activate
+
+python iron/applications/qwen3_0_6b/persistent/real_graph_probe.py \
+  --stages n-layer-final-only \
+  --columns 2 \
+  --attention-columns 2 \
+  --mlp-gate-up-columns 2 \
+  --mlp-gate-up-pair-rows \
+  --mlp-gate-up-direct-silu \
+  --layer-iterations 28 \
+  --position 26 \
+  --build-dir build_qwen3_position_diff_full_pos26 \
+  --clean-build
+
+python iron/applications/qwen3_0_6b/persistent/real_graph_probe.py \
+  --stages n-layer-final-only \
+  --columns 2 \
+  --attention-columns 2 \
+  --mlp-gate-up-columns 2 \
+  --mlp-gate-up-pair-rows \
+  --mlp-gate-up-direct-silu \
+  --layer-iterations 28 \
+  --position 27 \
+  --build-dir build_qwen3_position_diff_full_pos27 \
+  --clean-build
+```
+
+Then summarize:
+
+```bash
+python iron/applications/qwen3_0_6b/persistent/artifact_position_diff.py \
+  build_qwen3_position_diff_full_pos26 \
+  build_qwen3_position_diff_full_pos27
+```
+
+Evidence from the accepted direct-SiLU graph:
+
+```text
+pos26 -> pos27:
+  MLIR line_count=1434/1434
+  changed_diff_lines=64
+  runtime .bin changed_bytes=8
+  runtime .bin has eight u32 patch candidates, each +256 bytes
+  main_aie_cdo_elfs.bin changed_bytes=56
+  six main_core_*.elf files changed
+```
+
+Interpretation:
+
+```text
+The runtime instruction stream only needs current K/V DMA offset changes inside
+the same cache block. But the AIE core ELFs also change because attention
+score, V merge, context, and mask workers bake position or position+1 as
+immediate integer arguments.
+```
+
+So this is not a pure `.bin` patch problem:
+
+```text
+patching only the runtime .bin is insufficient
+bucketed precompile alone is insufficient while core ELFs bake exact position
+```
+
+Check a cache-block boundary separately:
+
+```bash
+python iron/applications/qwen3_0_6b/persistent/real_graph_probe.py \
+  --stages n-layer-final-only \
+  --columns 2 \
+  --attention-columns 2 \
+  --mlp-gate-up-columns 2 \
+  --mlp-gate-up-pair-rows \
+  --mlp-gate-up-direct-silu \
+  --layer-iterations 28 \
+  --position 63 \
+  --preflight-only \
+  --build-dir build_qwen3_position_diff_probe_pos63 \
+  --clean-build
+
+python iron/applications/qwen3_0_6b/persistent/real_graph_probe.py \
+  --stages n-layer-final-only \
+  --columns 2 \
+  --attention-columns 2 \
+  --mlp-gate-up-columns 2 \
+  --mlp-gate-up-pair-rows \
+  --mlp-gate-up-direct-silu \
+  --layer-iterations 28 \
+  --position 64 \
+  --preflight-only \
+  --build-dir build_qwen3_position_diff_probe_pos64 \
+  --clean-build
+
+python iron/applications/qwen3_0_6b/persistent/artifact_position_diff.py \
+  build_qwen3_position_diff_probe_pos63 \
+  build_qwen3_position_diff_probe_pos64
+```
+
+Observed boundary:
+
+```text
+pos63 -> pos64:
+  changed_diff_lines=140
+  loop_bound=12
+  K/V cache read length 32768 -> 65536 bf16 elements
+  score/context/V-merge loops 1 block -> 2 blocks
+```
+
+Decision rule:
+
+```text
+First move position and valid length into runtime metadata, or prove ELF/CDO
+patch sites. After that, choose between patching the remaining `.bin` DMA
+offset words inside a cache block and precompiling one variant per active
+cache-block count.
+```
+
+## 47. Check ObjectFIFO Object Alignment After Metadata Tails
+
+Use this when a small metadata tail is appended to an existing ObjectFIFO
+object.
+
+Diagnostic used:
+
+```text
+memref<130xbf16> -> 260 bytes
+memref<386xbf16> -> 772 bytes
+memref<258xbf16> -> 516 bytes
+```
+
+These are not 16-byte multiples. The graph may still pass MLIR verification and
+placement, so this must be a preflight check before runtime.
+
+Implemented guard:
+
+```text
+Qwen3PreflightError:
+  ObjectFIFO object alignment mismatch:
+  object_bytes=..., expected a 16-byte multiple.
+```
+
+Result from the runtime-position metadata experiment:
+
+```text
+Padding the tail to 8 bf16 values fixed the alignment issue, but the branch
+still produced NaN attention-probe output and full-layer timeout. Alignment was
+a real preflight blind spot, not the final root cause.
+```
+
+Rule:
+
+```text
+Pad metadata tails to an aligned object size, then still run attention-probe or
+single-layer generate. Passing alignment only proves the FIFO shape is less
+suspicious; it does not prove numeric correctness.
 ```

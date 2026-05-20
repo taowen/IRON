@@ -217,11 +217,19 @@ def find_gemv_symbol_abi_issues(mlir_text: str) -> list[str]:
     for args, link in declarations.get(
         "qwen3_o_proj_matvec_vectorized_bf16_bf16", set()
     ):
-        if "memref<4x2048xbf16>" not in args or "memref<2048xbf16>" not in args:
+        dim_k_match = re.search(
+            r"qwen3_persistent_gemv_(?P<dim_k>\d+)k_.*_o_proj\.o", link
+        )
+        expected_dim_k = int(dim_k_match.group("dim_k")) if dim_k_match else 2048
+        if (
+            f"memref<4x{expected_dim_k}xbf16>" not in args
+            or f"memref<{expected_dim_k}xbf16>" not in args
+        ):
             issues.append(
                 "O projection GEMV ABI mismatch: "
                 f"@qwen3_o_proj_matvec_vectorized_bf16_bf16 from {link} has "
-                f"arguments ({args}); expected DIM_K=2048 matrix/vector memrefs."
+                f"arguments ({args}); expected DIM_K={expected_dim_k} "
+                "matrix/vector memrefs."
             )
 
     return issues
@@ -310,6 +318,24 @@ def run_persistent_artifact_preflight(
             f"{fifo.name} carries memref<{fifo.memref}> at depth {fifo.depth}, "
             f"buffered_bytes={fifo.buffered_bytes}, limit={max_l1_fifo_buffered_bytes}. "
             "Stream the tensor in smaller blocks before compiling/running."
+        )
+
+    unaligned = [
+        fifo
+        for fifo in fifos
+        if fifo.object_bytes is not None
+        and fifo.object_bytes % 16 != 0
+        and (
+            is_compute_tile(fifo.producer) or any(map(is_compute_tile, fifo.consumers))
+        )
+    ]
+    if unaligned:
+        fifo = unaligned[0]
+        raise Qwen3PreflightError(
+            "ObjectFIFO object alignment mismatch: "
+            f"{fifo.name} carries memref<{fifo.memref}> "
+            f"object_bytes={fifo.object_bytes}, expected a 16-byte multiple. "
+            "Pad metadata tails instead of creating odd-sized DMA/FIFO objects."
         )
 
     tile_inputs, tile_outputs = compute_tile_endpoint_counts(fifos)
