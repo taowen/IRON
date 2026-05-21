@@ -46,9 +46,11 @@ chunk back to owner lanes. O projection no longer needs host-packed context
 contribution for these rows, and the 32 chunks materialize the full 1024-row
 attention residual in `lane_output`. The `gate_up` chunk phases consume the
 full attention residual produced by `o_proj_chunk_0..31` and emit eight
-32-row FFN partial groups through the same fixed source/target reducer fabric.
-The `down_partial_chunk_*` phases accumulate those first 256 NPU-produced FFN
-hidden rows in tile-local float state, then add host-packed rows 256..3071.
+32-row down partial-projection groups through the same fixed source/target
+reducer fabric.
+The `down_partial_chunk_*` phases accumulate reduced down partial sums covering
+the first 256 FFN rows in tile-local float state, then add host-packed rows
+256..3071.
 Layer 0 initializes a tile-local hidden buffer from the phase 0 packet; each
 `next_layer_token` phase updates that buffer for the next layer. `state[0]` is
 only a checksum for diagnostics, not the activation handoff. The runner uses
@@ -148,8 +150,8 @@ default production body:
   attention_score_pv_0..3=lane-mapped heads 0..7 fixed-cache QK + online softmax + PV
   attention_score_pv_4..7=lane-mapped heads 8..15 fixed-cache QK + online softmax + PV
   o_proj_chunk_0..31=NPU-produced all context heads + chunked source/target partial reduce + full residual materialization
-  ffn_gate_chunk_0..7=NPU-produced full attention residual + real post RMSNorm + 8x32 FFN partial rows
-  down_partial_chunk_0..7=NPU-produced first 256 FFN hidden rows + host rows 256..3071 + lane-local down row shards + residual add
+  ffn_gate_chunk_0..7=NPU-produced full attention residual + real post RMSNorm + 8x32 down partial-projection groups
+  down_partial_chunk_0..7=NPU-produced down partial sums for FFN rows 0..255 + host rows 256..3071 + lane-local down row shards + residual add
   next_layer_token=updates tile-local hidden_state for the next layer
   inputs=real Qwen3 hidden/norm/qkv_proj/qk_norm_rope/kv_cache_mask/o_proj/post_norm/gate/up/down/next-hidden packets
   preflight_compute_cores=12
@@ -158,8 +160,8 @@ default production body:
   preflight_max_compute_tile_outputs=2
   ffn_reduce_group_count=8
   ffn_npu_rows=256
-  lane_core_text_bytes=15360
-  npu_time_us=1040519.463
+  lane_core_text_bytes=15344
+  npu_time_us=1031660.098
   phase_owned_max_abs=1.000000
   phase_owned_mean_abs=0.011808
   phase_owned_errors=0
@@ -285,6 +287,18 @@ default production body:
       more FFN handoff groups are correctness progress but slow this packet
       streaming implementation; further scale-up should reduce host packet
       volume or switch to true down partial-projection reduce
+
+  Down partial-projection reduce:
+    gate_up now multiplies each local FFN value by a compact 32x4 down-weight
+    block and emits down partial sums, not FFN hidden values
+    down_proj accumulates ffn_reduced[target_row] directly for rows 0..255
+    and only uses host ffn_hidden/down weights for rows 256..3071
+    accepted result:
+      lane_core_text_bytes=15344
+      num_layers=1 npu_time_us=39318.891
+      num_layers=28 npu_time_us=1031660.098
+      phase_owned_errors=0
+      qwen3_phase_output_errors=0
 ```
 
 ## Next Work

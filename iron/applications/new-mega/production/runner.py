@@ -601,7 +601,7 @@ def phase_owned_reference(
                         up_acc += xnorm * up_block[row_start + i]
                     acc += gate_acc + up_acc
 
-                ffn_group = torch.zeros((o_target_rows,), dtype=torch.float32)
+                down_group = torch.zeros((o_target_rows,), dtype=torch.float32)
                 for producer_lane in range(op.num_lanes):
                     producer_lane_start = producer_lane * lane_span
                     producer_gate_start = (
@@ -620,7 +620,13 @@ def phase_owned_reference(
                         + (2 + op.q_rows_per_packet) * op.hidden_size : 1
                         + (2 + 2 * op.q_rows_per_packet) * op.hidden_size
                     ]
-                    producer_row_base = producer_lane * op.q_rows_per_packet
+                    down_partial_weight_start = (
+                        1 + (2 + 2 * op.q_rows_per_packet) * op.hidden_size
+                    )
+                    producer_down_partial_weight = producer_gate_packet[
+                        down_partial_weight_start : down_partial_weight_start
+                        + o_target_rows * op.q_rows_per_packet
+                    ].view(o_target_rows, op.q_rows_per_packet)
                     for row in range(op.q_rows_per_packet):
                         row_start = row * op.hidden_size
                         gate_acc = torch.zeros((), dtype=torch.float32)
@@ -631,7 +637,11 @@ def phase_owned_reference(
                             up_acc += xnorm * producer_up_block[row_start + i]
                         gate_bf16 = gate_acc.to(torch.bfloat16).to(torch.float32)
                         up_bf16 = up_acc.to(torch.bfloat16).to(torch.float32)
-                        ffn_group[producer_row_base + row] = F.silu(gate_bf16) * up_bf16
+                        ffn_value = F.silu(gate_bf16) * up_bf16
+                        down_group += (
+                            producer_down_partial_weight[:, row].to(torch.float32)
+                            * ffn_value
+                        )
 
                 down_packet_index = layer * op.phase_packets_per_layer + down_phase
                 down_start = lane_start + down_packet_index * op.packet_elements
@@ -645,12 +655,17 @@ def phase_owned_reference(
                     + op.q_rows_per_packet
                 ]
                 down_block_start = 1 + op.intermediate_size + op.q_rows_per_packet
+                target_row_base = int(
+                    float(
+                        down_packet[
+                            down_block_start
+                            + op.q_rows_per_packet * op.intermediate_size
+                        ].item()
+                    )
+                )
                 for row in range(op.q_rows_per_packet):
                     row_start = down_block_start + row * op.intermediate_size
-                    for i in range(o_target_rows):
-                        down_acc[row] += (
-                            ffn_group[i] * down_packet[row_start + down_chunk_base + i]
-                        )
+                    down_acc[row] += down_group[target_row_base + row]
                     if group_idx == len(FFN_DOWN_PHASE_INDICES) - 1:
                         for i in range(ffn_npu_rows, op.intermediate_size):
                             down_acc[row] += ffn_hidden[i] * down_packet[row_start + i]
@@ -1067,12 +1082,6 @@ def build_phase_owned_case(
                 row_base = lane * op.q_rows_per_packet
                 residual_group_size = op.hidden_size
                 lane_packets[gate_packet_start] = torch.tensor(0, dtype=torch.bfloat16)
-                lane_packets[gate_packet_start + op.packet_elements - 2] = torch.tensor(
-                    ffn_chunk_base, dtype=torch.bfloat16
-                )
-                lane_packets[gate_packet_start + op.packet_elements - 1] = torch.tensor(
-                    row_base, dtype=torch.bfloat16
-                )
                 lane_packets[
                     gate_packet_start + 1 : gate_packet_start + 1 + op.hidden_size
                 ] = attn_residual
@@ -1086,6 +1095,9 @@ def build_phase_owned_case(
                 gate_weight_base = gate_packet_start + 1 + 2 * op.hidden_size
                 up_weight_base = (
                     gate_weight_base + op.q_rows_per_packet * op.hidden_size
+                )
+                down_partial_weight_base = (
+                    up_weight_base + op.q_rows_per_packet * op.hidden_size
                 )
                 lane_attn_residual = attn_residual.clone()
                 attention_base = (
@@ -1109,6 +1121,12 @@ def build_phase_owned_case(
                         proj_row
                     ]
                     lane_packets[up_dst : up_dst + op.hidden_size] = up_weight[proj_row]
+                    for target_row in range(o_target_rows):
+                        lane_packets[
+                            down_partial_weight_base
+                            + target_row * op.q_rows_per_packet
+                            + row
+                        ] = down_weight[target_row, proj_row]
                     gate_acc = _kernel_normed_row_dot(
                         lane_attn_residual,
                         post_norm_weight,
@@ -1165,6 +1183,9 @@ def build_phase_owned_case(
                             down_weight[proj_row],
                             attn_residual[proj_row],
                         )
+                lane_packets[
+                    down_weight_base + op.q_rows_per_packet * op.intermediate_size
+                ] = torch.tensor(row_base, dtype=torch.bfloat16)
 
         x = residual + ref._mlp(x_norm, layer_idx)
 
@@ -1206,8 +1227,12 @@ def compile_phase_owned_stage(
     context = AIEContext(build_dir=build_dir)
     if packet_elements is None:
         q_phase_elements = (2 + q_rows_per_packet) * hidden_size
-        gate_up_elements = 1 + (2 + 2 * q_rows_per_packet) * hidden_size
         o_target_rows = num_lanes * q_rows_per_packet
+        gate_up_elements = (
+            1
+            + (2 + 2 * q_rows_per_packet) * hidden_size
+            + o_target_rows * q_rows_per_packet
+        )
         o_elements = 2 + o_target_rows + o_target_rows * 2 * head_dim
         down_elements = (
             1

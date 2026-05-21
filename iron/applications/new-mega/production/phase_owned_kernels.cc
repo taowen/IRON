@@ -93,7 +93,6 @@ void new_mega_phase_gate_up_shard_bf16(const bfloat16 *__restrict packet,
                                        float *__restrict state,
                                        bfloat16 *__restrict lane_output,
                                        float *__restrict ffn_partial,
-                                       int32_t packet_size,
                                        int32_t hidden_size,
                                        int32_t q_rows_per_packet,
                                        int32_t residual_group_size,
@@ -102,11 +101,11 @@ void new_mega_phase_gate_up_shard_bf16(const bfloat16 *__restrict packet,
 {
     event0();
     const int32_t residual_row_base = static_cast<int32_t>(static_cast<float>(packet[0]));
-    const int32_t ffn_row_base = static_cast<int32_t>(static_cast<float>(packet[packet_size - 1]));
     const bfloat16 *attn_residual = packet + 1;
     const bfloat16 *post_norm_weight = attn_residual + hidden_size;
     const bfloat16 *gate_block = post_norm_weight + hidden_size;
     const bfloat16 *up_block = gate_block + q_rows_per_packet * hidden_size;
+    const bfloat16 *down_partial_weight_block = up_block + q_rows_per_packet * hidden_size;
 
     float mean_square = 0.0f;
     for (int32_t i = 0; i < hidden_size; i++) {
@@ -122,9 +121,7 @@ void new_mega_phase_gate_up_shard_bf16(const bfloat16 *__restrict packet,
     float checksum = state[0];
     ::aie::set_rounding(aie::rounding_mode::conv_even);
 
-    for (int32_t row = 0; row < ffn_group_size; row++) {
-        ffn_partial[row] = 0.0f;
-    }
+    float local_ffn[16];
 
     for (int32_t row = 0; row < q_rows_per_packet; row++) {
         const bfloat16 *gate_row = gate_block + row * hidden_size;
@@ -144,7 +141,16 @@ void new_mega_phase_gate_up_shard_bf16(const bfloat16 *__restrict packet,
 
         const float gate_bf16 = static_cast<float>(static_cast<bfloat16>(gate_acc));
         const float up_bf16 = static_cast<float>(static_cast<bfloat16>(up_acc));
-        ffn_partial[ffn_row_base + row] = new_mega_silu_approx(gate_bf16) * up_bf16;
+        local_ffn[row] = new_mega_silu_approx(gate_bf16) * up_bf16;
+    }
+
+    for (int32_t target_row = 0; target_row < ffn_group_size; target_row++) {
+        const bfloat16 *down_weight_row = down_partial_weight_block + target_row * q_rows_per_packet;
+        float partial = 0.0f;
+        for (int32_t row = 0; row < q_rows_per_packet; row++) {
+            partial += local_ffn[row] * static_cast<float>(down_weight_row[row]);
+        }
+        ffn_partial[target_row] = partial;
     }
 
     state[0] = checksum;
@@ -501,14 +507,11 @@ void new_mega_phase_down_residual_shard_bf16(const bfloat16 *__restrict packet,
         }
     }
 
+    const bfloat16 *metadata = down_block + q_rows_per_packet * intermediate_size;
+    const int32_t target_row_base = static_cast<int32_t>(static_cast<float>(metadata[0]));
+
     for (int32_t row = 0; row < q_rows_per_packet; row++) {
-        const bfloat16 *down_row = down_block + row * intermediate_size;
-        float partial_acc = down_acc[row];
-        for (int32_t i = 0; i < ffn_group_size; i++) {
-            const int32_t ffn_idx = ffn_chunk_base + i;
-            partial_acc += ffn_reduced[i] * static_cast<float>(down_row[ffn_idx]);
-        }
-        down_acc[row] = partial_acc;
+        down_acc[row] += ffn_reduced[target_row_base + row];
     }
 
     if (ffn_chunk_base + ffn_group_size >= ffn_npu_rows) {

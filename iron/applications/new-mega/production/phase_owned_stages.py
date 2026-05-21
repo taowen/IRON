@@ -101,7 +101,11 @@ def phase_owned_decode(
             f"({expected_phase_packets})"
         )
     q_phase_elements = (2 + q_rows_per_packet) * hidden_size
-    gate_up_elements = 1 + (2 + 2 * q_rows_per_packet) * hidden_size
+    gate_up_elements = (
+        1
+        + (2 + 2 * q_rows_per_packet) * hidden_size
+        + o_projection_chunk_rows * q_rows_per_packet
+    )
     o_elements = 2 + o_projection_chunk_rows + o_projection_chunk_rows * 2 * head_dim
     down_elements = (
         1
@@ -205,7 +209,6 @@ def phase_owned_decode(
             state_ty,
             lane_output_ty,
             o_partial_ty,
-            np.int32,
             np.int32,
             np.int32,
             np.int32,
@@ -648,7 +651,6 @@ def phase_owned_decode(
                     state,
                     lane_output,
                     ffn_partial,
-                    packet_elements,
                     hidden_size,
                     q_rows_per_packet,
                     hidden_size,

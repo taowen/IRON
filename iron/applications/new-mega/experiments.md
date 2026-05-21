@@ -82,10 +82,10 @@ position/cache policy: fixed max-cache reads + host-owned KV writeback
 Current accepted production evidence:
 
 ```text
-D1.5z Eight FFN Reduced Groups Feed Down Projection
+D1.5zz Down Partial-Projection Reduce For 256 FFN Rows
   ffn_npu_rows=256
-  lane_core_text_bytes=15360
-  npu_time_us=1040519.463
+  lane_core_text_bytes=15344
+  npu_time_us=1031660.098
   phase_owned_max_abs=1.000000
   phase_owned_mean_abs=0.011808
   phase_owned_errors=0
@@ -101,8 +101,8 @@ one dispatch runs the 28-layer phase-owned body
 O projection is chunked into 32 row chunks
 O partial products are reduced across all 8 lanes through fixed reducers
 gate_up consumes the full NPU-produced attention residual
-gate_up emits eight 32-row FFN partial groups through the same reducer fabric
-down_proj consumes NPU-produced FFN rows 0..255
+gate_up emits eight 32-row down partial-projection groups through the same reducer fabric
+down_proj consumes NPU-produced down partial sums covering FFN rows 0..255
 resource use is bounded by lane/reducer topology, not by num_layers * phases
 ```
 
@@ -158,7 +158,9 @@ D1 phase-owned Qwen3 integration [in progress]
     |
     +--> D1.5z first 256 FFN rows via reducer [accepted]
     |
-    +--> D1.5zz remove remaining host FFN hidden dependency [next]
+    +--> D1.5zz down partial-projection reduce for first 256 rows [accepted]
+    |
+    +--> D1.5zz2 remove remaining host FFN hidden dependency [next]
     |
     v
 D2 28-layer decode body performance/token validation
@@ -261,22 +263,61 @@ host packet volume and reduce repeated gate/down packet traffic rather than
 blindly increasing group count.
 ```
 
-## Current Experiment: D1.5zz
+## Last Accepted Experiment: D1.5zz
+
+Status: accepted.
+
+Question:
+
+```text
+Can the existing reducer fabric carry down partial-projection sums instead of
+FFN hidden values for the NPU-covered rows?
+```
+
+Accepted change:
+
+```text
+gate_up computes local FFN values for 4 intermediate rows
+gate_up multiplies them by a compact down_weight[32 target rows, 4 local rows]
+gate_up emits a 32-row down partial vector into the existing reducer fabric
+down_partial accumulates reduced[target_row_base + row] directly
+host ffn_hidden/down rows are still used only for rows 256..3071
+```
+
+Evidence:
+
+```text
+compile-only accepted
+lane core .text = 15344 bytes
+num_layers=1:
+  npu_time_us=39318.891
+  phase_owned_errors=0
+  qwen3_phase_output_errors=0
+num_layers=28:
+  npu_time_us=1031660.098
+  phase_owned_errors=0
+  qwen3_phase_output_errors=0
+```
+
+Why this matters:
+
+```text
+This proves the preferred dataflow shape: do not broadcast FFN hidden values to
+down lanes. Compute down partial sums near gate_up and reduce those sums.
+The current implementation still carries host tail rows 256..3071, but the
+mechanism for removing that tail is now clear.
+```
+
+## Current Experiment: D1.5zz2
 
 Status: next.
 
 Question:
 
 ```text
-How should production remove host_ffn_hidden[256:3072] from down_proj without
-linearly increasing packet stream size and NPU runtime?
-```
-
-Known constraint:
-
-```text
-lane program memory is no longer the immediate blocker for more groups, but
-runtime and host packet volume are now visibly worsening.
+How should production remove host_ffn_hidden[256:3072] using the accepted down
+partial-projection reduce mechanism without linearly increasing packet stream
+size and NPU runtime?
 ```
 
 Candidate A, full FFN gather/broadcast:
@@ -311,7 +352,7 @@ it converts the remaining host activation dependency into a reduce problem
 it keeps the output shape small: q_rows_per_packet residual rows per owner lane
 ```
 
-Acceptance for D1.5zz:
+Acceptance for D1.5zz2:
 
 ```text
 preflight passes
@@ -411,8 +452,8 @@ wall-time buckets are measured
 Do the next work in this order:
 
 ```text
-1. D1.5zz: remove host_ffn_hidden[256:3072], preferably by down partial reduce
-   or a streaming down accumulation plan that does not add lane program text.
+1. D1.5zz2: remove host_ffn_hidden[256:3072] by extending down
+   partial-projection reduce without letting packet stream size dominate.
 2. Keep final norm / LM head on CPU until the decode body is faster than the
    accepted persistent baseline.
 3. Do not add standalone production ops or static single-layer graphs.

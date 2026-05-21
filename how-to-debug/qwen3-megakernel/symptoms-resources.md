@@ -215,6 +215,34 @@ handoff groups mean more lane packets and more reducer tokens. Treat this as a
 performance symptom, not a program-memory symptom.
 ```
 
+Follow-up dataflow change:
+
+```text
+The next accepted change moved from reducing FFN hidden values to reducing down
+partial-projection sums:
+
+  gate_up local FFN rows * compact down_weight[32 target rows, 4 local rows]
+    -> ffn_partial/down_partial[32]
+    -> existing source/target reducers
+    -> down_acc[target_row_base + row]
+
+compile-only accepted
+lane core .text: 15344 bytes
+num_layers=1 accepted, npu_time_us=39318.891
+num_layers=28 accepted, npu_time_us=1031660.098
+phase_owned_errors: 0
+qwen3_phase_output_errors: 0
+```
+
+Debug lesson:
+
+```text
+The same reducer fabric can carry either activation values or already-multiplied
+projection partial sums. The latter is the better megakernel shape because it
+keeps the consumer-side down state small and avoids broadcasting full FFN hidden
+vectors to every down lane.
+```
+
 ## Persistent QKV Exceeds Output DMA Channels
 
 Symptom:

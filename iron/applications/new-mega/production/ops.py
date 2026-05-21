@@ -157,7 +157,11 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
                 "production FFN reduce phase labels currently expect 32 rows per chunk"
             )
         q_phase_elements = (2 + self.q_rows_per_packet) * self.hidden_size
-        gate_up_elements = 1 + (2 + 2 * self.q_rows_per_packet) * self.hidden_size
+        gate_up_elements = (
+            1
+            + (2 + 2 * self.q_rows_per_packet) * self.hidden_size
+            + self.o_projection_chunk_rows * self.q_rows_per_packet
+        )
         o_elements = (
             2
             + self.o_projection_chunk_rows
