@@ -38,6 +38,8 @@ from iron.common.context import AIEContext
 from ops import (
     ATTENTION_SCORE_PV_PHASES,
     ATTENTION_SCORE_PV_SECONDARY_PHASES,
+    FFN_DOWN_PHASES,
+    FFN_GATE_PHASES,
     O_PROJECTION_PHASES,
     PHASE_LABELS,
     NewMegaPhaseOwnedDecode,
@@ -54,8 +56,8 @@ ATTENTION_SCORE_PV_SECONDARY_PHASE_INDICES = [
     PHASE_LABELS.index(label) for label in ATTENTION_SCORE_PV_SECONDARY_PHASES
 ]
 O_PHASE_INDICES = [PHASE_LABELS.index(label) for label in O_PROJECTION_PHASES]
-GATE_UP_PHASE = PHASE_LABELS.index("gate_up")
-DOWN_PHASE = PHASE_LABELS.index("down_proj")
+FFN_GATE_PHASE_INDICES = [PHASE_LABELS.index(label) for label in FFN_GATE_PHASES]
+FFN_DOWN_PHASE_INDICES = [PHASE_LABELS.index(label) for label in FFN_DOWN_PHASES]
 
 
 def _kernel_normed_row_dot(
@@ -331,7 +333,11 @@ def _phase_owned_segment_stats(
             lane_base = layer_base + lane * op.output_values_per_lane
             for name, seg_offset, size in segments:
                 seg = diff[lane_base + seg_offset : lane_base + seg_offset + size]
-                seg_tol = max(abs_tol, 1.0) if name == "attention_residual" else abs_tol
+                seg_tol = (
+                    max(abs_tol, 1.0)
+                    if name in {"attention_residual", "down_residual"}
+                    else abs_tol
+                )
                 count = int((seg > seg_tol).sum().item())
                 max_abs = float(seg.max().item()) if seg.numel() else 0.0
                 prev_count, prev_max = stats.get(name, (0, 0.0))
@@ -358,6 +364,11 @@ def _phase_owned_qwen3_tolerance(
         for lane in range(op.num_lanes):
             start = layer_base + lane * op.output_values_per_lane + attention_offset
             tolerance[start : start + op.attention_output_values_per_lane] = (
+                attention_tol
+            )
+            down_start = start + op.attention_output_values_per_lane
+            down_start += op.gate_up_output_values_per_lane
+            tolerance[down_start : down_start + op.residual_output_values_per_lane] = (
                 attention_tol
             )
     return tolerance
@@ -452,48 +463,6 @@ def phase_owned_reference(
                 expected[v_base + row] = v_acc
                 acc += v_acc
 
-            q_rope_packet_index = layer * op.phase_packets_per_layer + Q_ROPE_PHASE
-            q_rope_start = lane_start + q_rope_packet_index * op.packet_elements
-            q_rope_packet = lane_f32[q_rope_start : q_rope_start + op.packet_elements]
-            q_rope_row_base = int(float(q_rope_packet[0].item()))
-            q_raw_head = q_rope_packet[1 : 1 + op.head_dim]
-            q_norm_weight = q_rope_packet[1 + op.head_dim : 1 + 2 * op.head_dim]
-            q_cos = q_rope_packet[1 + 2 * op.head_dim : 1 + 3 * op.head_dim]
-            q_sin = q_rope_packet[1 + 3 * op.head_dim : 1 + 4 * op.head_dim]
-            q_rope_base = output_start + q_stride + k_stride + v_stride
-            for row in range(op.q_rows_per_packet):
-                row_index = q_rope_row_base + row
-                q_rope_acc = _kernel_norm_rope_row(
-                    q_raw_head,
-                    q_norm_weight,
-                    q_cos,
-                    q_sin,
-                    row_index,
-                ).to(torch.float32)
-                expected[q_rope_base + row] = q_rope_acc
-                acc += q_rope_acc
-
-            k_rope_packet_index = layer * op.phase_packets_per_layer + K_ROPE_PHASE
-            k_rope_start = lane_start + k_rope_packet_index * op.packet_elements
-            k_rope_packet = lane_f32[k_rope_start : k_rope_start + op.packet_elements]
-            k_rope_row_base = int(float(k_rope_packet[0].item()))
-            k_raw_head = k_rope_packet[1 : 1 + op.head_dim]
-            k_norm_weight = k_rope_packet[1 + op.head_dim : 1 + 2 * op.head_dim]
-            k_cos = k_rope_packet[1 + 2 * op.head_dim : 1 + 3 * op.head_dim]
-            k_sin = k_rope_packet[1 + 3 * op.head_dim : 1 + 4 * op.head_dim]
-            k_rope_base = q_rope_base + q_rope_stride
-            for row in range(op.q_rows_per_packet):
-                row_index = k_rope_row_base + row
-                k_rope_acc = _kernel_norm_rope_row(
-                    k_raw_head,
-                    k_norm_weight,
-                    k_cos,
-                    k_sin,
-                    row_index,
-                ).to(torch.float32)
-                expected[k_rope_base + row] = k_rope_acc
-                acc += k_rope_acc
-
             context_base = (
                 output_start
                 + q_stride
@@ -560,8 +529,10 @@ def phase_owned_reference(
                     expected[attention_base + chunk_row_base + group_row] = residual_acc
                     acc += residual_acc
 
-            gate_packet_index = layer * op.phase_packets_per_layer + GATE_UP_PHASE
-            gate_start = lane_start + gate_packet_index * op.packet_elements
+            first_gate_packet_index = (
+                layer * op.phase_packets_per_layer + FFN_GATE_PHASE_INDICES[0]
+            )
+            gate_start = lane_start + first_gate_packet_index * op.packet_elements
             gate_packet = lane_f32[gate_start : gate_start + op.packet_elements]
             residual_row_base = int(float(gate_packet[0].item()))
             attn_residual = gate_packet[1 : 1 + op.hidden_size].clone()
@@ -591,87 +562,6 @@ def phase_owned_reference(
             ]
             mean_square = (attn_residual * attn_residual).mean(dtype=torch.float32)
             inv_rms = torch.rsqrt(mean_square + 1.0e-6)
-            gate_base = (
-                output_start
-                + q_stride
-                + k_stride
-                + v_stride
-                + q_rope_stride
-                + k_rope_stride
-                + context_stride
-                + attention_stride
-            )
-            up_base = gate_base + op.q_rows_per_packet
-            for row in range(op.q_rows_per_packet):
-                gate_acc = torch.zeros((), dtype=torch.float32)
-                up_acc = torch.zeros((), dtype=torch.float32)
-                row_start = row * op.hidden_size
-                for i in range(op.hidden_size):
-                    xnorm = attn_residual[i] * inv_rms * post_weight[i]
-                    gate_acc += xnorm * gate_block[row_start + i]
-                    up_acc += xnorm * up_block[row_start + i]
-                expected[gate_base + row] = gate_acc
-                expected[up_base + row] = up_acc
-                acc += gate_acc + up_acc
-
-            ffn_group = torch.zeros((o_target_rows,), dtype=torch.float32)
-            for producer_lane in range(op.num_lanes):
-                producer_lane_start = producer_lane * lane_span
-                producer_gate_start = (
-                    producer_lane_start + gate_packet_index * op.packet_elements
-                )
-                producer_gate_packet = lane_f32[
-                    producer_gate_start : producer_gate_start + op.packet_elements
-                ]
-                producer_gate_block = producer_gate_packet[
-                    1
-                    + 2 * op.hidden_size : 1
-                    + (2 + op.q_rows_per_packet) * op.hidden_size
-                ]
-                producer_up_block = producer_gate_packet[
-                    1
-                    + (2 + op.q_rows_per_packet) * op.hidden_size : 1
-                    + (2 + 2 * op.q_rows_per_packet) * op.hidden_size
-                ]
-                producer_row_base = producer_lane * op.q_rows_per_packet
-                for row in range(op.q_rows_per_packet):
-                    row_start = row * op.hidden_size
-                    gate_acc = torch.zeros((), dtype=torch.float32)
-                    up_acc = torch.zeros((), dtype=torch.float32)
-                    for i in range(op.hidden_size):
-                        xnorm = attn_residual[i] * inv_rms * post_weight[i]
-                        gate_acc += xnorm * producer_gate_block[row_start + i]
-                        up_acc += xnorm * producer_up_block[row_start + i]
-                    gate_bf16 = gate_acc.to(torch.bfloat16).to(torch.float32)
-                    up_bf16 = up_acc.to(torch.bfloat16).to(torch.float32)
-                    ffn_group[producer_row_base + row] = F.silu(gate_bf16) * up_bf16
-
-            down_packet_index = layer * op.phase_packets_per_layer + DOWN_PHASE
-            down_start = lane_start + down_packet_index * op.packet_elements
-            down_packet = lane_f32[down_start : down_start + op.packet_elements]
-            ffn_row_base = int(float(down_packet[0].item()))
-            ffn_hidden = down_packet[1 : 1 + op.intermediate_size].clone()
-            local_gate = (
-                expected[gate_base : gate_base + op.q_rows_per_packet]
-                .to(torch.bfloat16)
-                .to(torch.float32)
-            )
-            local_up = (
-                expected[up_base : up_base + op.q_rows_per_packet]
-                .to(torch.bfloat16)
-                .to(torch.float32)
-            )
-            ffn_hidden[ffn_row_base : ffn_row_base + op.q_rows_per_packet] = (
-                F.silu(local_gate) * local_up
-            )
-            ffn_hidden[:o_target_rows] = ffn_group
-            residual_shard = down_packet[
-                1
-                + op.intermediate_size : 1
-                + op.intermediate_size
-                + op.q_rows_per_packet
-            ]
-            down_block_start = 1 + op.intermediate_size + op.q_rows_per_packet
             residual_base = (
                 output_start
                 + q_stride
@@ -683,14 +573,90 @@ def phase_owned_reference(
                 + attention_stride
                 + gate_up_stride
             )
-            for row in range(op.q_rows_per_packet):
-                row_start = down_block_start + row * op.intermediate_size
-                down_acc = torch.zeros((), dtype=torch.float32)
-                for i in range(op.intermediate_size):
-                    down_acc += ffn_hidden[i] * down_packet[row_start + i]
-                residual_acc = residual_shard[row] + down_acc
-                expected[residual_base + row] = residual_acc
-                acc += residual_acc
+            down_acc = torch.zeros((op.q_rows_per_packet,), dtype=torch.float32)
+            ffn_npu_rows = op.ffn_npu_rows
+            for group_idx, (gate_phase, down_phase) in enumerate(
+                zip(FFN_GATE_PHASE_INDICES, FFN_DOWN_PHASE_INDICES, strict=True)
+            ):
+                gate_packet_index = layer * op.phase_packets_per_layer + gate_phase
+                gate_start = lane_start + gate_packet_index * op.packet_elements
+                gate_packet = lane_f32[gate_start : gate_start + op.packet_elements]
+                gate_block = gate_packet[
+                    1
+                    + 2 * op.hidden_size : 1
+                    + (2 + op.q_rows_per_packet) * op.hidden_size
+                ]
+                up_block = gate_packet[
+                    1
+                    + (2 + op.q_rows_per_packet) * op.hidden_size : 1
+                    + (2 + 2 * op.q_rows_per_packet) * op.hidden_size
+                ]
+                for row in range(op.q_rows_per_packet):
+                    gate_acc = torch.zeros((), dtype=torch.float32)
+                    up_acc = torch.zeros((), dtype=torch.float32)
+                    row_start = row * op.hidden_size
+                    for i in range(op.hidden_size):
+                        xnorm = attn_residual[i] * inv_rms * post_weight[i]
+                        gate_acc += xnorm * gate_block[row_start + i]
+                        up_acc += xnorm * up_block[row_start + i]
+                    acc += gate_acc + up_acc
+
+                ffn_group = torch.zeros((o_target_rows,), dtype=torch.float32)
+                for producer_lane in range(op.num_lanes):
+                    producer_lane_start = producer_lane * lane_span
+                    producer_gate_start = (
+                        producer_lane_start + gate_packet_index * op.packet_elements
+                    )
+                    producer_gate_packet = lane_f32[
+                        producer_gate_start : producer_gate_start + op.packet_elements
+                    ]
+                    producer_gate_block = producer_gate_packet[
+                        1
+                        + 2 * op.hidden_size : 1
+                        + (2 + op.q_rows_per_packet) * op.hidden_size
+                    ]
+                    producer_up_block = producer_gate_packet[
+                        1
+                        + (2 + op.q_rows_per_packet) * op.hidden_size : 1
+                        + (2 + 2 * op.q_rows_per_packet) * op.hidden_size
+                    ]
+                    producer_row_base = producer_lane * op.q_rows_per_packet
+                    for row in range(op.q_rows_per_packet):
+                        row_start = row * op.hidden_size
+                        gate_acc = torch.zeros((), dtype=torch.float32)
+                        up_acc = torch.zeros((), dtype=torch.float32)
+                        for i in range(op.hidden_size):
+                            xnorm = attn_residual[i] * inv_rms * post_weight[i]
+                            gate_acc += xnorm * producer_gate_block[row_start + i]
+                            up_acc += xnorm * producer_up_block[row_start + i]
+                        gate_bf16 = gate_acc.to(torch.bfloat16).to(torch.float32)
+                        up_bf16 = up_acc.to(torch.bfloat16).to(torch.float32)
+                        ffn_group[producer_row_base + row] = F.silu(gate_bf16) * up_bf16
+
+                down_packet_index = layer * op.phase_packets_per_layer + down_phase
+                down_start = lane_start + down_packet_index * op.packet_elements
+                down_packet = lane_f32[down_start : down_start + op.packet_elements]
+                down_chunk_base = int(float(down_packet[0].item()))
+                ffn_hidden = down_packet[1 : 1 + op.intermediate_size].clone()
+                residual_shard = down_packet[
+                    1
+                    + op.intermediate_size : 1
+                    + op.intermediate_size
+                    + op.q_rows_per_packet
+                ]
+                down_block_start = 1 + op.intermediate_size + op.q_rows_per_packet
+                for row in range(op.q_rows_per_packet):
+                    row_start = down_block_start + row * op.intermediate_size
+                    for i in range(o_target_rows):
+                        down_acc[row] += (
+                            ffn_group[i] * down_packet[row_start + down_chunk_base + i]
+                        )
+                    if group_idx == len(FFN_DOWN_PHASE_INDICES) - 1:
+                        for i in range(ffn_npu_rows, op.intermediate_size):
+                            down_acc[row] += ffn_hidden[i] * down_packet[row_start + i]
+                        residual_acc = residual_shard[row] + down_acc[row]
+                        expected[residual_base + row] = residual_acc
+                        acc += residual_acc
 
             next_packet_index = (layer + 1) * op.phase_packets_per_layer - 1
             next_start = lane_start + next_packet_index * op.packet_elements
@@ -939,22 +905,6 @@ def build_phase_owned_case(
                     v_weight[q_row],
                     cfg.rms_norm_eps,
                 )
-                q_rope_out = out + q_stride + k_stride + v_stride
-                qwen3_reference[q_rope_out] = _kernel_norm_rope_row(
-                    q_raw_heads[0],
-                    q_norm_weight,
-                    cos_values,
-                    sin_values,
-                    q_row,
-                )
-                k_rope_out = q_rope_out + q_rope_stride
-                qwen3_reference[k_rope_out] = _kernel_norm_rope_row(
-                    k_raw_kv_heads[0],
-                    k_norm_weight,
-                    cos_values,
-                    sin_values,
-                    q_row,
-                )
             for chunk_idx, attention_packet_start in enumerate(attention_packet_starts):
                 _pack_attention_chunk_packet(
                     lane_packets,
@@ -1106,164 +1056,115 @@ def build_phase_owned_case(
                     + o_target_rows
                 ] = full_o_residual[chunk_row_base : chunk_row_base + o_target_rows]
 
-        for lane in range(op.num_lanes):
-            lane_start = lane * lane_span
-            gate_packet_index = layer_idx * op.phase_packets_per_layer + GATE_UP_PHASE
-            gate_packet_start = lane_start + gate_packet_index * op.packet_elements
-            row_base = lane * op.q_rows_per_packet
-            residual_group_size = op.hidden_size
-            lane_packets[gate_packet_start] = torch.tensor(0, dtype=torch.bfloat16)
-            lane_packets[gate_packet_start + op.packet_elements - 1] = torch.tensor(
-                row_base, dtype=torch.bfloat16
-            )
-            lane_packets[
-                gate_packet_start + 1 : gate_packet_start + 1 + op.hidden_size
-            ] = attn_residual
-            lane_packets[
-                gate_packet_start
-                + 1
-                + op.hidden_size : gate_packet_start
-                + 1
-                + 2 * op.hidden_size
-            ] = model.w(f"{layer}.post_attention_layernorm.weight").flatten()
-            gate_weight_base = gate_packet_start + 1 + 2 * op.hidden_size
-            up_weight_base = gate_weight_base + op.q_rows_per_packet * op.hidden_size
-            lane_attn_residual = attn_residual.clone()
-            attention_base = (
-                layer_idx * out_layer_span
-                + lane * out_lane_stride
-                + q_stride
-                + k_stride
-                + v_stride
-                + q_rope_stride
-                + k_rope_stride
-                + context_stride
-            )
-            lane_attn_residual[0:residual_group_size] = qwen3_reference[
-                attention_base : attention_base + residual_group_size
-            ]
-            out_base = (
-                layer_idx * out_layer_span
-                + lane * out_lane_stride
-                + q_stride
-                + k_stride
-                + v_stride
-                + q_rope_stride
-                + k_rope_stride
-                + context_stride
-                + attention_stride
-            )
-            for row in range(op.q_rows_per_packet):
-                proj_row = row_base + row
-                gate_dst = gate_weight_base + row * op.hidden_size
-                up_dst = up_weight_base + row * op.hidden_size
-                lane_packets[gate_dst : gate_dst + op.hidden_size] = gate_weight[
-                    proj_row
-                ]
-                lane_packets[up_dst : up_dst + op.hidden_size] = up_weight[proj_row]
-                qwen3_reference[out_base + row] = _kernel_normed_row_dot(
-                    lane_attn_residual,
-                    post_norm_weight,
-                    gate_weight[proj_row],
-                    cfg.rms_norm_eps,
+        o_target_rows = op.num_lanes * op.q_rows_per_packet
+        npu_ffn_hidden = ffn_hidden.to(torch.float32).clone()
+        for group_idx, gate_phase in enumerate(FFN_GATE_PHASE_INDICES):
+            ffn_chunk_base = group_idx * o_target_rows
+            for lane in range(op.num_lanes):
+                lane_start = lane * lane_span
+                gate_packet_index = layer_idx * op.phase_packets_per_layer + gate_phase
+                gate_packet_start = lane_start + gate_packet_index * op.packet_elements
+                row_base = lane * op.q_rows_per_packet
+                residual_group_size = op.hidden_size
+                lane_packets[gate_packet_start] = torch.tensor(0, dtype=torch.bfloat16)
+                lane_packets[gate_packet_start + op.packet_elements - 2] = torch.tensor(
+                    ffn_chunk_base, dtype=torch.bfloat16
                 )
-                qwen3_reference[out_base + op.q_rows_per_packet + row] = (
-                    _kernel_normed_row_dot(
+                lane_packets[gate_packet_start + op.packet_elements - 1] = torch.tensor(
+                    row_base, dtype=torch.bfloat16
+                )
+                lane_packets[
+                    gate_packet_start + 1 : gate_packet_start + 1 + op.hidden_size
+                ] = attn_residual
+                lane_packets[
+                    gate_packet_start
+                    + 1
+                    + op.hidden_size : gate_packet_start
+                    + 1
+                    + 2 * op.hidden_size
+                ] = model.w(f"{layer}.post_attention_layernorm.weight").flatten()
+                gate_weight_base = gate_packet_start + 1 + 2 * op.hidden_size
+                up_weight_base = (
+                    gate_weight_base + op.q_rows_per_packet * op.hidden_size
+                )
+                lane_attn_residual = attn_residual.clone()
+                attention_base = (
+                    layer_idx * out_layer_span
+                    + lane * out_lane_stride
+                    + q_stride
+                    + k_stride
+                    + v_stride
+                    + q_rope_stride
+                    + k_rope_stride
+                    + context_stride
+                )
+                lane_attn_residual[0:residual_group_size] = qwen3_reference[
+                    attention_base : attention_base + residual_group_size
+                ]
+                for row in range(op.q_rows_per_packet):
+                    proj_row = ffn_chunk_base + row_base + row
+                    gate_dst = gate_weight_base + row * op.hidden_size
+                    up_dst = up_weight_base + row * op.hidden_size
+                    lane_packets[gate_dst : gate_dst + op.hidden_size] = gate_weight[
+                        proj_row
+                    ]
+                    lane_packets[up_dst : up_dst + op.hidden_size] = up_weight[proj_row]
+                    gate_acc = _kernel_normed_row_dot(
+                        lane_attn_residual,
+                        post_norm_weight,
+                        gate_weight[proj_row],
+                        cfg.rms_norm_eps,
+                    )
+                    up_acc = _kernel_normed_row_dot(
                         lane_attn_residual,
                         post_norm_weight,
                         up_weight[proj_row],
                         cfg.rms_norm_eps,
                     )
-                )
+                    gate_bf16 = gate_acc.to(torch.bfloat16).to(torch.float32)
+                    up_bf16 = up_acc.to(torch.bfloat16).to(torch.float32)
+                    npu_ffn_hidden[proj_row] = F.silu(gate_bf16) * up_bf16
 
-        o_target_rows = op.num_lanes * op.q_rows_per_packet
-        ffn_group = torch.zeros((o_target_rows,), dtype=torch.float32)
-        for producer_lane in range(op.num_lanes):
-            producer_gate_base = (
-                layer_idx * out_layer_span
-                + producer_lane * out_lane_stride
-                + q_stride
-                + k_stride
-                + v_stride
-                + q_rope_stride
-                + k_rope_stride
-                + context_stride
-                + attention_stride
-            )
-            local_gate = qwen3_reference[
-                producer_gate_base : producer_gate_base + op.q_rows_per_packet
-            ].to(torch.float32)
-            local_up = qwen3_reference[
-                producer_gate_base
-                + op.q_rows_per_packet : producer_gate_base
-                + 2 * op.q_rows_per_packet
-            ].to(torch.float32)
-            producer_row_base = producer_lane * op.q_rows_per_packet
-            ffn_group[producer_row_base : producer_row_base + op.q_rows_per_packet] = (
-                F.silu(local_gate) * local_up
-            )
-
-        for lane in range(op.num_lanes):
-            lane_start = lane * lane_span
-            down_packet_index = layer_idx * op.phase_packets_per_layer + DOWN_PHASE
-            down_packet_start = lane_start + down_packet_index * op.packet_elements
-            row_base = lane * op.q_rows_per_packet
-            lane_packets[down_packet_start] = torch.tensor(
-                row_base, dtype=torch.bfloat16
-            )
-            lane_packets[
-                down_packet_start + 1 : down_packet_start + 1 + op.intermediate_size
-            ] = ffn_hidden
-            residual_base = down_packet_start + 1 + op.intermediate_size
-            down_weight_base = residual_base + op.q_rows_per_packet
-            lane_ffn_hidden = ffn_hidden.clone()
-            gate_base_for_lane = (
-                layer_idx * out_layer_span
-                + lane * out_lane_stride
-                + q_stride
-                + k_stride
-                + v_stride
-                + q_rope_stride
-                + k_rope_stride
-                + context_stride
-                + attention_stride
-            )
-            local_gate = qwen3_reference[
-                gate_base_for_lane : gate_base_for_lane + op.q_rows_per_packet
-            ].to(torch.float32)
-            local_up = qwen3_reference[
-                gate_base_for_lane
-                + op.q_rows_per_packet : gate_base_for_lane
-                + 2 * op.q_rows_per_packet
-            ].to(torch.float32)
-            lane_ffn_hidden[row_base : row_base + op.q_rows_per_packet] = (
-                F.silu(local_gate) * local_up
-            )
-            lane_ffn_hidden[:o_target_rows] = ffn_group
-            out_base = (
-                layer_idx * out_layer_span
-                + lane * out_lane_stride
-                + q_stride
-                + k_stride
-                + v_stride
-                + q_rope_stride
-                + k_rope_stride
-                + context_stride
-                + attention_stride
-                + gate_up_stride
-            )
-            for row in range(op.q_rows_per_packet):
-                proj_row = row_base + row
-                lane_packets[residual_base + row] = attn_residual[proj_row]
-                weight_dst = down_weight_base + row * op.intermediate_size
-                lane_packets[weight_dst : weight_dst + op.intermediate_size] = (
-                    down_weight[proj_row]
+        for group_idx, down_phase in enumerate(FFN_DOWN_PHASE_INDICES):
+            ffn_chunk_base = group_idx * o_target_rows
+            for lane in range(op.num_lanes):
+                lane_start = lane * lane_span
+                down_packet_index = layer_idx * op.phase_packets_per_layer + down_phase
+                down_packet_start = lane_start + down_packet_index * op.packet_elements
+                row_base = lane * op.q_rows_per_packet
+                lane_packets[down_packet_start] = torch.tensor(
+                    ffn_chunk_base, dtype=torch.bfloat16
                 )
-                qwen3_reference[out_base + row] = _kernel_down_residual_row(
-                    lane_ffn_hidden,
-                    down_weight[proj_row],
-                    attn_residual[proj_row],
+                lane_packets[
+                    down_packet_start + 1 : down_packet_start + 1 + op.intermediate_size
+                ] = ffn_hidden
+                residual_base = down_packet_start + 1 + op.intermediate_size
+                down_weight_base = residual_base + op.q_rows_per_packet
+                out_base = (
+                    layer_idx * out_layer_span
+                    + lane * out_lane_stride
+                    + q_stride
+                    + k_stride
+                    + v_stride
+                    + q_rope_stride
+                    + k_rope_stride
+                    + context_stride
+                    + attention_stride
+                    + gate_up_stride
                 )
+                for row in range(op.q_rows_per_packet):
+                    proj_row = row_base + row
+                    lane_packets[residual_base + row] = attn_residual[proj_row]
+                    weight_dst = down_weight_base + row * op.intermediate_size
+                    lane_packets[weight_dst : weight_dst + op.intermediate_size] = (
+                        down_weight[proj_row]
+                    )
+                    if group_idx == len(FFN_DOWN_PHASE_INDICES) - 1:
+                        qwen3_reference[out_base + row] = _kernel_down_residual_row(
+                            npu_ffn_hidden,
+                            down_weight[proj_row],
+                            attn_residual[proj_row],
+                        )
 
         x = residual + ref._mlp(x_norm, layer_idx)
 

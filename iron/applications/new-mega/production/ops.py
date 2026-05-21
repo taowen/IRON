@@ -38,6 +38,15 @@ O_PROJECTION_CHUNK_COUNT = 32
 O_PROJECTION_PHASES = tuple(
     f"o_proj_chunk_{chunk}" for chunk in range(O_PROJECTION_CHUNK_COUNT)
 )
+FFN_REDUCE_CHUNK_ROWS = O_PROJECTION_CHUNK_ROWS
+FFN_REDUCE_GROUP_COUNT = 4
+FFN_REDUCE_PHASES = tuple(
+    phase
+    for chunk in range(FFN_REDUCE_GROUP_COUNT)
+    for phase in (f"ffn_gate_chunk_{chunk}", f"down_partial_chunk_{chunk}")
+)
+FFN_GATE_PHASES = FFN_REDUCE_PHASES[0::2]
+FFN_DOWN_PHASES = FFN_REDUCE_PHASES[1::2]
 
 PHASE_LABELS = (
     "input_qkv",
@@ -48,8 +57,7 @@ PHASE_LABELS = (
     *ATTENTION_SCORE_PV_PHASES,
     *ATTENTION_SCORE_PV_SECONDARY_PHASES,
     *O_PROJECTION_PHASES,
-    "gate_up",
-    "down_proj",
+    *FFN_REDUCE_PHASES,
     "next_layer_token",
 )
 
@@ -144,6 +152,10 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
             raise ValueError(
                 "production O projection phase labels currently expect 32 chunks"
             )
+        if self.ffn_reduce_chunk_rows != FFN_REDUCE_CHUNK_ROWS:
+            raise ValueError(
+                "production FFN reduce phase labels currently expect 32 rows per chunk"
+            )
         q_phase_elements = (2 + self.q_rows_per_packet) * self.hidden_size
         gate_up_elements = 1 + (2 + 2 * self.q_rows_per_packet) * self.hidden_size
         o_elements = (
@@ -231,6 +243,18 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
         if self.hidden_size % self.o_projection_chunk_rows != 0:
             raise ValueError("hidden_size must be divisible by O projection chunk rows")
         return self.hidden_size // self.o_projection_chunk_rows
+
+    @property
+    def ffn_reduce_chunk_rows(self) -> int:
+        return self.num_lanes * self.q_rows_per_packet
+
+    @property
+    def ffn_reduce_group_count(self) -> int:
+        return FFN_REDUCE_GROUP_COUNT
+
+    @property
+    def ffn_npu_rows(self) -> int:
+        return self.ffn_reduce_chunk_rows * self.ffn_reduce_group_count
 
     @property
     def attention_head_count(self) -> int:

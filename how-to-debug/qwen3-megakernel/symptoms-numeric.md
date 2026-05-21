@@ -975,3 +975,67 @@ phase_owned_errors: 0
 qwen3_phase_output_max_abs: 1.000000
 qwen3_phase_output_errors: 0
 ```
+
+## Qwen3 Reference Fails Only In Late Down Residual After More FFN Groups
+
+Symptom:
+
+```text
+phase_owned_errors: 0
+qwen3_phase_output_errors: 2
+qwen3_segment_down_residual_errors: 2 max_abs=0.750000
+```
+
+Diagnostic:
+
+```text
+First compare packet-level expected vs qwen3_reference without running NPU.
+Print the failing flat index as layer/lane/segment/row. In this case all
+failures were late-layer down_residual elements:
+
+  layer 26 lane 0 down_residual row 2
+  layer 27 lane 0 down_residual row 2
+  layer 27 lane 3 down_residual row 1
+```
+
+Root cause:
+
+```text
+The full-Qwen3 reference modeled the first NPU-produced FFN rows as if they
+were stored back into a BF16 host hidden tensor. The real D1.5y data path is:
+
+  gate_acc/up_acc -> BF16 gate/up inputs to SiLU
+  SiLU(gate_bf16) * up_bf16 -> float ffn_partial
+  reducer sums float ffn_partial
+  down consumes float ffn_reduced for rows 0..127
+
+Rows 128..3071 still come from the host BF16 ffn_hidden packet. The reference
+must therefore keep the first 128 rows as float reducer outputs and only use
+BF16 host values for the tail.
+```
+
+Fix:
+
+```text
+npu_ffn_hidden = ffn_hidden.to(torch.float32).clone()
+gate_bf16 = gate_acc.to(torch.bfloat16).to(torch.float32)
+up_bf16 = up_acc.to(torch.bfloat16).to(torch.float32)
+npu_ffn_hidden[proj_row] = F.silu(gate_bf16) * up_bf16
+```
+
+Tolerance note:
+
+```text
+down_residual now depends on NPU-produced attention and FFN partial values, so
+the qwen3 semantic comparison uses the same 1.0 absolute tolerance as
+attention_residual. The packet-level NPU-vs-kernel reference remains strict and
+must stay at 0 errors.
+```
+
+Accepted recheck:
+
+```text
+phase_owned_errors: 0
+qwen3_phase_output_max_abs: 1.000000
+qwen3_phase_output_errors: 0
+```

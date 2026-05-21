@@ -26,7 +26,7 @@ tile-local hidden_state[1024] carried across layer iterations
 tile-local input_norm_weight[1024] cached from the phase 0 packet
 loop over layers inside each Worker
 two input ObjectFIFOs and two output ObjectFIFOs per lane in the proven fabric
-four fixed reducer Workers for O partial projection reduce
+four fixed reducer Workers reused by O projection and FFN partial reduce
 resource use bounded by num_lanes, not by num_layers * num_phases
 ```
 
@@ -34,21 +34,21 @@ Phase 0 reads hidden/norm data from the lane-local packet, caches the norm
 weight in tile-local memory, computes lane-local row-sharded Q projection
 outputs, and joins the shard outputs. The first two attention chunk phases
 compute real K/V projection row shards by reusing the cached norm weight.
-Attention chunk phases 2 and 3 compute real first-head Q/K RMSNorm+RoPE row
-shards. The four
-primary `attention_score_pv_*` phases and the four secondary score/PV phases
-run real fixed-cache chunked QK, online softmax, and PV for all 16 attention
-heads. The `o_proj_chunk_*` phases now compute full cross-fabric partial O
-projection: lane Workers produce partials for one 32-row O chunk at a time, one
-source reducer per 4-lane group sums producer lanes, and one target reducer per group
-sums the two source groups before broadcasting each 32-row chunk back to owner
-lanes. O projection no longer needs host-packed context contribution for these
-rows, and the 32 chunks materialize the full 1024-row attention residual in
-`lane_output`. Host-packed values still provide non-local FFN values until an
-FFN gather or partial-reduce design replaces them. The `gate_up` phase consumes
-the full attention residual produced by `o_proj_chunk_0..31`; the `down_proj`
-phase consumes the first 32 FFN hidden rows produced by `gate_up` and reduced
-through the same fixed source/target reducer fabric used by O projection.
+Attention chunk phases 2 and 3 are currently drained diagnostic packet slots;
+the real score/PV packets carry host-packed RoPE Q and fixed-cache K/V chunks.
+The four primary `attention_score_pv_*` phases and the four secondary score/PV
+phases run real fixed-cache chunked QK, online softmax, and PV for all 16
+attention heads. The `o_proj_chunk_*` phases now compute full cross-fabric
+partial O projection: lane Workers produce partials for one 32-row O chunk at a
+time, one source reducer per 4-lane group sums producer lanes, and one target
+reducer per group sums the two source groups before broadcasting each 32-row
+chunk back to owner lanes. O projection no longer needs host-packed context
+contribution for these rows, and the 32 chunks materialize the full 1024-row
+attention residual in `lane_output`. The `gate_up` chunk phases consume the
+full attention residual produced by `o_proj_chunk_0..31` and emit four
+32-row FFN partial groups through the same fixed source/target reducer fabric.
+The `down_partial_chunk_*` phases accumulate those first 128 NPU-produced FFN
+hidden rows in tile-local float state, then add host-packed rows 128..3071.
 Layer 0 initializes a tile-local hidden buffer from the phase 0 packet; each
 `next_layer_token` phase updates that buffer for the next layer. `state[0]` is
 only a checksum for diagnostics, not the activation handoff. The runner uses
@@ -115,7 +115,7 @@ Validated on NPU2:
 default production body:
   num_lanes=8
   num_layers=28
-  phase_packets_per_layer=48
+  phase_packets_per_layer=54
   hidden_size=1024
   attention_size=2048
   attention_head_count=16
@@ -143,25 +143,26 @@ default production body:
   phase 0=tile-local hidden RMSNorm + lane-local Q row shard + grouped join
   attention_chunk_0=tile-local hidden RMSNorm + lane-local K row shard
   attention_chunk_1=tile-local hidden RMSNorm + lane-local V row shard
-  attention_chunk_2=first-head Q RMSNorm + RoPE row shard
-  attention_chunk_3=first-head K RMSNorm + RoPE row shard
+  attention_chunk_2=drained diagnostic packet slot
+  attention_chunk_3=drained diagnostic packet slot
   attention_score_pv_0..3=lane-mapped heads 0..7 fixed-cache QK + online softmax + PV
   attention_score_pv_4..7=lane-mapped heads 8..15 fixed-cache QK + online softmax + PV
   o_proj_chunk_0..31=NPU-produced all context heads + chunked source/target partial reduce + full residual materialization
-  gate_up=NPU-produced full attention residual + real post RMSNorm + lane-local gate/up row shards
-  down_proj=NPU-produced first 32 FFN hidden rows + host remaining FFN hidden + lane-local down row shards + residual add
+  ffn_gate_chunk_0..3=NPU-produced full attention residual + real post RMSNorm + 4x32 FFN partial rows
+  down_partial_chunk_0..3=NPU-produced first 128 FFN hidden rows + host rows 128..3071 + lane-local down row shards + residual add
   next_layer_token=updates tile-local hidden_state for the next layer
   inputs=real Qwen3 hidden/norm/qkv_proj/qk_norm_rope/kv_cache_mask/o_proj/post_norm/gate/up/down/next-hidden packets
   preflight_compute_cores=12
   preflight_total_dma_tasks=10
   preflight_max_compute_tile_inputs=2
   preflight_max_compute_tile_outputs=2
-  npu_time_us=580001.856
+  lane_core_text_bytes=15968
+  npu_time_us=748574.161
   phase_owned_max_abs=1.000000
-  phase_owned_mean_abs=0.011816
+  phase_owned_mean_abs=0.011803
   phase_owned_errors=0
   qwen3_phase_output_max_abs=1.000000
-  qwen3_phase_output_mean_abs=0.011817
+  qwen3_phase_output_mean_abs=0.011796
   qwen3_phase_output_errors=0
 
   O partial-reduce resource diagnosis:
@@ -251,12 +252,28 @@ default production body:
       qwen3_phase_output_max_abs=1.000000
       qwen3_phase_output_mean_abs=0.011824
       qwen3_phase_output_errors=0
+
+  FFN 4-group handoff:
+    gate_up/down are split into four phase pairs:
+      ffn_gate_chunk_0, down_partial_chunk_0, ... chunk_3
+    each gate chunk emits 32 FFN rows through the existing reducer fabric
+    down keeps a tile-local float accumulator and finalizes only after chunk_3
+    first attempt failed CDO generation with lane core .text=17904 bytes
+    removing unused q/k RoPE and gate_up visual diagnostic kernels reduced
+    lane core .text to 15968 bytes and compile succeeded
+    qwen3 reference had late-layer down_residual differences until the first
+    128 NPU-produced FFN rows were modeled as float reducer outputs, not BF16
+    host hidden rows
+    accepted result:
+      npu_time_us=748574.161
+      phase_owned_errors=0
+      qwen3_phase_output_errors=0
 ```
 
 ## Next Work
 
 ```text
-1. Extend the FFN partial handoff beyond the first 32 rows or switch down_proj
+1. Extend the FFN partial handoff beyond the first 128 rows or switch down_proj
    to a true partial-projection reduce so the full 3072-wide host FFN vector
    can be removed.
 2. Add a cheap poison/diagnostic harness for the reducer-handoff paths that

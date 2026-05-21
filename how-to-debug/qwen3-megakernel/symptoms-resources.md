@@ -115,6 +115,84 @@ lane core .text: 16080 bytes
 xclbin/bin generated
 ```
 
+## Extending FFN Handoff Fails Again At CDO Program Memory
+
+Symptom:
+
+```text
+[AIE ERROR] _XAie_LoadProgMemSection():231: Overflow of program memory
+XAie_LoadElf failed with XAIE_INVALID_ELF
+Error generating CDO files
+```
+
+Trigger:
+
+```text
+D1.5y expanded the FFN handoff from one 32-row group to four 32-row groups:
+  ffn_gate_chunk_0, down_partial_chunk_0, ... chunk_3
+```
+
+Diagnostic used:
+
+```bash
+.venv/lib64/python3.14/site-packages/llvm-aie/bin/llvm-size \
+  build_new_mega_production_ffn4_compile/*.mlir.prj/main_core_*_*.elf
+
+.venv/lib64/python3.14/site-packages/llvm-aie/bin/llvm-nm \
+  --print-size --size-sort \
+  build_new_mega_production_ffn4_compile/*.mlir.prj/main_core_0_2.elf | tail -80
+```
+
+Evidence found:
+
+```text
+baseline accepted D1.5x lane core .text: 16144 bytes
+first D1.5y lane core .text:          17904 bytes -> rejected
+
+growth split:
+  core state-machine wrapper: +1072 bytes
+  down kernel:                 +512 bytes
+  gate_up kernel:              +176 bytes
+
+after removing q/k RoPE visual diagnostic kernel:
+  lane core .text: 16624 bytes -> still rejected
+
+after also removing gate_up visual output materialization and unused ABI args:
+  lane core .text: 15968 bytes -> accepted
+```
+
+Root cause:
+
+```text
+The lane Worker had only about 240 bytes of program-memory headroom before
+D1.5y. The four FFN phase pairs were structurally valid, but the lane program
+could not also carry non-essential diagnostic kernels and visual outputs.
+```
+
+Fix:
+
+```text
+Keep the real dataflow:
+  gate_up writes float ffn_partial rows
+  source/target reducers broadcast ffn_reduced[32]
+  down accumulates four reduced groups in tile-local float state
+
+Remove non-essential lane code:
+  attention_chunk_2/3 are drained packet slots, not q/k RoPE diagnostic compute
+  gate_up no longer materializes the visible gate/up output segment
+  q_shard clears lane_output so removed diagnostic segments remain deterministic
+```
+
+Recheck:
+
+```text
+compile-only accepted
+lane core .text: 15968 bytes
+NPU run accepted
+phase_owned_errors: 0
+qwen3_phase_output_errors: 0
+```
+
 ## Persistent QKV Exceeds Output DMA Channels
 
 Symptom:

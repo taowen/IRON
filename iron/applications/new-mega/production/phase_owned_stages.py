@@ -83,8 +83,17 @@ def phase_owned_decode(
     if hidden_size % o_projection_chunk_rows != 0:
         raise ValueError("hidden_size must be divisible by O projection chunk rows")
     o_projection_chunk_count = hidden_size // o_projection_chunk_rows
+    ffn_reduce_group_count = 4
+    ffn_npu_rows = ffn_reduce_group_count * o_projection_chunk_rows
+    if ffn_npu_rows > intermediate_size:
+        raise ValueError("FFN NPU-covered rows exceed intermediate_size")
     expected_phase_packets = (
-        1 + 4 + 2 * attention_chunk_count + o_projection_chunk_count + 3
+        1
+        + 4
+        + 2 * attention_chunk_count
+        + o_projection_chunk_count
+        + 2 * ffn_reduce_group_count
+        + 1
     )
     if phase_packets_per_layer != expected_phase_packets:
         raise ValueError(
@@ -163,6 +172,7 @@ def phase_owned_decode(
     o_target_reduced_group_ty = np.ndarray[(o_target_rows,), np.dtype[np.float32]]
     hidden_state_ty = np.ndarray[(hidden_size,), np.dtype[dtype]]
     state_ty = np.ndarray[(1,), np.dtype[np.float32]]
+    down_acc_ty = np.ndarray[(q_rows_per_packet,), np.dtype[np.float32]]
     attention_state_ty = np.ndarray[(2,), np.dtype[np.float32]]
     attention_acc_ty = np.ndarray[(head_dim,), np.dtype[np.float32]]
 
@@ -201,8 +211,6 @@ def phase_owned_decode(
             np.int32,
             np.int32,
             np.int32,
-            np.int32,
-            np.int32,
         ],
     )
     projection_kernel = Kernel(
@@ -212,20 +220,6 @@ def phase_owned_decode(
             packet_ty,
             hidden_state_ty,
             hidden_state_ty,
-            state_ty,
-            lane_output_ty,
-            np.int32,
-            np.int32,
-            np.int32,
-            np.int32,
-            np.int32,
-        ],
-    )
-    norm_rope_kernel = Kernel(
-        "new_mega_phase_norm_rope_shard_bf16",
-        kernel_object,
-        [
-            packet_ty,
             state_ty,
             lane_output_ty,
             np.int32,
@@ -321,10 +315,9 @@ def phase_owned_decode(
         [
             packet_ty,
             o_target_reduced_group_ty,
+            down_acc_ty,
             state_ty,
             lane_output_ty,
-            np.int32,
-            np.int32,
             np.int32,
             np.int32,
             np.int32,
@@ -466,6 +459,13 @@ def phase_owned_decode(
         )
         for lane in range(num_lanes)
     ]
+    down_accs = [
+        Buffer(
+            initial_value=np.zeros(shape=(q_rows_per_packet,), dtype=np.float32),
+            name=f"new_mega_phase_lane_{lane}_down_acc",
+        )
+        for lane in range(num_lanes)
+    ]
 
     def lane_worker_body(
         packet_fifo,
@@ -477,10 +477,10 @@ def phase_owned_decode(
         state,
         attention_state,
         attention_acc,
+        down_acc,
         init_kernel,
         q_shard_kernel,
         projection_kernel,
-        norm_rope_kernel,
         attention_init_kernel,
         attention_update_kernel,
         attention_finalize_kernel,
@@ -504,7 +504,7 @@ def phase_owned_decode(
                 packet_elements,
                 hidden_size,
                 q_rows_per_packet,
-                q_output_values_per_lane,
+                output_values_per_lane,
                 layer_i32,
             )
             packet_fifo.release(1)
@@ -540,34 +540,15 @@ def phase_owned_decode(
             packet_fifo.release(1)
 
             packet = packet_fifo.acquire(1)
-            norm_rope_kernel(
-                packet,
-                state,
-                lane_output,
-                packet_elements,
-                head_dim,
-                q_rows_per_packet,
-                q_output_values_per_lane
-                + k_output_values_per_lane
-                + v_output_values_per_lane,
-                q_rope_output_values_per_lane,
-            )
+            # The former first-head q_rope diagnostic phase is intentionally
+            # a packet drain now. Current attention packets already carry the
+            # host-packed RoPE Q vector; freeing this kernel keeps the lane
+            # program under the AIE program-memory limit while FFN handoff
+            # grows beyond the first 32 rows.
             packet_fifo.release(1)
 
             packet = packet_fifo.acquire(1)
-            norm_rope_kernel(
-                packet,
-                state,
-                lane_output,
-                packet_elements,
-                head_dim,
-                q_rows_per_packet,
-                q_output_values_per_lane
-                + k_output_values_per_lane
-                + v_output_values_per_lane
-                + q_rope_output_values_per_lane,
-                k_rope_output_values_per_lane,
-            )
+            # Same for the k_rope diagnostic phase.
             packet_fifo.release(1)
 
             attention_init_kernel(attention_state, attention_acc, head_dim)
@@ -659,67 +640,53 @@ def phase_owned_decode(
                 o_reduced_fifo.release(1)
                 packet_fifo.release(1)
 
-            packet = packet_fifo.acquire(1)
-            ffn_partial = o_partial_fifo.acquire(1)
-            gate_up_kernel(
-                packet,
-                state,
-                lane_output,
-                ffn_partial,
-                packet_elements,
-                hidden_size,
-                q_rows_per_packet,
-                hidden_size,
-                o_target_rows,
-                q_output_values_per_lane
-                + k_output_values_per_lane
-                + v_output_values_per_lane
-                + q_rope_output_values_per_lane
-                + k_rope_output_values_per_lane
-                + context_output_values_per_lane,
-                q_output_values_per_lane
-                + k_output_values_per_lane
-                + v_output_values_per_lane
-                + q_rope_output_values_per_lane
-                + k_rope_output_values_per_lane
-                + context_output_values_per_lane
-                + attention_output_values_per_lane,
-                output_values_per_lane,
-            )
-            o_partial_fifo.release(1)
-            packet_fifo.release(1)
+            for _ in range_(ffn_reduce_group_count):
+                packet = packet_fifo.acquire(1)
+                ffn_partial = o_partial_fifo.acquire(1)
+                gate_up_kernel(
+                    packet,
+                    state,
+                    lane_output,
+                    ffn_partial,
+                    packet_elements,
+                    hidden_size,
+                    q_rows_per_packet,
+                    hidden_size,
+                    o_target_rows,
+                    q_output_values_per_lane
+                    + k_output_values_per_lane
+                    + v_output_values_per_lane
+                    + q_rope_output_values_per_lane
+                    + k_rope_output_values_per_lane
+                    + context_output_values_per_lane,
+                )
+                o_partial_fifo.release(1)
+                packet_fifo.release(1)
 
-            packet = packet_fifo.acquire(1)
-            ffn_reduced = o_reduced_fifo.acquire(1)
-            down_kernel(
-                packet,
-                ffn_reduced,
-                state,
-                lane_output,
-                packet_elements,
-                hidden_size,
-                intermediate_size,
-                q_rows_per_packet,
-                o_target_rows,
-                q_output_values_per_lane
-                + k_output_values_per_lane
-                + v_output_values_per_lane
-                + q_rope_output_values_per_lane
-                + k_rope_output_values_per_lane
-                + context_output_values_per_lane
-                + attention_output_values_per_lane,
-                q_output_values_per_lane
-                + k_output_values_per_lane
-                + v_output_values_per_lane
-                + q_rope_output_values_per_lane
-                + k_rope_output_values_per_lane
-                + context_output_values_per_lane
-                + attention_output_values_per_lane
-                + gate_up_output_values_per_lane,
-                output_values_per_lane,
-            )
-            o_reduced_fifo.release(1)
-            packet_fifo.release(1)
+                packet = packet_fifo.acquire(1)
+                ffn_reduced = o_reduced_fifo.acquire(1)
+                down_kernel(
+                    packet,
+                    ffn_reduced,
+                    down_acc,
+                    state,
+                    lane_output,
+                    intermediate_size,
+                    q_rows_per_packet,
+                    o_target_rows,
+                    ffn_npu_rows,
+                    q_output_values_per_lane
+                    + k_output_values_per_lane
+                    + v_output_values_per_lane
+                    + q_rope_output_values_per_lane
+                    + k_rope_output_values_per_lane
+                    + context_output_values_per_lane
+                    + attention_output_values_per_lane
+                    + gate_up_output_values_per_lane,
+                    output_values_per_lane,
+                )
+                o_reduced_fifo.release(1)
+                packet_fifo.release(1)
             lane_output_fifo.release(1)
 
             packet = packet_fifo.acquire(1)
@@ -741,7 +708,7 @@ def phase_owned_decode(
         o_reduce_kernel,
     ):
         for _ in range_(num_layers):
-            for _ in range_(o_projection_chunk_count + 1):
+            for _ in range_(o_projection_chunk_count + ffn_reduce_group_count):
                 partials = o_partial_join_fifo.acquire(1)
                 target0 = target0_fifo.acquire(1)
                 target1 = target1_fifo.acquire(1)
@@ -763,7 +730,7 @@ def phase_owned_decode(
         o_target_reduce_kernel,
     ):
         for _ in range_(num_layers):
-            for _ in range_(o_projection_chunk_count + 1):
+            for _ in range_(o_projection_chunk_count + ffn_reduce_group_count):
                 source0 = source0_fifo.acquire(1)
                 source1 = source1_fifo.acquire(1)
                 reduced = target_reduced_fifo.acquire(1)
@@ -790,10 +757,10 @@ def phase_owned_decode(
                 states[lane],
                 attention_states[lane],
                 attention_accs[lane],
+                down_accs[lane],
                 init_kernel,
                 q_shard_kernel,
                 projection_kernel,
-                norm_rope_kernel,
                 attention_init_kernel,
                 attention_update_kernel,
                 attention_finalize_kernel,
