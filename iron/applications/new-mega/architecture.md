@@ -37,6 +37,15 @@ packed lane-local phase streams
 real Qwen3 layer loop after D1/D2 acceptance
 ```
 
+Current production code:
+
+```text
+iron/applications/new-mega/production
+  stage: fixed-attention
+  status: accepted on two prompts
+  boundary: real Qwen3 layer-0 fixed-cache attention context
+```
+
 The main shift is:
 
 ```text
@@ -577,6 +586,25 @@ CPU final norm / LM head still contribute wall time
 
 ### D1: Single Real Qwen3 Layer
 
+D1.0 accepted:
+
+```text
+real Qwen3 layer-0 Q/K/V tensors
+host current K/V writeback into full fixed cache
+NPU fixed-cache attention read for 16 Q heads
+runtime mask controls live position
+context matched reference on positions 26 and 22
+```
+
+Production entry:
+
+```bash
+source /opt/xilinx/xrt/setup.sh
+. .venv/bin/activate
+PYTHONUNBUFFERED=1 python -X faulthandler \
+  iron/applications/new-mega/production/main.py
+```
+
 Build one layer using:
 
 ```text
@@ -597,6 +625,15 @@ preflight passes
 full aiecc passes
 runtime does not hang
 resource stats are recorded
+```
+
+Remaining D1 sequence:
+
+```text
+D1.1 NPU-side QKV/RoPE + fixed present K/V outputs
+D1.2 O projection + residual
+D1.3 post-attention RMSNorm + MLP
+D1.4 full single-layer output check
 ```
 
 ### D2: Small N-Layer Reuse

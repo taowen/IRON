@@ -399,6 +399,48 @@ passed that hardware rule but failed the stricter 16-byte FIFO preflight. Pad
 small metadata/output objects to 16 bytes.
 ```
 
+### 14. Fixed-Cache Attention Works On Real Qwen3 Tensors
+
+D1.0 moved A0 from synthetic data to real Qwen3 layer-0 attention context data:
+
+```text
+Q after q_norm + RoPE:             [16, 128]
+K cache after host current write:  [8, 256, 128]
+V cache after host current write:  [8, 256, 128]
+mask:                              [256]
+NPU output context:                [16, 128]
+```
+
+The same fixed artifact shape passed two prompts with different decode
+positions:
+
+```text
+position=26 max_abs=0.015625 errors=0
+position=22 max_abs=0.019531 errors=0
+```
+
+This is a stronger result than A0:
+
+```text
+A0 proved fixed-cache attention on synthetic one-head tensors.
+D1.0 proves the same mechanism on real Qwen3 GQA tensors for all 16 Q heads.
+```
+
+The accepted D1.0 boundary has been promoted from experiment to production:
+
+```text
+iron/applications/new-mega/production
+  main.py
+  runner.py
+  ops.py
+  design.py
+  fixed_attention.cc
+```
+
+The next D1 boundary is no longer "does fixed-cache attention work on real
+data"; it is "can QKV/RoPE produce the present K/V fixed outputs and feed this
+attention path without adding unsafe endpoints."
+
 ## What To Do Next
 
 The next useful `new-mega` work should be a proof ladder, not a full rewrite.
@@ -406,8 +448,8 @@ The next useful `new-mega` work should be a proof ladder, not a full rewrite.
 Recommended order:
 
 ```text
-1. Build D1: one Qwen3 layer using fixed-chunk attention read, host-side
-   present K/V writeback, and packed lane-local phase streams.
+1. Add D1.1: NPU-side QKV/RoPE with fixed present K/V outputs feeding the
+   accepted D1.0 attention path.
 2. Keep each compute tile to one or two input FIFOs and one output FIFO.
 3. Run preflight and full aiecc before executing on NPU.
 4. Verify every layer boundary against PyTorch/reference buffers.

@@ -728,6 +728,8 @@ Start these only after the dependent mechanism proofs pass.
 
 ### D1. Single-Layer Integration
 
+Status: in progress; D1.0 accepted.
+
 Dependencies:
 
 ```text
@@ -745,6 +747,71 @@ current K/V cache update matches reference
 preflight passes
 full aiecc passes
 same-artifact two-position run if dynamic position is claimed
+```
+
+#### D1.0. Real Fixed-Cache Attention Context
+
+Status: accepted.
+
+Question:
+
+```text
+Can the A0 fixed-cache attention read path run on real Qwen3 layer-0 tensors
+and produce the same [16,128] attention context as the PyTorch/reference path?
+```
+
+Result:
+
+```text
+preflight_compute_cores: 1
+preflight_max_fifo_buffered_bytes: 32896
+preflight_total_dma_tasks: 3
+preflight_max_dma_tasks_per_fifo: 1
+preflight_max_compute_tile_inputs: 2
+preflight_max_compute_tile_outputs: 1
+
+default prompt position=26:
+  npu_time_us=3756.100
+  max_abs=0.015625
+  errors=0
+
+second prompt position=22:
+  npu_time_us=3451.432
+  max_abs=0.019531
+  errors=0
+```
+
+Conclusion:
+
+```text
+The fixed max-cache + runtime mask strategy now works on real Qwen3 attention
+context data, not only synthetic A0 data. Current K/V can be written by the
+host before dispatch and consumed by the NPU through the fixed full-cache
+stream.
+```
+
+Production promotion:
+
+```text
+The accepted D1.0 boundary has been promoted to:
+
+  iron/applications/new-mega/production
+
+Production stage:
+  fixed-attention
+
+The production CLI passed the same two-prompt validation:
+  position=26 max_abs=0.015625 errors=0
+  position=22 max_abs=0.019531 errors=0
+```
+
+Remaining D1 work:
+
+```text
+D1.1 add NPU-side QKV/RoPE and fixed present K/V outputs
+D1.2 add O projection + residual
+D1.3 add post-attention RMSNorm + MLP
+D1.4 run full single-layer output check
 ```
 
 ### D2. 28-Layer Decode Body
