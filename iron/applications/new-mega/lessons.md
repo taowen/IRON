@@ -1169,6 +1169,50 @@ D1.5w full chunked O for 1024 rows: about 580 ms
 It is a dataflow correctness step. The remaining large host-fed activation is
 the FFN hidden vector used by `down_proj`.
 
+### 13. Program Memory Is Now A First-Class Megakernel Resource
+
+D1.5x reused the existing O reducer fabric for the first FFN hidden group:
+`gate_up` produces a sparse 32-row FFN partial vector, reducers sum and
+broadcast it, and `down_proj` consumes `ffn_reduced[0:32]` instead of the host
+packet for those rows.
+
+The first version failed after ELF link, during CDO generation:
+
+```text
+[AIE ERROR] _XAie_LoadProgMemSection():231: Overflow of program memory
+```
+
+The useful diagnostic was not another placement attempt. `llvm-size` showed
+the lane Worker `.text` had crossed the AIE program memory budget:
+
+```text
+standalone ffn_partial kernel: 16880 bytes
+fused into gate_up only:       16640 bytes
+accepted slim lane core:       16080 bytes
+```
+
+The accepted fix fused the tiny partial producer into `gate_up` and deleted
+the old `down_proj` local FFN fallback that became unreachable once the
+reduced 32-row group was available.
+
+The numeric failure after that was also structural: `gate_up` accidentally
+used `packet[0]` for two meanings, residual replacement base and FFN row base.
+Segment stats localized the error to `down_residual`, and the fix was to put
+the FFN row base in a separate metadata slot at the end of the gate packet.
+
+The broader lesson is that phase-owned megakernels are now constrained by at
+least four budgets at once:
+
+```text
+tile input/output DMA channels
+ObjectFIFO/L1 object size
+BD/routing resources
+AIE program memory
+```
+
+Adding a small phase can fail any one of those. Always identify which budget
+failed before changing topology or math.
+
 ## What To Do Next
 
 The next useful `new-mega` work should continue the proof ladder, not jump to a
@@ -1177,8 +1221,8 @@ full rewrite.
 Recommended order:
 
 ```text
-1. Apply the same resource discipline to down_proj: decide FFN
-   gather/broadcast versus partial projection reduce before changing kernels.
+1. Extend the FFN handoff past the first 32 rows by choosing between bounded
+   FFN gather/broadcast and down partial projection reduce.
 2. Run preflight and full aiecc before executing on NPU.
 3. Verify every inserted phase against both packet-level and Qwen semantic
    references.

@@ -906,3 +906,72 @@ Accepted recheck:
 phase_owned_errors: 0
 qwen3_phase_output_errors: 0
 ```
+
+## Down Residual Fails After FFN Partial Handoff
+
+Symptom:
+
+```text
+phase_owned_max_abs: 33.000000
+phase_owned_errors: 96
+qwen3_phase_output_max_abs: 33.000000
+qwen3_phase_output_errors: 144
+qwen3_segment_down_residual_errors: 144 max_abs=33.000000
+```
+
+Diagnostic:
+
+```text
+Use the segment-level qwen3 stats first. The error was only in down_residual;
+Q/K/V, RoPE, context, attention_residual, and gate_up had already matched.
+That narrows the bug to the new gate_up -> FFN reducer -> down path.
+```
+
+Evidence found:
+
+```text
+gate_up used packet[0] as the FFN row base when writing ffn_partial.
+
+In the full-residual production layout, packet[0] is not the lane's FFN row
+base. It is residual_row_base for replacing host attention residual with
+NPU-produced rows. For D1.5w full residual visibility this field is 0 for every
+lane.
+
+Result:
+  all eight lanes wrote their four FFN values into rows 0..3
+  reducer summed rows 0..3 across lanes
+  rows 4..31 stayed zero
+  down_proj consumed corrupted ffn_reduced[0:32]
+```
+
+Root cause:
+
+```text
+Two different metadata meanings were accidentally assigned to the same packet
+slot:
+
+packet[0] = residual_row_base
+packet[0] = ffn_row_base
+```
+
+Fix:
+
+```text
+Keep packet[0] as residual_row_base.
+Store the FFN row base in an unused fixed metadata slot:
+
+  gate_packet[packet_elements - 1] = lane * q_rows_per_packet
+
+Then gate_up writes:
+
+  ffn_partial[ffn_row_base + row] = silu(gate[row]) * up[row]
+```
+
+Accepted recheck:
+
+```text
+phase_owned_max_abs: 1.000000
+phase_owned_errors: 0
+qwen3_phase_output_max_abs: 1.000000
+qwen3_phase_output_errors: 0
+```

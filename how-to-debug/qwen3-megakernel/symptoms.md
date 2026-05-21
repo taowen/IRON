@@ -47,10 +47,12 @@ were used in this repository. Detailed entries are split by failure class.
 - [Attention Probe Returns NaN After Metadata Stream Change](symptoms-numeric.md#attention-probe-returns-nan-after-metadata-stream-change)
 - [Real Phase Shards Match Local BF16 But Differ From PyTorch](symptoms-numeric.md#real-phase-shards-match-local-bf16-but-differ-from-pytorch)
 - [Chunked O Residual Has A Few One-ULP Semantic Errors](symptoms-numeric.md#chunked-o-residual-has-a-few-one-ulp-semantic-errors)
+- [Down Residual Fails After FFN Partial Handoff](symptoms-numeric.md#down-residual-fails-after-ffn-partial-handoff)
 
 ### Resources
 
 - [Persistent QKV Cannot Place On 8 Columns](symptoms-resources.md#persistent-qkv-cannot-place-on-8-columns)
+- [CDO Generation Fails With Program Memory Overflow](symptoms-resources.md#cdo-generation-fails-with-program-memory-overflow)
 - [Persistent QKV Exceeds Output DMA Channels](symptoms-resources.md#persistent-qkv-exceeds-output-dma-channels)
 - [Attention Score Worker Exceeds Input DMA Channels](symptoms-resources.md#attention-score-worker-exceeds-input-dma-channels)
 - [Fixed-Chunk Attention Worker Exceeds Input DMA Channels](symptoms-resources.md#fixed-chunk-attention-worker-exceeds-input-dma-channels)

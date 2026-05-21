@@ -2938,8 +2938,108 @@ The remaining major host-fed activation is FFN hidden for down_proj.
 Remaining D1 work:
 
 ```text
-D1.5x remove remaining host FFN dependency using gather or partial reduce
+D1.5x reuse reducer fabric for the first FFN hidden group [accepted]
+D1.5y remove remaining host FFN dependency using full FFN gather or down partial reduce
 D2 run repeated layers in the same phase-owned topology
+```
+
+#### D1.5x. Gate/Up Produces A Reduced FFN Hidden Group For Down Projection
+
+Status: accepted in production.
+
+Question:
+
+```text
+Can the existing source/target reducer fabric carry MLP-internal data, so
+down_proj consumes an NPU-produced FFN hidden group instead of the host packet?
+```
+
+Change:
+
+```text
+gate_up now emits one extra reducer token per layer after all O chunks:
+  ffn_partial[32]
+
+Each lane writes only its q_rows_per_packet=4 FFN hidden rows:
+  ffn_row_base = lane * q_rows_per_packet
+  ffn_partial[ffn_row_base + row] = silu(gate[row]) * up[row]
+
+The existing two source reducers and two target reducers consume one additional
+token per layer:
+  o_projection_chunk_count + 1
+
+down_proj consumes:
+  ffn_reduced[0:32] for the first 32 intermediate rows
+  host_ffn_hidden[32:3072] for the remaining rows
+```
+
+Resource diagnosis:
+
+```text
+The first implementation added a standalone
+new_mega_phase_ffn_partial_from_gate_up_bf16 external kernel.
+
+compile-only failed at CDO generation:
+  [AIE ERROR] _XAie_LoadProgMemSection():231: Overflow of program memory
+  XAie_LoadElf failed with XAIE_INVALID_ELF
+
+llvm-size showed lane core .text:
+  standalone ffn_partial kernel: 16880 bytes
+  fused into gate_up only:       16640 bytes
+  after deleting obsolete down local_ffn fallback: 16080 bytes
+
+The actual resource was AIE program memory, not FIFO depth, TAP, placement, or
+L1 data memory. The accepted fix keeps the reducer dataflow but fuses the FFN
+partial producer into gate_up and removes code that became unreachable once
+ffn_reduced[0:32] is available.
+```
+
+Numeric diagnosis:
+
+```text
+The first running build failed only in down_residual:
+  phase_owned_errors=96
+  qwen3_phase_output_errors=144
+  qwen3_segment_down_residual_errors=144 max_abs=33
+
+The gate packet used packet[0] for residual replacement metadata. For full
+residual visibility that field is 0 for every lane, so using packet[0] as the
+FFN row base made every lane write rows 0..3 and left rows 4..31 as zero.
+
+Fix:
+  keep packet[0] as residual_row_base
+  store ffn_row_base in gate_packet[packet_elements - 1]
+```
+
+Accepted result:
+
+```text
+num_lanes=8
+num_layers=28
+phase_packets_per_layer=48
+packet_elements=16576
+preflight_compute_cores=12
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=2
+npu_time_us=578549.967
+phase_owned_max_abs=1.000000
+phase_owned_mean_abs=0.011823
+phase_owned_errors=0
+qwen3_phase_output_max_abs=1.000000
+qwen3_phase_output_mean_abs=0.011824
+qwen3_phase_output_errors=0
+```
+
+Interpretation:
+
+```text
+This proves the O reducer fabric can be reused for MLP-internal handoff without
+adding Worker cores or FIFO endpoints. It does not yet remove the full
+host-packed FFN vector: only the first 32 of 3072 intermediate rows are
+NPU-produced. The next useful step is not another 32-row gather loop by brute
+force; it is either a full FFN gather/broadcast plan with bounded program
+memory or a down partial-projection reduce that avoids materializing all 3072
+FFN values on every lane.
 ```
 
 ### D2. 28-Layer Decode Body

@@ -44,6 +44,77 @@ This is not a final performance placement. It is the accepted correctness
 bring-up fallback.
 ```
 
+## CDO Generation Fails With Program Memory Overflow
+
+Symptom:
+
+```text
+[AIE ERROR] _XAie_LoadProgMemSection():231: Overflow of program memory
+XAie_LoadElf failed with XAIE_INVALID_ELF
+Error generating CDO files
+```
+
+Trigger:
+
+```text
+The production phase-owned megakernel added a standalone FFN partial external
+kernel so gate_up could produce FFN hidden rows for down_proj through the
+existing reducer fabric.
+```
+
+Diagnostic used:
+
+```bash
+.venv/lib64/python3.14/site-packages/llvm-aie/bin/llvm-size \
+  build_new_mega_production_ffn_group_compile/*.mlir.prj/main_core_*_*.elf
+
+.venv/lib64/python3.14/site-packages/llvm-aie/bin/llvm-nm \
+  --print-size --size-sort \
+  build_new_mega_production_ffn_group_compile/phase_owned_kernels.o | tail
+```
+
+Evidence found:
+
+```text
+lane core .text with standalone ffn_partial kernel: 16880 bytes
+lane core .text after fusing partial into gate_up: 16640 bytes
+lane core .text after deleting obsolete down local_ffn fallback: 16080 bytes
+
+The failing lane cores were the eight lane Worker cores. Reducer cores were
+about 1.2KB and were not the problem.
+```
+
+Root cause:
+
+```text
+The lane Worker code crossed the AIE program memory limit. The failure appeared
+after all core ELFs linked and only failed during CDO generation, so it was not
+an ObjectFIFO token mismatch, TAP issue, L1 data-buffer issue, or placement
+route issue.
+```
+
+Fix:
+
+```text
+Do not add another lane external kernel for a tiny producer if the lane core is
+already near 16KB. Fuse the producer into an existing phase kernel and delete
+code that is now unreachable.
+
+In this case:
+  1. remove new_mega_phase_ffn_partial_from_gate_up_bf16
+  2. have gate_up write ffn_partial directly
+  3. remove down_proj's old local_ffn fallback because ffn_reduced[0:32] now
+     covers all lane-local rows
+```
+
+Recheck:
+
+```text
+compile-only accepted
+lane core .text: 16080 bytes
+xclbin/bin generated
+```
+
 ## Persistent QKV Exceeds Output DMA Channels
 
 Symptom:

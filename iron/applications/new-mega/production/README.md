@@ -47,7 +47,8 @@ rows, and the 32 chunks materialize the full 1024-row attention residual in
 `lane_output`. Host-packed values still provide non-local FFN values until an
 FFN gather or partial-reduce design replaces them. The `gate_up` phase consumes
 the full attention residual produced by `o_proj_chunk_0..31`; the `down_proj`
-phase consumes the local FFN hidden rows produced by `gate_up`.
+phase consumes the first 32 FFN hidden rows produced by `gate_up` and reduced
+through the same fixed source/target reducer fabric used by O projection.
 Layer 0 initializes a tile-local hidden buffer from the phase 0 packet; each
 `next_layer_token` phase updates that buffer for the next layer. `state[0]` is
 only a checksum for diagnostics, not the activation handoff. The runner uses
@@ -148,7 +149,7 @@ default production body:
   attention_score_pv_4..7=lane-mapped heads 8..15 fixed-cache QK + online softmax + PV
   o_proj_chunk_0..31=NPU-produced all context heads + chunked source/target partial reduce + full residual materialization
   gate_up=NPU-produced full attention residual + real post RMSNorm + lane-local gate/up row shards
-  down_proj=NPU-produced local FFN hidden rows + host remaining FFN hidden + lane-local down row shards + residual add
+  down_proj=NPU-produced first 32 FFN hidden rows + host remaining FFN hidden + lane-local down row shards + residual add
   next_layer_token=updates tile-local hidden_state for the next layer
   inputs=real Qwen3 hidden/norm/qkv_proj/qk_norm_rope/kv_cache_mask/o_proj/post_norm/gate/up/down/next-hidden packets
   preflight_compute_cores=12
@@ -225,14 +226,40 @@ default production body:
     raw qwen semantic diff had 16 attention_residual values at max_abs=1.0
     while packet-level phase reference had 0 errors; segment diagnostics showed
     the difference was O accumulation-order tolerance, not gate_up/down dataflow
+
+  FFN partial handoff through existing reducer fabric:
+    gate_up writes a sparse 32-row FFN partial vector into the O partial FIFO
+    source/target reducers consume one extra token per layer and broadcast the
+    reduced 32 rows back to every lane
+    down_proj consumes ffn_reduced[0:32] instead of host ffn_hidden[0:32]
+    compile diagnostic:
+      adding a standalone ffn_partial external kernel made lane core .text
+      16880 bytes and failed CDO generation with program memory overflow
+      fusing partial generation into gate_up reduced the lane core but still
+      left old down local_ffn fallback code; deleting the now-unreachable
+      fallback brought lane core .text to 16080 bytes
+    numeric diagnostic:
+      first run failed only in down_residual with 144 errors, max_abs=33
+      cause was using gate packet[0] as FFN row base; packet[0] is residual
+      replacement base and is 0 for all lanes
+      fix stores FFN row base in the final gate packet metadata slot
+    accepted result:
+      npu_time_us=578549.967
+      phase_owned_max_abs=1.000000
+      phase_owned_mean_abs=0.011823
+      phase_owned_errors=0
+      qwen3_phase_output_max_abs=1.000000
+      qwen3_phase_output_mean_abs=0.011824
+      qwen3_phase_output_errors=0
 ```
 
 ## Next Work
 
 ```text
-1. Decide whether down_proj should use FFN gather/broadcast or partial
-   projection reduce.
-2. Add a cheap poison/diagnostic harness for the O partial-reduce path that
+1. Extend the FFN partial handoff beyond the first 32 rows or switch down_proj
+   to a true partial-projection reduce so the full 3072-wide host FFN vector
+   can be removed.
+2. Add a cheap poison/diagnostic harness for the reducer-handoff paths that
    avoids a full recompile.
 3. Keep grouped fan-in at 4 lanes unless a measured placer result proves wider
    groups.

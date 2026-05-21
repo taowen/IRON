@@ -194,6 +194,8 @@ def phase_owned_decode(
             packet_ty,
             state_ty,
             lane_output_ty,
+            o_partial_ty,
+            np.int32,
             np.int32,
             np.int32,
             np.int32,
@@ -318,8 +320,10 @@ def phase_owned_decode(
         kernel_object,
         [
             packet_ty,
+            o_target_reduced_group_ty,
             state_ty,
             lane_output_ty,
+            np.int32,
             np.int32,
             np.int32,
             np.int32,
@@ -656,14 +660,17 @@ def phase_owned_decode(
                 packet_fifo.release(1)
 
             packet = packet_fifo.acquire(1)
+            ffn_partial = o_partial_fifo.acquire(1)
             gate_up_kernel(
                 packet,
                 state,
                 lane_output,
+                ffn_partial,
                 packet_elements,
                 hidden_size,
                 q_rows_per_packet,
                 hidden_size,
+                o_target_rows,
                 q_output_values_per_lane
                 + k_output_values_per_lane
                 + v_output_values_per_lane
@@ -679,17 +686,21 @@ def phase_owned_decode(
                 + attention_output_values_per_lane,
                 output_values_per_lane,
             )
+            o_partial_fifo.release(1)
             packet_fifo.release(1)
 
             packet = packet_fifo.acquire(1)
+            ffn_reduced = o_reduced_fifo.acquire(1)
             down_kernel(
                 packet,
+                ffn_reduced,
                 state,
                 lane_output,
                 packet_elements,
                 hidden_size,
                 intermediate_size,
                 q_rows_per_packet,
+                o_target_rows,
                 q_output_values_per_lane
                 + k_output_values_per_lane
                 + v_output_values_per_lane
@@ -707,6 +718,7 @@ def phase_owned_decode(
                 + gate_up_output_values_per_lane,
                 output_values_per_lane,
             )
+            o_reduced_fifo.release(1)
             packet_fifo.release(1)
             lane_output_fifo.release(1)
 
@@ -729,7 +741,7 @@ def phase_owned_decode(
         o_reduce_kernel,
     ):
         for _ in range_(num_layers):
-            for _ in range_(o_projection_chunk_count):
+            for _ in range_(o_projection_chunk_count + 1):
                 partials = o_partial_join_fifo.acquire(1)
                 target0 = target0_fifo.acquire(1)
                 target1 = target1_fifo.acquire(1)
@@ -751,7 +763,7 @@ def phase_owned_decode(
         o_target_reduce_kernel,
     ):
         for _ in range_(num_layers):
-            for _ in range_(o_projection_chunk_count):
+            for _ in range_(o_projection_chunk_count + 1):
                 source0 = source0_fifo.acquire(1)
                 source1 = source1_fifo.acquire(1)
                 reduced = target_reduced_fifo.acquire(1)

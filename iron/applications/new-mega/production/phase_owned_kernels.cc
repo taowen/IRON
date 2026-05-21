@@ -92,18 +92,19 @@ void new_mega_phase0_q_shard_bf16(const bfloat16 *__restrict lane_packet,
 void new_mega_phase_gate_up_shard_bf16(const bfloat16 *__restrict packet,
                                        float *__restrict state,
                                        bfloat16 *__restrict lane_output,
+                                       float *__restrict ffn_partial,
                                        int32_t packet_size,
                                        int32_t hidden_size,
                                        int32_t q_rows_per_packet,
                                        int32_t residual_group_size,
+                                       int32_t ffn_group_size,
                                        int32_t attention_output_base,
                                        int32_t gate_output_base,
                                        int32_t output_values_per_lane)
 {
     event0();
-    (void)packet_size;
-
     const int32_t residual_row_base = static_cast<int32_t>(static_cast<float>(packet[0]));
+    const int32_t ffn_row_base = static_cast<int32_t>(static_cast<float>(packet[packet_size - 1]));
     const bfloat16 *attn_residual = packet + 1;
     const bfloat16 *post_norm_weight = attn_residual + hidden_size;
     const bfloat16 *gate_block = post_norm_weight + hidden_size;
@@ -123,6 +124,10 @@ void new_mega_phase_gate_up_shard_bf16(const bfloat16 *__restrict packet,
     float checksum = state[0];
     ::aie::set_rounding(aie::rounding_mode::conv_even);
 
+    for (int32_t row = 0; row < ffn_group_size; row++) {
+        ffn_partial[row] = 0.0f;
+    }
+
     for (int32_t row = 0; row < q_rows_per_packet; row++) {
         const bfloat16 *gate_row = gate_block + row * hidden_size;
         const bfloat16 *up_row = up_block + row * hidden_size;
@@ -140,6 +145,10 @@ void new_mega_phase_gate_up_shard_bf16(const bfloat16 *__restrict packet,
         checksum += gate_acc + up_acc;
         lane_output[gate_output_base + row] = static_cast<bfloat16>(gate_acc);
         lane_output[gate_output_base + q_rows_per_packet + row] = static_cast<bfloat16>(up_acc);
+
+        const float gate_bf16 = static_cast<float>(static_cast<bfloat16>(gate_acc));
+        const float up_bf16 = static_cast<float>(static_cast<bfloat16>(up_acc));
+        ffn_partial[ffn_row_base + row] = new_mega_silu_approx(gate_bf16) * up_bf16;
     }
 
     for (int32_t i = gate_output_base + 2 * q_rows_per_packet; i < output_values_per_lane; i++) {
@@ -473,12 +482,14 @@ void new_mega_phase_o_finalize_reduced_bf16(const bfloat16 *__restrict packet,
 }
 
 void new_mega_phase_down_residual_shard_bf16(const bfloat16 *__restrict packet,
+                                             const float *__restrict ffn_reduced,
                                              float *__restrict state,
                                              bfloat16 *__restrict lane_output,
                                              int32_t packet_size,
                                              int32_t hidden_size,
                                              int32_t intermediate_size,
                                              int32_t q_rows_per_packet,
+                                             int32_t ffn_group_size,
                                              int32_t gate_output_base,
                                              int32_t residual_output_base,
                                              int32_t output_values_per_lane)
@@ -486,32 +497,22 @@ void new_mega_phase_down_residual_shard_bf16(const bfloat16 *__restrict packet,
     event0();
     (void)packet_size;
     (void)hidden_size;
+    (void)gate_output_base;
 
-    const int32_t ffn_row_base = static_cast<int32_t>(static_cast<float>(packet[0]));
     const bfloat16 *ffn_hidden = packet + 1;
     const bfloat16 *residual_shard = ffn_hidden + intermediate_size;
     const bfloat16 *down_block = residual_shard + q_rows_per_packet;
 
     float checksum = state[0];
     ::aie::set_rounding(aie::rounding_mode::conv_even);
-    float local_ffn[16];
-    for (int32_t local = 0; local < 16; local++) {
-        local_ffn[local] = 0.0f;
-    }
-    for (int32_t local = 0; local < q_rows_per_packet && local < 16; local++) {
-        const float gate = static_cast<float>(lane_output[gate_output_base + local]);
-        const float up = static_cast<float>(lane_output[gate_output_base + q_rows_per_packet + local]);
-        local_ffn[local] = new_mega_silu_approx(gate) * up;
-    }
 
     for (int32_t row = 0; row < q_rows_per_packet; row++) {
         const bfloat16 *down_row = down_block + row * intermediate_size;
         float down_acc = 0.0f;
         for (int32_t i = 0; i < intermediate_size; i++) {
             float ffn_value = static_cast<float>(ffn_hidden[i]);
-            if (i >= ffn_row_base && i < ffn_row_base + q_rows_per_packet && i - ffn_row_base < 16) {
-                const int32_t local = i - ffn_row_base;
-                ffn_value = local_ffn[local];
+            if (i < ffn_group_size) {
+                ffn_value = ffn_reduced[i];
             }
             down_acc += ffn_value * static_cast<float>(down_row[i]);
         }

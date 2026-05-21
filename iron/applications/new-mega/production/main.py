@@ -150,7 +150,8 @@ def main() -> None:
             "the full NPU-produced attention residual vector from preceding O "
             "chunks, "
             "down_proj computes real layer residual shards while reading "
-            "local FFN hidden rows from the preceding gate_up phase, "
+            "the first 32 FFN hidden rows reduced from the preceding gate_up "
+            "phase, "
             "next_layer_token updates tile-local hidden state, and resource use "
             "is bounded by lanes rather than by statically appended layer stages."
         )

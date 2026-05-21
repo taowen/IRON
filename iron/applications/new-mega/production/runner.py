@@ -614,6 +614,38 @@ def phase_owned_reference(
                 expected[up_base + row] = up_acc
                 acc += gate_acc + up_acc
 
+            ffn_group = torch.zeros((o_target_rows,), dtype=torch.float32)
+            for producer_lane in range(op.num_lanes):
+                producer_lane_start = producer_lane * lane_span
+                producer_gate_start = (
+                    producer_lane_start + gate_packet_index * op.packet_elements
+                )
+                producer_gate_packet = lane_f32[
+                    producer_gate_start : producer_gate_start + op.packet_elements
+                ]
+                producer_gate_block = producer_gate_packet[
+                    1
+                    + 2 * op.hidden_size : 1
+                    + (2 + op.q_rows_per_packet) * op.hidden_size
+                ]
+                producer_up_block = producer_gate_packet[
+                    1
+                    + (2 + op.q_rows_per_packet) * op.hidden_size : 1
+                    + (2 + 2 * op.q_rows_per_packet) * op.hidden_size
+                ]
+                producer_row_base = producer_lane * op.q_rows_per_packet
+                for row in range(op.q_rows_per_packet):
+                    row_start = row * op.hidden_size
+                    gate_acc = torch.zeros((), dtype=torch.float32)
+                    up_acc = torch.zeros((), dtype=torch.float32)
+                    for i in range(op.hidden_size):
+                        xnorm = attn_residual[i] * inv_rms * post_weight[i]
+                        gate_acc += xnorm * producer_gate_block[row_start + i]
+                        up_acc += xnorm * producer_up_block[row_start + i]
+                    gate_bf16 = gate_acc.to(torch.bfloat16).to(torch.float32)
+                    up_bf16 = up_acc.to(torch.bfloat16).to(torch.float32)
+                    ffn_group[producer_row_base + row] = F.silu(gate_bf16) * up_bf16
+
             down_packet_index = layer * op.phase_packets_per_layer + DOWN_PHASE
             down_start = lane_start + down_packet_index * op.packet_elements
             down_packet = lane_f32[down_start : down_start + op.packet_elements]
@@ -632,6 +664,7 @@ def phase_owned_reference(
             ffn_hidden[ffn_row_base : ffn_row_base + op.q_rows_per_packet] = (
                 F.silu(local_gate) * local_up
             )
+            ffn_hidden[:o_target_rows] = ffn_group
             residual_shard = down_packet[
                 1
                 + op.intermediate_size : 1
@@ -1080,6 +1113,9 @@ def build_phase_owned_case(
             row_base = lane * op.q_rows_per_packet
             residual_group_size = op.hidden_size
             lane_packets[gate_packet_start] = torch.tensor(0, dtype=torch.bfloat16)
+            lane_packets[gate_packet_start + op.packet_elements - 1] = torch.tensor(
+                row_base, dtype=torch.bfloat16
+            )
             lane_packets[
                 gate_packet_start + 1 : gate_packet_start + 1 + op.hidden_size
             ] = attn_residual
@@ -1140,6 +1176,33 @@ def build_phase_owned_case(
                     )
                 )
 
+        o_target_rows = op.num_lanes * op.q_rows_per_packet
+        ffn_group = torch.zeros((o_target_rows,), dtype=torch.float32)
+        for producer_lane in range(op.num_lanes):
+            producer_gate_base = (
+                layer_idx * out_layer_span
+                + producer_lane * out_lane_stride
+                + q_stride
+                + k_stride
+                + v_stride
+                + q_rope_stride
+                + k_rope_stride
+                + context_stride
+                + attention_stride
+            )
+            local_gate = qwen3_reference[
+                producer_gate_base : producer_gate_base + op.q_rows_per_packet
+            ].to(torch.float32)
+            local_up = qwen3_reference[
+                producer_gate_base
+                + op.q_rows_per_packet : producer_gate_base
+                + 2 * op.q_rows_per_packet
+            ].to(torch.float32)
+            producer_row_base = producer_lane * op.q_rows_per_packet
+            ffn_group[producer_row_base : producer_row_base + op.q_rows_per_packet] = (
+                F.silu(local_gate) * local_up
+            )
+
         for lane in range(op.num_lanes):
             lane_start = lane * lane_span
             down_packet_index = layer_idx * op.phase_packets_per_layer + DOWN_PHASE
@@ -1176,6 +1239,7 @@ def build_phase_owned_case(
             lane_ffn_hidden[row_base : row_base + op.q_rows_per_packet] = (
                 F.silu(local_gate) * local_up
             )
+            lane_ffn_hidden[:o_target_rows] = ffn_group
             out_base = (
                 layer_idx * out_layer_span
                 + lane * out_lane_stride
