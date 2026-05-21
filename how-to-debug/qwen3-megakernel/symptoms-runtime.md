@@ -1058,3 +1058,50 @@ Fix used:
 Pass the local snapshot directory through --model for compile/verify runs.
 This keeps network failures out of megakernel diagnosis.
 ```
+
+## NPU Run Appears Hung Before Any Result Is Printed
+
+Symptom:
+
+```text
+production phase-owned run prints only XRT environment setup and then no
+result for many minutes after adding O row chunks.
+```
+
+Diagnostic:
+
+```text
+Do not classify this as an ObjectFIFO deadlock until proving the process has
+entered device execution. Check whether the new host-side packet builder or
+reference grew a nested Python scalar loop.
+```
+
+Evidence from D1.5w:
+
+```text
+O projection was split into 32 row chunks.
+The packet-level reference still used nested Python loops:
+
+  lane * layer * O chunk * producer lane * target row * context dim
+
+That inflated the host reference into hundreds of millions of Python scalar
+multiply-adds. The NPU graph had not produced a failure yet.
+```
+
+Fix:
+
+```text
+Vectorize the reference at the same semantic boundary:
+
+  group_partials += producer_weight_block @ producer_context
+
+After this change, the same run completed and reported real NPU diagnostics.
+```
+
+Rule:
+
+```text
+When a megakernel phase is expanded by chunking, update the diagnostic
+reference complexity at the same time. A correct graph can look hung if the
+host verifier scales as Python scalar loops.
+```

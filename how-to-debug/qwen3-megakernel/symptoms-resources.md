@@ -254,6 +254,85 @@ Before adding it, move low-bandwidth metadata out of independent FIFOs and into
 existing packets or tile-local state.
 ```
 
+## Cross-Group Reduce Passes Allocation But Fails Routing
+
+Symptom:
+
+```text
+Resource allocation pipeline completed successfully
+Running routing pipeline in-memory
+error: Unable to find a legal routing
+```
+
+Trigger:
+
+```text
+The first full O cross-fabric reduce design used this shape:
+
+source reducer -> full source_reduced[32] -> memtile split
+memtile split -> target reducer 0
+memtile split -> target reducer 1
+```
+
+Diagnostic used:
+
+```bash
+rg -n "o_source_reduced|o_source_.*to_target|aie.flow|mem_tile_2_1" \
+  build_new_mega_production_o_full_reduce_compile/*.mlir.prj/input_with_addresses.mlir
+```
+
+Evidence found:
+
+```text
+The failing graph had legal compute tile input/output counts, but the generated
+flows concentrated the cross-group exchange through one memory tile:
+
+source_reduced_g0/g1 -> mem_tile_2_1
+mem_tile_2_1 -> target0
+mem_tile_2_1 -> target1
+```
+
+Root cause:
+
+```text
+This was a NoC routing problem introduced by the intermediate split point. The
+ObjectFIFO graph was structurally valid and resource allocation succeeded, but
+the centralized memtile split made the routes too constrained.
+```
+
+Fix used:
+
+```text
+Remove the full source_reduced FIFO and split.
+
+Each source reducer emits target-specific outputs directly:
+  source_g0 -> target_g0
+  source_g0 -> target_g1
+  source_g1 -> target_g0
+  source_g1 -> target_g1
+
+Each target reducer then consumes two source halves and produces the final rows
+for its owner lanes.
+```
+
+Recheck:
+
+```text
+full aiecc passes
+preflight_compute_cores=12
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=2
+NPU run completes with qwen3_phase_output_errors=0
+```
+
+General rule:
+
+```text
+When a reduce graph passes allocation but fails routing, inspect the generated
+flows before editing kernels. If one memtile became a hub for split/join
+traffic, move the split into the reducer and produce target-specific FIFOs.
+```
+
 ## Production Input QKV Rope Worker Exceeds Input DMA Channels
 
 Symptom:

@@ -18,6 +18,7 @@ methods are split by diagnostic boundary.
 | Wrong final token or stage value | 5, 7, 8 |
 | Runtime patch-site risk | 6, 48 |
 | Placement, ObjectFIFO, DMA, or L1 resource failure | 9, 11, 13, 14, 15, 16, 44, 45, 47 |
+| Phase packet layout or external-kernel ABI drift | 11, 50, 51 |
 | External AIE kernel C++ compile/API failure | 43 |
 | Full-ELF scratch layout changes correctness | 10 |
 | Operator-specific numeric mismatch | 12 |
@@ -91,3 +92,4 @@ methods are split by diagnostic boundary.
 ### Layout
 
 - [11. Check ObjectFIFO Consumers In Generated MLIR](methods-layout.md#11-check-objectfifo-consumers-in-generated-mlir)
+- [51. Treat Packet Header Changes As ABI Changes](methods-layout.md#51-treat-packet-header-changes-as-abi-changes)

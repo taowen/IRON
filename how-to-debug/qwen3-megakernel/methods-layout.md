@@ -28,3 +28,53 @@ endpoints or an explicit forward/split/join dataflow. Reusing `.cons()` twice
 from the same endpoint is not proof of broadcast.
 ```
 
+## 51. Treat Packet Header Changes As ABI Changes
+
+Use when a phase-owned packet grows a metadata/residual header before a large
+weight block.
+
+Real failure caught in production D1.5v:
+
+```text
+O packet residual header changed from:
+  residual_rows = q_rows_per_packet
+
+to:
+  residual_rows = fabric_group_size * q_rows_per_packet
+```
+
+The first edits updated the Python packet builder and O finalize path, but two
+old assumptions remained:
+
+```text
+O partial C++ kernel weight pointer:
+  packet + 2 + q_rows_per_packet
+
+packet-level reference producer weight-block offset:
+  2 + q_rows_per_packet
+```
+
+Both had to become:
+
+```text
+packet + 2 + fabric_group_size * q_rows_per_packet
+```
+
+Diagnostic checklist:
+
+```text
+1. Write the packet layout as fields, not just a total `packet_elements`.
+2. Search every `+ constant` and `+ q_rows_per_packet` offset in Python and C++.
+3. Update C++ signature and Python `Kernel(...)` declaration in the same patch.
+4. Update packet builder, packet-level reference, semantic reference, and README
+   shape printouts together.
+5. Re-run `resolve_program()` before interpreting any numeric mismatch.
+```
+
+Rule:
+
+```text
+In a phase-owned megakernel, packet layout is an ABI. A passing compile with an
+old offset can still be a wrong program, because the kernel may read residual
+values as weights or weights as residual values without crashing.
+```

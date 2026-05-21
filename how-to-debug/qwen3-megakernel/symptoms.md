@@ -29,6 +29,7 @@ were used in this repository. Detailed entries are split by failure class.
 - [Diagnostic Chunk Is Rejected Before Compile](symptoms-runtime.md#diagnostic-chunk-is-rejected-before-compile)
 - [CLI Stage Fails Before Any NPU Work](symptoms-runtime.md#cli-stage-fails-before-any-npu-work)
 - [AIECC Fails With File Name Too Long](symptoms-runtime.md#aiecc-fails-with-file-name-too-long)
+- [NPU Run Appears Hung Before Any Result Is Printed](symptoms-runtime.md#npu-run-appears-hung-before-any-result-is-printed)
 
 ### Numeric
 
@@ -45,6 +46,7 @@ were used in this repository. Detailed entries are split by failure class.
 - [Attention2 N-Layer Hidden Fails Strict Full Reference But Boundary Replay Matches](symptoms-numeric.md#attention2-n-layer-hidden-fails-strict-full-reference-but-boundary-replay-matches)
 - [Attention Probe Returns NaN After Metadata Stream Change](symptoms-numeric.md#attention-probe-returns-nan-after-metadata-stream-change)
 - [Real Phase Shards Match Local BF16 But Differ From PyTorch](symptoms-numeric.md#real-phase-shards-match-local-bf16-but-differ-from-pytorch)
+- [Chunked O Residual Has A Few One-ULP Semantic Errors](symptoms-numeric.md#chunked-o-residual-has-a-few-one-ulp-semantic-errors)
 
 ### Resources
 
@@ -76,6 +78,7 @@ were used in this repository. Detailed entries are split by failure class.
 
 - [Static MLIR Shows One FIFO Drained Twice](symptoms-dataflow.md#static-mlir-shows-one-fifo-drained-twice)
 - [Worker Loop Index Does Not Match External Kernel ABI](symptoms-dataflow.md#worker-loop-index-does-not-match-external-kernel-abi)
+- [Kernel Arity Fails During `resolve_program()`](symptoms-dataflow.md#kernel-arity-fails-during-resolve_program)
 - [AIE Kernel Cannot Use Host Math sqrtf](symptoms-dataflow.md#aie-kernel-cannot-use-host-math-sqrtf)
 - [Runtime Start Does Not Create A Phase Barrier](symptoms-dataflow.md#runtime-start-does-not-create-a-phase-barrier)
 - [Inactive FIFO Skip Requires A Different Static Graph](symptoms-dataflow.md#inactive-fifo-skip-requires-a-different-static-graph)

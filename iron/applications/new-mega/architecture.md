@@ -50,7 +50,8 @@ iron/applications/new-mega/production
     phase 0 lane packet carries hidden/norm metadata
     lane-local tile buffers carry hidden and input norm across phases
     grouped join output stream per 4 lanes
-    fixed reducer Workers sum same-fabric-group O partial products
+    fixed source/target reducer Workers sum cross-fabric O partial products
+    O finalize publishes same-fabric-group residual rows back to each lane
 ```
 
 Production rule after correcting the D1.4b direction:
@@ -75,10 +76,10 @@ attention_chunk_2:
   real first-head Q RMSNorm + RoPE row shard
 attention_chunk_3:
   real first-head K RMSNorm + RoPE row shard
-o_proj:
-  NPU-produced same-fabric-group context heads + O partial reduce + host other-fabric-group contribution + residual add
+o_proj_chunk_0..31:
+  NPU-produced all context heads + chunked cross-fabric O partial reduce + full attention residual materialization
 gate_up:
-  NPU-produced local attention residual rows + host remaining residual + post-attention RMSNorm + gate/up row shards
+  NPU-produced full attention residual + post-attention RMSNorm + gate/up row shards
 down_proj:
   NPU-produced local FFN hidden rows + host remaining FFN hidden + down projection row shard + residual add
 next_layer_token:
@@ -1223,6 +1224,88 @@ This is the first real partial projection reduce in the production path. It is
 still only same-fabric-group visibility. Fully removing host context from O
 requires reducing both fabric groups or adding a cross-group gather/broadcast.
 
+D1.5u accepted:
+
+```text
+O projection now uses cross-fabric partial reduce:
+  lane Workers compute partials for all 32 currently materialized O rows
+  2 source reducers sum the four producer lanes in each fabric group
+  2 target reducers sum the two source groups for each target row group
+  final rows split back to owner lanes
+  O no longer needs host-packed context contribution for these rows
+
+num_layers=28, phase_packets_per_layer=17, packet_elements=16576,
+compute_cores=12, total_dma_tasks=10,
+max tile inputs=2, max tile outputs=2
+phase_owned_max_abs=0.500000, phase_owned_errors=0
+qwen3_phase_output_max_abs=0.500000, qwen3_phase_output_errors=0 at abs_tol=0.5
+npu_time_us=316076.338
+```
+
+The rejected first cross-fabric attempt is now part of the architecture rule:
+
+```text
+source reducer -> full source_reduced vector -> memtile split -> target reducers
+  -> routing pipeline failed after resource allocation
+```
+
+The accepted fix makes each source reducer produce two target-group outputs
+directly. This avoids routing all cross-group exchange through one intermediate
+memtile split.
+
+D1.5v accepted:
+
+```text
+O finalize now writes same-fabric-group attention residual rows into each lane
+output object:
+  fabric_group_size=4
+  q_rows_per_packet=4
+  attention_output_values_per_lane=16
+
+gate_up reads those 16 rows from lane_output before post-attention RMSNorm.
+All other residual rows still come from the host-packed residual vector.
+
+num_layers=28, phase_packets_per_layer=17, packet_elements=16576,
+compute_cores=12, total_dma_tasks=10,
+max tile inputs=2, max tile outputs=2
+phase_owned_max_abs=0.500000, phase_owned_errors=0
+qwen3_phase_output_max_abs=0.500000, qwen3_phase_output_errors=0 at abs_tol=0.5
+npu_time_us=316087.452
+```
+
+This is not full residual ownership. Dense RMSNorm/gate/up still need the
+entire 1024-wide attention residual. The useful architecture result is that
+the next phase can consume a wider on-NPU slice through the existing
+`lane_output` object without adding another lane input FIFO.
+
+D1.5w accepted:
+
+```text
+O projection is now split into 32 row chunks:
+  chunk rows = num_lanes * q_rows_per_packet = 32
+  chunk count = hidden_size / chunk rows = 32
+
+Each O chunk reuses the same source/target reducer fabric and writes its
+32-row residual chunk into the lane output. After all chunks, every lane has a
+full 1024-row attention residual segment.
+
+gate_up reads the full 1024-row residual from lane_output:
+  residual_row_base=0
+  residual_group_size=hidden_size
+
+num_layers=28, phase_packets_per_layer=48, packet_elements=16576,
+compute_cores=12, total_dma_tasks=10,
+max tile inputs=2, max tile outputs=2
+phase_owned_max_abs=1.000000, phase_owned_errors=0
+qwen3_phase_output_max_abs=1.000000, qwen3_phase_output_errors=0
+npu_time_us=580001.856
+```
+
+This removes the host-packed attention residual dependency from `gate_up`.
+The cost is time and input traffic: the same topology is reused 32 times per
+layer, so resources stay bounded but the full O projection now runs on NPU.
+The remaining large host-fed activation is FFN hidden for `down_proj`.
+
 Production entry:
 
 ```bash
@@ -1257,9 +1340,8 @@ resource stats are recorded
 Remaining D1 sequence:
 
 ```text
-D1.5u extend O partial reduce across both fabric groups
-D1.5v remove host-packed residual/FFN inputs with gather or partial reduce
-D1.5w feed downstream phases from full NPU-produced activation vectors instead of host reference packets
+D1.5w remove host-packed residual/FFN inputs with gather or partial reduce
+D1.5x feed downstream phases from full NPU-produced activation vectors instead of host reference packets
 D2 run repeated layers in the same phase-owned topology
 ```
 

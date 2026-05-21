@@ -34,10 +34,6 @@ def phase_owned_decode(
         raise ValueError("num_layers must be positive")
     if phase_packets_per_layer <= 0:
         raise ValueError("phase_packets_per_layer must be positive")
-    if phase_packets_per_layer != 17:
-        raise ValueError(
-            "phase_packets_per_layer must be 17 for the production phase-owned body"
-        )
     if packet_elements <= 0:
         raise ValueError("packet_elements must be positive")
     if hidden_size <= 0:
@@ -78,11 +74,26 @@ def phase_owned_decode(
         raise ValueError("fabric_group_size must be positive")
     if num_lanes % fabric_group_size != 0:
         raise ValueError("num_lanes must be divisible by fabric_group_size")
+    fabric_group_count = num_lanes // fabric_group_size
+    if fabric_group_count != 2:
+        raise ValueError(
+            "production O cross-group partial reduce currently expects two fabric groups"
+        )
+    o_projection_chunk_rows = num_lanes * q_rows_per_packet
+    if hidden_size % o_projection_chunk_rows != 0:
+        raise ValueError("hidden_size must be divisible by O projection chunk rows")
+    o_projection_chunk_count = hidden_size // o_projection_chunk_rows
+    expected_phase_packets = (
+        1 + 4 + 2 * attention_chunk_count + o_projection_chunk_count + 3
+    )
+    if phase_packets_per_layer != expected_phase_packets:
+        raise ValueError(
+            "phase_packets_per_layer must match the production phase-owned body "
+            f"({expected_phase_packets})"
+        )
     q_phase_elements = (2 + q_rows_per_packet) * hidden_size
     gate_up_elements = 1 + (2 + 2 * q_rows_per_packet) * hidden_size
-    o_elements = (
-        2 + q_rows_per_packet + fabric_group_size * q_rows_per_packet * 2 * head_dim
-    )
+    o_elements = 2 + o_projection_chunk_rows + o_projection_chunk_rows * 2 * head_dim
     down_elements = (
         1
         + intermediate_size
@@ -118,7 +129,7 @@ def phase_owned_decode(
     q_rope_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
     k_rope_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
     context_output_values_per_lane = 2 * head_dim
-    attention_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
+    attention_output_values_per_lane = ((hidden_size + 7) // 8) * 8
     gate_up_output_values_per_lane = ((2 * q_rows_per_packet + 7) // 8) * 8
     residual_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
     output_values_per_lane = (
@@ -133,7 +144,6 @@ def phase_owned_decode(
         + residual_output_values_per_lane
     )
     output_values_per_layer = num_lanes * output_values_per_lane
-    fabric_group_count = num_lanes // fabric_group_size
     output_values_per_group = fabric_group_size * output_values_per_lane
     output_elements = num_layers * output_values_per_layer
 
@@ -144,13 +154,13 @@ def phase_owned_decode(
     packet_ty = np.ndarray[(packet_elements,), np.dtype[dtype]]
     q_join_ty = np.ndarray[(output_values_per_group,), np.dtype[dtype]]
     lane_output_ty = np.ndarray[(output_values_per_lane,), np.dtype[dtype]]
-    o_partial_values_per_lane = fabric_group_size * q_rows_per_packet
+    o_target_rows = o_projection_chunk_rows
+    o_partial_values_per_lane = o_target_rows
     o_partial_values_per_group = fabric_group_size * o_partial_values_per_lane
-    o_reduced_values_per_group = fabric_group_size * q_rows_per_packet
     o_partial_ty = np.ndarray[(o_partial_values_per_lane,), np.dtype[np.float32]]
     o_partial_join_ty = np.ndarray[(o_partial_values_per_group,), np.dtype[np.float32]]
-    o_reduced_group_ty = np.ndarray[(o_reduced_values_per_group,), np.dtype[np.float32]]
-    o_reduced_lane_ty = np.ndarray[(q_rows_per_packet,), np.dtype[np.float32]]
+    o_source_target_ty = np.ndarray[(o_target_rows,), np.dtype[np.float32]]
+    o_target_reduced_group_ty = np.ndarray[(o_target_rows,), np.dtype[np.float32]]
     hidden_state_ty = np.ndarray[(hidden_size,), np.dtype[dtype]]
     state_ty = np.ndarray[(1,), np.dtype[np.float32]]
     attention_state_ty = np.ndarray[(2,), np.dtype[np.float32]]
@@ -184,6 +194,7 @@ def phase_owned_decode(
             packet_ty,
             state_ty,
             lane_output_ty,
+            np.int32,
             np.int32,
             np.int32,
             np.int32,
@@ -263,15 +274,27 @@ def phase_owned_decode(
             np.int32,
             np.int32,
             np.int32,
+            np.int32,
         ],
     )
-    o_reduce_kernel = Kernel(
-        "new_mega_phase_o_reduce_group_f32",
+    o_source_reduce_kernel = Kernel(
+        "new_mega_phase_o_source_reduce_targets_f32",
         kernel_object,
         [
             o_partial_join_ty,
-            o_reduced_group_ty,
+            o_source_target_ty,
+            o_source_target_ty,
             np.int32,
+            np.int32,
+        ],
+    )
+    o_target_reduce_kernel = Kernel(
+        "new_mega_phase_o_reduce_two_sources_f32",
+        kernel_object,
+        [
+            o_source_target_ty,
+            o_source_target_ty,
+            o_target_reduced_group_ty,
             np.int32,
         ],
     )
@@ -280,9 +303,10 @@ def phase_owned_decode(
         kernel_object,
         [
             packet_ty,
-            o_reduced_lane_ty,
+            o_target_reduced_group_ty,
             state_ty,
             lane_output_ty,
+            np.int32,
             np.int32,
             np.int32,
             np.int32,
@@ -372,34 +396,37 @@ def phase_owned_decode(
             )
         )
         o_partial_lane_fifos.extend(group_fifos)
-    o_reduced_group_fifos = [
+    o_source_target_fifos = [
+        [
+            ObjectFifo(
+                o_source_target_ty,
+                name=(
+                    "new_mega_phase_o_source_"
+                    f"{source_group}_to_target_{target_group}"
+                ),
+                depth=1,
+            )
+            for target_group in range(fabric_group_count)
+        ]
+        for source_group in range(fabric_group_count)
+    ]
+    o_target_reduced_group_fifos = [
         ObjectFifo(
-            o_reduced_group_ty,
-            name=f"new_mega_phase_o_reduced_g{group}",
+            o_target_reduced_group_ty,
+            name=f"new_mega_phase_o_target_reduced_g{group}",
             depth=1,
         )
         for group in range(fabric_group_count)
     ]
-    o_reduced_lane_fifos = []
-    for group in range(fabric_group_count):
-        group_fifos = (
-            o_reduced_group_fifos[group]
-            .cons()
-            .split(
-                offsets=[
-                    lane_in_group * q_rows_per_packet
-                    for lane_in_group in range(fabric_group_size)
-                ],
-                obj_types=[o_reduced_lane_ty] * fabric_group_size,
-                names=[
-                    "new_mega_phase_lane_"
-                    f"{group * fabric_group_size + lane_in_group}_o_reduced"
-                    for lane_in_group in range(fabric_group_size)
-                ],
-                depths=[1] * fabric_group_size,
-            )
+    o_reduced_group_fifos = [
+        o_target_reduced_group_fifos[target_group]
+        .cons()
+        .forward(
+            name=f"new_mega_phase_o_target_reduced_broadcast_g{target_group}",
+            depth=1,
         )
-        o_reduced_lane_fifos.extend(group_fifos)
+        for target_group in range(fabric_group_count)
+    ]
     states = [
         Buffer(
             initial_value=np.zeros(shape=(1,), dtype=np.float32),
@@ -588,42 +615,45 @@ def phase_owned_decode(
                 head_dim,
             )
 
-            packet = packet_fifo.acquire(1)
-            o_partial = o_partial_fifo.acquire(1)
-            o_partial_kernel(
-                packet,
-                state,
-                lane_output,
-                o_partial,
-                packet_elements,
-                head_dim,
-                q_rows_per_packet,
-                fabric_group_size,
-                q_output_values_per_lane
-                + k_output_values_per_lane
-                + v_output_values_per_lane
-                + q_rope_output_values_per_lane
-                + k_rope_output_values_per_lane,
-            )
-            o_partial_fifo.release(1)
-            o_reduced = o_reduced_fifo.acquire(1)
-            o_finalize_kernel(
-                packet,
-                o_reduced,
-                state,
-                lane_output,
-                packet_elements,
-                q_rows_per_packet,
-                q_output_values_per_lane
-                + k_output_values_per_lane
-                + v_output_values_per_lane
-                + q_rope_output_values_per_lane
-                + k_rope_output_values_per_lane
-                + context_output_values_per_lane,
-                attention_output_values_per_lane,
-            )
-            o_reduced_fifo.release(1)
-            packet_fifo.release(1)
+            for _ in range_(o_projection_chunk_count):
+                packet = packet_fifo.acquire(1)
+                o_partial = o_partial_fifo.acquire(1)
+                o_partial_kernel(
+                    packet,
+                    state,
+                    lane_output,
+                    o_partial,
+                    packet_elements,
+                    head_dim,
+                    q_rows_per_packet,
+                    num_lanes,
+                    num_lanes,
+                    q_output_values_per_lane
+                    + k_output_values_per_lane
+                    + v_output_values_per_lane
+                    + q_rope_output_values_per_lane
+                    + k_rope_output_values_per_lane,
+                )
+                o_partial_fifo.release(1)
+                o_reduced = o_reduced_fifo.acquire(1)
+                o_finalize_kernel(
+                    packet,
+                    o_reduced,
+                    state,
+                    lane_output,
+                    packet_elements,
+                    q_rows_per_packet,
+                    num_lanes,
+                    q_output_values_per_lane
+                    + k_output_values_per_lane
+                    + v_output_values_per_lane
+                    + q_rope_output_values_per_lane
+                    + k_rope_output_values_per_lane
+                    + context_output_values_per_lane,
+                    attention_output_values_per_lane,
+                )
+                o_reduced_fifo.release(1)
+                packet_fifo.release(1)
 
             packet = packet_fifo.acquire(1)
             gate_up_kernel(
@@ -633,6 +663,7 @@ def phase_owned_decode(
                 packet_elements,
                 hidden_size,
                 q_rows_per_packet,
+                hidden_size,
                 q_output_values_per_lane
                 + k_output_values_per_lane
                 + v_output_values_per_lane
@@ -693,20 +724,46 @@ def phase_owned_decode(
 
     def o_reduce_worker_body(
         o_partial_join_fifo,
-        o_reduced_group_fifo,
+        target0_fifo,
+        target1_fifo,
         o_reduce_kernel,
     ):
         for _ in range_(num_layers):
-            partials = o_partial_join_fifo.acquire(1)
-            reduced = o_reduced_group_fifo.acquire(1)
-            o_reduce_kernel(
-                partials,
-                reduced,
-                fabric_group_size,
-                q_rows_per_packet,
-            )
-            o_partial_join_fifo.release(1)
-            o_reduced_group_fifo.release(1)
+            for _ in range_(o_projection_chunk_count):
+                partials = o_partial_join_fifo.acquire(1)
+                target0 = target0_fifo.acquire(1)
+                target1 = target1_fifo.acquire(1)
+                o_reduce_kernel(
+                    partials,
+                    target0,
+                    target1,
+                    fabric_group_size,
+                    o_target_rows,
+                )
+                o_partial_join_fifo.release(1)
+                target0_fifo.release(1)
+                target1_fifo.release(1)
+
+    def o_target_reduce_worker_body(
+        source0_fifo,
+        source1_fifo,
+        target_reduced_fifo,
+        o_target_reduce_kernel,
+    ):
+        for _ in range_(num_layers):
+            for _ in range_(o_projection_chunk_count):
+                source0 = source0_fifo.acquire(1)
+                source1 = source1_fifo.acquire(1)
+                reduced = target_reduced_fifo.acquire(1)
+                o_target_reduce_kernel(
+                    source0,
+                    source1,
+                    reduced,
+                    o_target_rows,
+                )
+                source0_fifo.release(1)
+                source1_fifo.release(1)
+                target_reduced_fifo.release(1)
 
     workers = [
         Worker(
@@ -715,7 +772,7 @@ def phase_owned_decode(
                 packet_fifos[lane].cons(),
                 lane_output_fifos[lane].prod(),
                 o_partial_lane_fifos[lane].prod(),
-                o_reduced_lane_fifos[lane].cons(),
+                o_reduced_group_fifos[lane // fabric_group_size].cons(),
                 hidden_states[lane],
                 norm_weight_states[lane],
                 states[lane],
@@ -738,17 +795,31 @@ def phase_owned_decode(
         )
         for lane in range(num_lanes)
     ]
-    o_reduce_workers = [
+    o_source_reduce_workers = [
         Worker(
             o_reduce_worker_body,
             [
                 o_partial_join_fifos[group].cons(),
-                o_reduced_group_fifos[group].prod(),
-                o_reduce_kernel,
+                o_source_target_fifos[group][0].prod(),
+                o_source_target_fifos[group][1].prod(),
+                o_source_reduce_kernel,
             ],
             stack_size=0x400,
         )
         for group in range(fabric_group_count)
+    ]
+    o_target_reduce_workers = [
+        Worker(
+            o_target_reduce_worker_body,
+            [
+                o_source_target_fifos[0][target_group].cons(),
+                o_source_target_fifos[1][target_group].cons(),
+                o_target_reduced_group_fifos[target_group].prod(),
+                o_target_reduce_kernel,
+            ],
+            stack_size=0x400,
+        )
+        for target_group in range(fabric_group_count)
     ]
 
     packet_taps = [
@@ -776,7 +847,7 @@ def phase_owned_decode(
         packets_l3_ty,
         outputs_l3_ty,
     ) as (shared_l3, packets_l3, outputs_l3):
-        rt.start(*(workers + o_reduce_workers))
+        rt.start(*(workers + o_source_reduce_workers + o_target_reduce_workers))
         tg = rt.task_group()
         for lane in range(num_lanes):
             rt.fill(

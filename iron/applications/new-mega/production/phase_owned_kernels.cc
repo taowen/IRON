@@ -95,6 +95,7 @@ void new_mega_phase_gate_up_shard_bf16(const bfloat16 *__restrict packet,
                                        int32_t packet_size,
                                        int32_t hidden_size,
                                        int32_t q_rows_per_packet,
+                                       int32_t residual_group_size,
                                        int32_t attention_output_base,
                                        int32_t gate_output_base,
                                        int32_t output_values_per_lane)
@@ -111,7 +112,7 @@ void new_mega_phase_gate_up_shard_bf16(const bfloat16 *__restrict packet,
     float mean_square = 0.0f;
     for (int32_t i = 0; i < hidden_size; i++) {
         float x = static_cast<float>(attn_residual[i]);
-        if (i >= residual_row_base && i < residual_row_base + q_rows_per_packet) {
+        if (i >= residual_row_base && i < residual_row_base + residual_group_size) {
             x = static_cast<float>(lane_output[attention_output_base + i - residual_row_base]);
         }
         mean_square += x * x;
@@ -129,7 +130,7 @@ void new_mega_phase_gate_up_shard_bf16(const bfloat16 *__restrict packet,
         float up_acc = 0.0f;
         for (int32_t i = 0; i < hidden_size; i++) {
             float x = static_cast<float>(attn_residual[i]);
-            if (i >= residual_row_base && i < residual_row_base + q_rows_per_packet) {
+            if (i >= residual_row_base && i < residual_row_base + residual_group_size) {
                 x = static_cast<float>(lane_output[attention_output_base + i - residual_row_base]);
             }
             const float xnorm = x * inv_rms * static_cast<float>(post_norm_weight[i]);
@@ -376,14 +377,16 @@ void new_mega_phase_o_partial_shard_bf16(const bfloat16 *__restrict packet,
                                          int32_t packet_size,
                                          int32_t head_dim,
                                          int32_t q_rows_per_packet,
-                                         int32_t fabric_group_size,
+                                         int32_t residual_lane_count,
+                                         int32_t target_lane_count,
                                          int32_t context_output_base)
 {
     event0();
     (void)packet_size;
 
-    const int32_t group_rows = fabric_group_size * q_rows_per_packet;
-    const bfloat16 *o_local_weight_block = packet + 2 + q_rows_per_packet;
+    const int32_t group_rows = target_lane_count * q_rows_per_packet;
+    const int32_t residual_group_rows = residual_lane_count * q_rows_per_packet;
+    const bfloat16 *o_local_weight_block = packet + 2 + residual_group_rows;
 
     float checksum = state[0];
 
@@ -405,20 +408,36 @@ void new_mega_phase_o_partial_shard_bf16(const bfloat16 *__restrict packet,
     event1();
 }
 
-void new_mega_phase_o_reduce_group_f32(const float *__restrict group_partials,
-                                       float *__restrict group_reduced,
-                                       int32_t fabric_group_size,
-                                       int32_t q_rows_per_packet)
+void new_mega_phase_o_source_reduce_targets_f32(const float *__restrict group_partials,
+                                                float *__restrict target0_reduced,
+                                                float *__restrict target1_reduced,
+                                                int32_t fabric_group_size,
+                                                int32_t target_rows)
 {
     event0();
 
-    const int32_t group_rows = fabric_group_size * q_rows_per_packet;
-    for (int32_t row = 0; row < group_rows; row++) {
+    for (int32_t row = 0; row < target_rows; row++) {
         float acc = 0.0f;
         for (int32_t lane = 0; lane < fabric_group_size; lane++) {
-            acc += group_partials[lane * group_rows + row];
+            const int32_t base = lane * target_rows;
+            acc += group_partials[base + row];
         }
-        group_reduced[row] = acc;
+        target0_reduced[row] = acc;
+        target1_reduced[row] = acc;
+    }
+
+    event1();
+}
+
+void new_mega_phase_o_reduce_two_sources_f32(const float *__restrict source0,
+                                             const float *__restrict source1,
+                                             float *__restrict group_reduced,
+                                             int32_t target_rows)
+{
+    event0();
+
+    for (int32_t row = 0; row < target_rows; row++) {
+        group_reduced[row] = source0[row] + source1[row];
     }
 
     event1();
@@ -430,6 +449,7 @@ void new_mega_phase_o_finalize_reduced_bf16(const bfloat16 *__restrict packet,
                                             bfloat16 *__restrict lane_output,
                                             int32_t packet_size,
                                             int32_t q_rows_per_packet,
+                                            int32_t target_lane_count,
                                             int32_t attention_output_base,
                                             int32_t attention_output_values_per_lane)
 {
@@ -437,19 +457,15 @@ void new_mega_phase_o_finalize_reduced_bf16(const bfloat16 *__restrict packet,
     (void)packet_size;
     ::aie::set_rounding(aie::rounding_mode::conv_even);
 
-    const bfloat16 *host_other_plus_residual = packet + 2;
+    const int32_t chunk_row_base = static_cast<int32_t>(static_cast<float>(packet[0]));
+    const int32_t group_rows = target_lane_count * q_rows_per_packet;
+    const bfloat16 *residual_group = packet + 2;
     float checksum = state[0];
 
-    for (int32_t row = 0; row < q_rows_per_packet; row++) {
-        const float residual = static_cast<float>(host_other_plus_residual[row]) + reduced_rows[row];
+    for (int32_t row = 0; row < group_rows; row++) {
+        const float residual = static_cast<float>(residual_group[row]) + reduced_rows[row];
         checksum += residual;
-        lane_output[attention_output_base + row] = static_cast<bfloat16>(residual);
-    }
-
-    for (int32_t i = attention_output_base + q_rows_per_packet;
-         i < attention_output_base + attention_output_values_per_lane;
-         i++) {
-        lane_output[i] = static_cast<bfloat16>(0.0f);
+        lane_output[attention_output_base + chunk_row_base + row] = static_cast<bfloat16>(residual);
     }
 
     state[0] = checksum;

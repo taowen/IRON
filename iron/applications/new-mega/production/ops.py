@@ -19,26 +19,6 @@ from iron.common import (
 )
 from iron.common.context import AIEContext
 
-PHASE_LABELS = (
-    "input_qkv",
-    "attention_chunk_0",
-    "attention_chunk_1",
-    "attention_chunk_2",
-    "attention_chunk_3",
-    "attention_score_pv_0",
-    "attention_score_pv_1",
-    "attention_score_pv_2",
-    "attention_score_pv_3",
-    "attention_score_pv_4",
-    "attention_score_pv_5",
-    "attention_score_pv_6",
-    "attention_score_pv_7",
-    "o_proj",
-    "gate_up",
-    "down_proj",
-    "next_layer_token",
-)
-
 ATTENTION_SCORE_PV_PHASES = (
     "attention_score_pv_0",
     "attention_score_pv_1",
@@ -51,6 +31,26 @@ ATTENTION_SCORE_PV_SECONDARY_PHASES = (
     "attention_score_pv_5",
     "attention_score_pv_6",
     "attention_score_pv_7",
+)
+
+O_PROJECTION_CHUNK_ROWS = 32
+O_PROJECTION_CHUNK_COUNT = 32
+O_PROJECTION_PHASES = tuple(
+    f"o_proj_chunk_{chunk}" for chunk in range(O_PROJECTION_CHUNK_COUNT)
+)
+
+PHASE_LABELS = (
+    "input_qkv",
+    "attention_chunk_0",
+    "attention_chunk_1",
+    "attention_chunk_2",
+    "attention_chunk_3",
+    *ATTENTION_SCORE_PV_PHASES,
+    *ATTENTION_SCORE_PV_SECONDARY_PHASES,
+    *O_PROJECTION_PHASES,
+    "gate_up",
+    "down_proj",
+    "next_layer_token",
 )
 
 
@@ -131,14 +131,25 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
             raise ValueError("fabric_group_size must be positive")
         if self.num_lanes % self.fabric_group_size != 0:
             raise ValueError("num_lanes must be divisible by fabric_group_size")
+        if self.num_lanes // self.fabric_group_size != 2:
+            raise ValueError(
+                "production O cross-group partial reduce currently expects two "
+                "fabric groups"
+            )
+        if self.o_projection_chunk_rows != O_PROJECTION_CHUNK_ROWS:
+            raise ValueError(
+                "production O projection phase labels currently expect 32 rows per chunk"
+            )
+        if self.o_projection_chunk_count != O_PROJECTION_CHUNK_COUNT:
+            raise ValueError(
+                "production O projection phase labels currently expect 32 chunks"
+            )
         q_phase_elements = (2 + self.q_rows_per_packet) * self.hidden_size
         gate_up_elements = 1 + (2 + 2 * self.q_rows_per_packet) * self.hidden_size
         o_elements = (
             2
-            + self.q_rows_per_packet
-            + self.fabric_group_size
-            * self.q_rows_per_packet
-            * self.context_output_values_per_lane
+            + self.o_projection_chunk_rows
+            + self.o_projection_chunk_rows * self.context_output_values_per_lane
         )
         down_elements = (
             1
@@ -212,6 +223,16 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
         return self.max_seq_len // self.attention_chunk_size
 
     @property
+    def o_projection_chunk_rows(self) -> int:
+        return self.num_lanes * self.q_rows_per_packet
+
+    @property
+    def o_projection_chunk_count(self) -> int:
+        if self.hidden_size % self.o_projection_chunk_rows != 0:
+            raise ValueError("hidden_size must be divisible by O projection chunk rows")
+        return self.hidden_size // self.o_projection_chunk_rows
+
+    @property
     def attention_head_count(self) -> int:
         return self.attention_size // self.head_dim
 
@@ -241,7 +262,7 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
 
     @property
     def attention_output_values_per_lane(self) -> int:
-        return ((self.q_rows_per_packet + 7) // 8) * 8
+        return ((self.hidden_size + 7) // 8) * 8
 
     @property
     def gate_up_output_values_per_lane(self) -> int:

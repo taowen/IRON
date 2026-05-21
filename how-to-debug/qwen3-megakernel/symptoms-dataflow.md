@@ -99,6 +99,56 @@ MLIR generation proceeds past verification; subsequent failures, if any, are
 not this ABI type mismatch.
 ```
 
+## Kernel Arity Fails During `resolve_program()`
+
+Symptom:
+
+```text
+ValueError: Kernel 'new_mega_phase0_q_shard_bf16' expects 12 argument(s),
+but 10 were provided.
+```
+
+Trigger:
+
+```text
+While adding a new argument to the O partial kernel, the Python Kernel
+declaration for q_shard was accidentally widened instead. The Worker call site
+still passed the correct q_shard arguments, so IRON failed before aiecc.
+```
+
+Diagnostic:
+
+```text
+Treat this as a Python-side Kernel ABI declaration bug, not a placement or
+external C++ math bug. Compare exactly three places:
+
+1. C++ function signature.
+2. `Kernel(...)` type list in `phase_owned_stages.py`.
+3. The Worker call site argument list.
+```
+
+Root cause:
+
+```text
+The type list for one external symbol was edited while the call site belonged
+to a different symbol. `resolve_program()` caught the arity mismatch before MLIR
+lowering, resource allocation, routing, or runtime execution.
+```
+
+Fix:
+
+```text
+Restore q_shard to its original five integer parameters, and add the new
+`fabric_group_size` integer only to `new_mega_phase_o_partial_shard_bf16`.
+```
+
+Recheck:
+
+```text
+`resolve_program()` proceeds into full aiecc. The next diagnostics, if any, are
+actual allocation/routing/kernel issues rather than Python Kernel arity drift.
+```
+
 ## AIE Kernel Cannot Use Host Math sqrtf
 
 Symptom:

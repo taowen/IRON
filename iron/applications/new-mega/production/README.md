@@ -26,7 +26,7 @@ tile-local hidden_state[1024] carried across layer iterations
 tile-local input_norm_weight[1024] cached from the phase 0 packet
 loop over layers inside each Worker
 two input ObjectFIFOs and two output ObjectFIFOs per lane in the proven fabric
-two fixed group reducer Workers for O partial projection reduce
+four fixed reducer Workers for O partial projection reduce
 resource use bounded by num_lanes, not by num_layers * num_phases
 ```
 
@@ -38,21 +38,24 @@ Attention chunk phases 2 and 3 compute real first-head Q/K RMSNorm+RoPE row
 shards. The four
 primary `attention_score_pv_*` phases and the four secondary score/PV phases
 run real fixed-cache chunked QK, online softmax, and PV for all 16 attention
-heads. The `o_proj` phase now computes same-fabric-group partial O projection
-contributions on the lane Workers, sends those partials to one reducer Worker
-per 4-lane group, receives the reduced same-group rows back, and finalizes the
-local attention residual rows. Host-packed values still provide the other
-fabric group's context contribution and the non-local residual/FFN values until
-a second reduce/gather step removes them. The `gate_up` phase consumes the
-local attention residual rows produced by `o_proj`; the `down_proj` phase
-consumes the local FFN hidden rows produced by `gate_up`. Layer 0 initializes a
-tile-local hidden buffer from the phase 0 packet; each `next_layer_token` phase
-updates that buffer for the next layer. `state[0]` is only a checksum for
-diagnostics, not the activation handoff. The runner uses the local Qwen3-0.6B
-safetensors by default and fills phase packets with real layer hidden inputs,
-input norm weights, first-head raw Q/K vectors, Q/K norm weights, RoPE cos/sin
-values, fixed-cache GQA K/V/mask chunks, projection row shards, partial reduce
-metadata, FFN hidden vectors, residual shards, and next-layer hidden values.
+heads. The `o_proj_chunk_*` phases now compute full cross-fabric partial O
+projection: lane Workers produce partials for one 32-row O chunk at a time, one
+source reducer per 4-lane group sums producer lanes, and one target reducer per group
+sums the two source groups before broadcasting each 32-row chunk back to owner
+lanes. O projection no longer needs host-packed context contribution for these
+rows, and the 32 chunks materialize the full 1024-row attention residual in
+`lane_output`. Host-packed values still provide non-local FFN values until an
+FFN gather or partial-reduce design replaces them. The `gate_up` phase consumes
+the full attention residual produced by `o_proj_chunk_0..31`; the `down_proj`
+phase consumes the local FFN hidden rows produced by `gate_up`.
+Layer 0 initializes a tile-local hidden buffer from the phase 0 packet; each
+`next_layer_token` phase updates that buffer for the next layer. `state[0]` is
+only a checksum for diagnostics, not the activation handoff. The runner uses
+the local Qwen3-0.6B safetensors by default and fills phase packets with real
+layer hidden inputs, input norm weights, first-head raw Q/K vectors, Q/K norm
+weights, RoPE cos/sin values, fixed-cache GQA K/V/mask chunks, projection row
+shards, partial reduce metadata, FFN hidden vectors, residual shards, and
+next-layer hidden values.
 The runtime arg spec still contains a legacy shared input buffer so the runner
 ABI stays stable, but production no longer creates or fills a shared
 ObjectFifo.
@@ -100,7 +103,7 @@ full aiecc passes
 NPU run completes
 phase-owned output matches CPU reference
 runtime_memrefs <= 5
-compute_cores == num_lanes
+compute_cores is bounded by lane Workers plus fixed reducer Workers
 max compute tile inputs <= 2
 max compute tile outputs <= 2
 ```
@@ -111,7 +114,7 @@ Validated on NPU2:
 default production body:
   num_lanes=8
   num_layers=28
-  phase_packets_per_layer=17
+  phase_packets_per_layer=48
   hidden_size=1024
   attention_size=2048
   attention_head_count=16
@@ -130,11 +133,11 @@ default production body:
   q_rope_output_values_per_lane=8
   k_rope_output_values_per_lane=8
   context_output_values_per_lane=256
-  attention_output_values_per_lane=8
+  attention_output_values_per_lane=1024
   gate_up_output_values_per_lane=8
   residual_output_values_per_lane=8
-  output_values_per_lane=320
-  output_values_per_layer=2560
+  output_values_per_lane=1336
+  output_values_per_layer=10688
   packet_elements=16576
   phase 0=tile-local hidden RMSNorm + lane-local Q row shard + grouped join
   attention_chunk_0=tile-local hidden RMSNorm + lane-local K row shard
@@ -143,38 +146,33 @@ default production body:
   attention_chunk_3=first-head K RMSNorm + RoPE row shard
   attention_score_pv_0..3=lane-mapped heads 0..7 fixed-cache QK + online softmax + PV
   attention_score_pv_4..7=lane-mapped heads 8..15 fixed-cache QK + online softmax + PV
-  o_proj=NPU-produced same-fabric-group context heads + group partial reduce + host other-fabric-group contribution + residual add
-  gate_up=NPU-produced local attention residual rows + host remaining residual + real post RMSNorm + lane-local gate/up row shards
+  o_proj_chunk_0..31=NPU-produced all context heads + chunked source/target partial reduce + full residual materialization
+  gate_up=NPU-produced full attention residual + real post RMSNorm + lane-local gate/up row shards
   down_proj=NPU-produced local FFN hidden rows + host remaining FFN hidden + lane-local down row shards + residual add
   next_layer_token=updates tile-local hidden_state for the next layer
   inputs=real Qwen3 hidden/norm/qkv_proj/qk_norm_rope/kv_cache_mask/o_proj/post_norm/gate/up/down/next-hidden packets
-  preflight_compute_cores=10
+  preflight_compute_cores=12
   preflight_total_dma_tasks=10
   preflight_max_compute_tile_inputs=2
   preflight_max_compute_tile_outputs=2
-  npu_time_us=311612.850
+  npu_time_us=580001.856
   phase_owned_max_abs=1.000000
-  phase_owned_mean_abs=0.007770
+  phase_owned_mean_abs=0.011816
   phase_owned_errors=0
-  qwen3_phase_output_max_abs=0.500000
-  qwen3_phase_output_mean_abs=0.007813
-  qwen3_phase_output_errors=0 at abs_tol=0.5
-  phase_owned_reference_errors=0 at abs_tol=1.0
+  qwen3_phase_output_max_abs=1.000000
+  qwen3_phase_output_mean_abs=0.011817
+  qwen3_phase_output_errors=0
 
   O partial-reduce resource diagnosis:
     first design failed aiecc with tile input DMA channel exceeded
     failing lane tile had three input FIFOs: shared, lane packet, o_reduced
     fix removed shared ObjectFifo and packed hidden/norm into phase 0 packet
     reducer workers added two compute cores but kept each tile at <=2 inputs
+    second cross-group design failed routing because a source-reduced vector
+    was split through one mem tile
+    fix made each source reducer produce two target-group outputs directly
 
-  phase-owned reference tolerance:
-    one phase-level O reduce slot differed from qwen semantic reference by
-    exactly one BF16 ULP (181 vs 182 at value scale ~182)
-    qwen semantic reference passed at abs_tol=0.5
-    phase-owned packet reference is checked at abs_tol=1.0 for this reduce
-    boundary while qwen reference remains at abs_tol=0.5
-
-  O handoff poison test, num_layers=1:
+  Historical O handoff poison test before cross-fabric reduce, num_layers=1:
     each lane's two host O-packet context heads overwritten with 123.0
     poison_o_host_two_lane_heads_npu_time_us=11171.860
     poison_o_host_two_lane_heads_max_abs=0.017578
@@ -195,27 +193,48 @@ default production body:
     poison_down_host_local_ffn_mean_abs=0.007681
     poison_down_host_local_ffn_errors_gt_0_5=0
 
-large packet compile/preflight:
-  q_rows_per_packet=4
-  fabric_group_size=4
-  packet_elements=16896
-  packet_bytes=33792
-  lane_stream_bytes=12300288
-  input_elements=49201152
-  output_elements=43008
-  preflight_compute_cores=8
-  preflight_max_fifo_buffered_bytes=33792
-  preflight_max_compute_tile_inputs=2
-  preflight_max_compute_tile_outputs=1
+  full cross-fabric O reduce compile diagnostic:
+    rejected topology:
+      source reducer -> full source_reduced[32] -> memtile split -> target reducers
+      result: routing pipeline failed after resource allocation
+    accepted topology:
+      source reducer -> target0 half and target1 half directly
+      target reducers sum two source halves
+      result: full aiecc passes
+
+  gate_up same-fabric-group residual visibility:
+    O finalize writes 16 attention residual rows per lane output object
+    gate_up reads those 16 rows from lane_output before post RMSNorm
+    fixed ABI drift found during bring-up:
+      O packet residual header grew from 4 rows to 16 rows
+      O partial C++ kernel and packet reference still used the old weight offset
+      Kernel declaration for q_shard was accidentally widened while adding the
+      O partial argument; resolve_program caught the arity mismatch before aiecc
+
+  gate_up full residual visibility:
+    O projection is split into 32 row chunks of 32 hidden rows
+    each chunk reuses the same source/target reducer fabric
+    each lane output materializes the full 1024-row attention residual segment
+    gate_up reads all 1024 residual values from lane_output instead of the host
+    packet
+    compile-only proved this is temporal reuse, not resource replication:
+      preflight_compute_cores=12
+      preflight_max_compute_tile_inputs=2
+      preflight_max_compute_tile_outputs=2
+      preflight_max_dma_tasks_per_fifo=1
+    raw qwen semantic diff had 16 attention_residual values at max_abs=1.0
+    while packet-level phase reference had 0 errors; segment diagnostics showed
+    the difference was O accumulation-order tolerance, not gate_up/down dataflow
 ```
 
 ## Next Work
 
 ```text
-1. Extend O partial reduce across both fabric groups so O projection no longer needs host context contribution.
-2. Decide whether gate_up should use residual gather/broadcast or the same partial projection reduce pattern.
-3. Decide whether down_proj should use FFN gather/broadcast or partial projection reduce.
-4. Add a cheap poison/diagnostic harness for the O partial-reduce path that avoids a full recompile.
-5. Keep grouped fan-in at 4 lanes unless a measured placer result proves wider groups.
-6. Do not add another production standalone op or static single-layer graph.
+1. Decide whether down_proj should use FFN gather/broadcast or partial
+   projection reduce.
+2. Add a cheap poison/diagnostic harness for the O partial-reduce path that
+   avoids a full recompile.
+3. Keep grouped fan-in at 4 lanes unless a measured placer result proves wider
+   groups.
+4. Do not add another production standalone op or static single-layer graph.
 ```

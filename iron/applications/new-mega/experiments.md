@@ -2540,7 +2540,6 @@ the other 3068 FFN hidden values, currently supplied by the host packet.
 Remaining D1 work:
 
 ```text
-D1.5u remove remaining host-packed other-fabric-group context from O
 D1.5v design residual/FFN gather or partial projection reduce for gate_up/down
 D2 run repeated layers in the same phase-owned topology
 ```
@@ -2659,8 +2658,287 @@ cached tile-locally before adding the reduce path.
 Remaining D1 work:
 
 ```text
-D1.5u extend O partial reduce across both fabric groups or add a second reduce
-D1.5v remove host residual/FFN dependencies using gather or partial reduce
+D1.5u extend O partial reduce across both fabric groups or add a second reduce [accepted]
+D1.5v make gate_up consume same-fabric-group O residual rows [accepted]
+D1.5w remove remaining host residual/FFN dependencies using gather or partial reduce
+D2 run repeated layers in the same phase-owned topology
+```
+
+#### D1.5u. O Projection Cross-Fabric Partial Reduce
+
+Status: accepted in production.
+
+Question:
+
+```text
+Can O projection remove the remaining host-packed other-fabric-group context
+contribution by reducing partial products from all 8 lanes?
+```
+
+Rejected first cross-group design:
+
+```text
+source group reducers produced full 32-row partial vectors
+one memtile split each source vector into target-group halves
+target reducers consumed the split halves
+
+aiecc result:
+  resource allocation completed successfully
+  routing pipeline failed with "Unable to find a legal routing"
+```
+
+Diagnosis:
+
+```text
+The generated MLIR concentrated the cross-group exchange through
+mem_tile_2_1:
+
+  source_reduced_g0/g1 -> mem_tile_2_1
+  mem_tile_2_1 -> target0
+  mem_tile_2_1 -> target1
+
+The failure was not a lane input-channel issue; those were still at 2 inputs.
+It was an over-routed intermediate split point introduced by the full-vector
+source_reduced FIFO.
+```
+
+Fix:
+
+```text
+Remove the source_reduced full-vector FIFO and split.
+
+Each source reducer now consumes the 4 lane partial vectors once and produces
+two target-half outputs directly:
+  source_g0 -> target_g0
+  source_g0 -> target_g1
+  source_g1 -> target_g0
+  source_g1 -> target_g1
+
+Each target reducer consumes two source halves and sums them before splitting
+the final rows back to its four owner lanes.
+```
+
+Accepted topology:
+
+```text
+lane Workers:        8
+source reducers:     2
+target reducers:     2
+compute cores:       12
+max tile inputs:     2
+max tile outputs:    2
+total DMA tasks:     10
+```
+
+NPU result:
+
+```text
+num_layers=28
+phase_packets_per_layer=17
+packet_elements=16576
+preflight_compute_cores=12
+preflight_total_dma_tasks=10
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=2
+npu_time_us=316076.338
+phase_owned_max_abs=0.500000
+phase_owned_mean_abs=0.007814
+phase_owned_errors=0
+qwen3_phase_output_max_abs=0.500000
+qwen3_phase_output_mean_abs=0.007821
+qwen3_phase_output_errors=0
+```
+
+Interpretation:
+
+```text
+The O projection rows currently materialized by production no longer depend on
+host-packed attention context. The remaining host-fed activation dependencies
+are residual vector visibility for gate_up and FFN hidden visibility for
+down_proj. The routing lesson is that cross-group reductions should avoid
+"reduce full vector then split through one memtile"; produce target-specific
+outputs directly from the reducer that already has the source partials.
+```
+
+Remaining D1 work:
+
+```text
+D1.5v make gate_up consume same-fabric-group O residual rows [accepted]
+D1.5w make gate_up consume full O residual rows [accepted]
+D1.5x remove remaining host FFN dependency using gather or partial reduce
+D2 run repeated layers in the same phase-owned topology
+```
+
+#### D1.5v. Gate/Up Consumes Same-Fabric-Group O Residual Rows
+
+Status: accepted in production.
+
+Question:
+
+```text
+Can the gate/up phase consume a wider on-NPU O residual slice from the prior
+phase without adding another ObjectFIFO endpoint?
+```
+
+Change:
+
+```text
+O finalize writes fabric_group_size * q_rows_per_packet residual rows into
+each lane_output object.
+
+gate_up receives residual_row_base = fabric_group_start_row and
+residual_group_size = fabric_group_size * q_rows_per_packet, then replaces
+those rows from lane_output before post-attention RMSNorm.
+```
+
+Accepted result:
+
+```text
+num_lanes=8
+num_layers=28
+phase_packets_per_layer=17
+q_rows_per_packet=4
+fabric_group_size=4
+attention_output_values_per_lane=16
+output_values_per_lane=328
+packet_elements=16576
+preflight_compute_cores=12
+preflight_total_dma_tasks=10
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=2
+npu_time_us=316087.452
+phase_owned_max_abs=0.500000
+phase_owned_mean_abs=0.008164
+phase_owned_errors=0
+qwen3_phase_output_max_abs=0.500000
+qwen3_phase_output_mean_abs=0.008175
+qwen3_phase_output_errors=0
+```
+
+Diagnosis during bring-up:
+
+```text
+1. resolve_program() caught a Kernel ABI declaration drift before aiecc:
+   new_mega_phase0_q_shard_bf16 expected 12 arguments but the Worker passed 10.
+   The cause was an accidental edit to the q_shard Kernel declaration while
+   adding the new O partial argument.
+
+2. Packet layout audit caught an O packet ABI drift:
+   the residual header grew from 4 rows to 16 rows, but O partial still read
+   its weight block at packet + 2 + q_rows_per_packet. The correct offset is
+   packet + 2 + fabric_group_size * q_rows_per_packet.
+```
+
+Interpretation:
+
+```text
+This is progress, not full residual ownership. gate_up still needs all 1024
+residual values for post-attention RMSNorm and dense gate/up dot products; only
+the 16 rows materialized by the current O reduce fabric now come from NPU state.
+The next step is full residual visibility by gather/broadcast or partial
+projection reduce.
+```
+
+Remaining D1 work:
+
+```text
+D1.5w make gate_up consume full O residual rows
+D1.5x remove remaining host FFN dependency using gather or partial reduce
+D2 run repeated layers in the same phase-owned topology
+```
+
+#### D1.5w. Gate/Up Consumes Full Chunked O Residual
+
+Status: accepted in production.
+
+Question:
+
+```text
+Can production remove the host-packed attention residual dependency from
+gate_up without materializing a single oversized O projection packet?
+```
+
+Change:
+
+```text
+The single O phase became 32 O row-chunk phases:
+  o_proj_chunk_0..31
+
+Each chunk covers:
+  o_target_rows = num_lanes * q_rows_per_packet = 32 hidden rows
+
+Each chunk packet carries:
+  chunk_row_base
+  32 residual values
+  32 rows of O weights for the lane's two context heads
+
+The same source/target reducer Workers are reused for every chunk. O finalize
+writes each 32-row residual chunk into lane_output. After all chunks, every
+lane has a full 1024-row attention residual segment, and gate_up reads all
+1024 rows from lane_output.
+```
+
+Accepted result:
+
+```text
+num_lanes=8
+num_layers=28
+phase_packets_per_layer=48
+total_phase_packets=1344
+q_rows_per_packet=4
+fabric_group_size=4
+attention_output_values_per_lane=1024
+output_values_per_lane=1336
+output_values_per_layer=10688
+packet_elements=16576
+input_elements=178225152
+output_elements=299264
+preflight_compute_cores=12
+preflight_total_dma_tasks=10
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=2
+preflight_max_dma_tasks_per_fifo=1
+npu_time_us=580001.856
+phase_owned_max_abs=1.000000
+phase_owned_mean_abs=0.011816
+phase_owned_errors=0
+qwen3_phase_output_max_abs=1.000000
+qwen3_phase_output_mean_abs=0.011817
+qwen3_phase_output_errors=0
+```
+
+Diagnosis during bring-up:
+
+```text
+1. The first NPU run appeared to hang, but the process was in host-side
+   reference construction. The O chunk packet-level reference had grown into
+   hundreds of millions of Python scalar multiply-adds. Vectorizing the O
+   reference as per-producer `weight_block @ context` exposed the real NPU
+   result.
+
+2. The first vectorized qwen semantic reference produced 16 errors with
+   max_abs=1.0. Segment diagnostics showed all 16 were in attention_residual;
+   gate_up and down had zero segment errors. Packet-level reference had zero
+   errors. The cause was O accumulation-order BF16 tolerance, not a dataflow
+   problem. The qwen semantic checker now allows one BF16 ULP for the
+   attention_residual segment while keeping other segments at abs_tol=0.5.
+```
+
+Interpretation:
+
+```text
+This removes the host residual dependency from gate_up. It is not a speed win:
+the full O projection now actually runs on NPU, increasing NPU time from about
+316ms to about 580ms for the current scalar/chunked implementation. It is a
+correctness and architecture step toward the true megakernel dataflow.
+
+The remaining major host-fed activation is FFN hidden for down_proj.
+```
+
+Remaining D1 work:
+
+```text
+D1.5x remove remaining host FFN dependency using gather or partial reduce
 D2 run repeated layers in the same phase-owned topology
 ```
 

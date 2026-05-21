@@ -1013,6 +1013,162 @@ by exactly one BF16 ULP around value 182. Host-only comparison reproduced the
 same slot, so the correct action was to adjust the phase-boundary tolerance to
 one BF16 ULP while keeping the Qwen semantic tolerance unchanged.
 
+D1.5u extended O partial reduce across both fabric groups:
+
+```text
+lane Workers compute partials for all 32 materialized O rows
+source reducers sum producer lanes inside each 4-lane group
+target reducers sum the two source groups for each target group
+O no longer needs host-packed context contribution for those rows
+
+accepted resource shape:
+  num_lanes=8
+  source_reducers=2
+  target_reducers=2
+  compute_cores=12
+  max_tile_inputs=2
+  max_tile_outputs=2
+  phase_owned_errors=0
+  qwen3_phase_output_errors=0
+```
+
+The first cross-group version failed in routing, not in resource allocation:
+
+```text
+resource allocation pipeline completed successfully
+routing pipeline failed: Unable to find a legal routing
+```
+
+The cause was the intermediate full-vector split:
+
+```text
+source reducer -> source_reduced[32] -> one memtile split -> two target reducers
+```
+
+Generated MLIR showed the cross-group exchange concentrated through
+`mem_tile_2_1`. The fix was to avoid that split entirely:
+
+```text
+source reducer -> target0 half
+source reducer -> target1 half
+```
+
+The durable routing rule is that reducer Workers should emit target-specific
+outputs directly when the reducer already has the source partials. A
+"reduce full vector then split through a shared memtile" can be legal as a
+dataflow graph but still fail NoC routing.
+
+D1.5v made the next residual handoff wider without adding a new lane input
+stream:
+
+```text
+O finalize writes the full target fabric-group residual rows into each lane's
+lane_output object
+gate_up reads those 16 rows from lane_output before post-attention RMSNorm
+num_lanes=8
+fabric_group_size=4
+attention_output_values_per_lane=16
+compute_cores=12
+max_tile_inputs=2
+max_tile_outputs=2
+phase_owned_errors=0
+qwen3_phase_output_errors=0
+```
+
+This does not remove the full residual-vector problem for gate/up. Dense
+post-attention RMSNorm and gate/up projection still need all 1024 residual
+values; this step only replaces the rows that the current O reduce fabric
+materializes. The useful lesson is different: when a phase already returns a
+group result through `lane_output`, the next phase can consume a wider slice of
+that same lane-local object without adding another ObjectFIFO endpoint.
+
+The debug lesson was an ABI/layout lesson, not a math lesson. Expanding the O
+packet residual header from 4 rows to 16 rows required updating all of these at
+once:
+
+```text
+packet builder residual payload
+O partial C++ weight-block offset
+phase_owned_reference producer weight-block offset
+qwen3_reference output slot index
+gate_up packet residual row base
+gate_up external kernel residual_group_size argument
+Kernel declaration arity in phase_owned_stages.py
+```
+
+Two concrete checks caught the drift:
+
+```text
+resolve_program() rejected a widened q_shard Kernel declaration before aiecc:
+  Kernel 'new_mega_phase0_q_shard_bf16' expects 12 argument(s), but 10 were provided
+
+manual packet-layout audit found O partial still reading weights at:
+  packet + 2 + q_rows_per_packet
+instead of:
+  packet + 2 + fabric_group_size * q_rows_per_packet
+```
+
+For production phase-owned code, packet header-size changes are ABI changes.
+Treat them like C struct layout changes: update the Python Kernel declaration,
+C++ signature, packet builder, packet-level reference, semantic reference, and
+README dimensions in one patch.
+
+D1.5w removed the host residual dependency from gate/up:
+
+```text
+O projection is split into 32 row chunks
+each chunk covers 32 hidden rows
+the same source/target reducer Workers are reused for every chunk
+each lane_output stores the full 1024-row attention residual
+gate_up reads all 1024 rows from lane_output
+
+accepted resource shape:
+  num_lanes=8
+  num_layers=28
+  phase_packets_per_layer=48
+  compute_cores=12
+  max_tile_inputs=2
+  max_tile_outputs=2
+  max_dma_tasks_per_fifo=1
+  phase_owned_errors=0
+  qwen3_phase_output_errors=0
+```
+
+The architecture lesson is that "full residual visibility" does not require a
+single giant O packet. A 1024-row O weight block would not fit the packet/L1
+budget, but 32 chunks of 32 rows do fit. The graph pays with time and host
+input traffic, while keeping the number of Workers, ObjectFIFOs, endpoints, and
+BD tasks bounded.
+
+The debug lesson was about tooling scale. The first run looked like a hang, but
+the process was spending minutes in the host packet-level reference: the O
+chunk change had inflated a nested Python scalar loop into hundreds of
+millions of multiply-adds. The fix was to vectorize the reference at the same
+semantic boundary:
+
+```text
+for each producer lane:
+  group_partials += weight_block @ producer_context
+```
+
+After that, NPU execution produced real diagnostics. The raw Qwen semantic
+comparison had 16 errors with `max_abs=1.0`, and segment stats showed every one
+was in `attention_residual`; `gate_up` and `down_residual` had zero segment
+errors. Since the packet-level reference matched exactly under the existing
+one-BF16-ULP phase tolerance, the correct interpretation was O accumulation
+order, not a gate/up dataflow bug. The semantic checker now allows one BF16 ULP
+for `attention_residual` while keeping other segments at the normal tolerance.
+
+This step is not a performance win yet:
+
+```text
+D1.5u cross-fabric O for 32 rows: about 316 ms
+D1.5w full chunked O for 1024 rows: about 580 ms
+```
+
+It is a dataflow correctness step. The remaining large host-fed activation is
+the FFN hidden vector used by `down_proj`.
+
 ## What To Do Next
 
 The next useful `new-mega` work should continue the proof ladder, not jump to a
@@ -1021,16 +1177,14 @@ full rewrite.
 Recommended order:
 
 ```text
-1. Extend O partial reduce across both fabric groups or add a second-stage
-   reduce so O no longer needs host context contribution.
-2. Apply the same resource discipline to gate_up/down: decide gather/broadcast
-   versus partial projection reduce before changing kernels.
-3. Run preflight and full aiecc before executing on NPU.
-4. Verify every inserted phase against both packet-level and Qwen semantic
+1. Apply the same resource discipline to down_proj: decide FFN
+   gather/broadcast versus partial projection reduce before changing kernels.
+2. Run preflight and full aiecc before executing on NPU.
+3. Verify every inserted phase against both packet-level and Qwen semantic
    references.
-5. Measure whether lane Workers or reducer Workers are compute-bound or
+4. Measure whether lane Workers or reducer Workers are compute-bound or
    DMA-bound before adding more columns.
-6. Keep old standalone/static-op paths out of production.
+5. Keep old standalone/static-op paths out of production.
 ```
 
 Acceptance for the first new-mega experiment:

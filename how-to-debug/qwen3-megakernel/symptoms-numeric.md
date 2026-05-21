@@ -851,3 +851,58 @@ phase_owned_errors: 0
 qwen3_phase_output_max_abs: 0.000488
 qwen3_phase_output_errors: 0
 ```
+
+## Chunked O Residual Has A Few One-ULP Semantic Errors
+
+Symptom:
+
+```text
+phase_owned_errors: 0
+qwen3_phase_output_max_abs: 1.000000
+qwen3_phase_output_errors: 16
+```
+
+Diagnostic:
+
+```text
+Add segment-level error counts before editing kernels. A single aggregate error
+count is not enough after the output object contains Q, K, V, RoPE, context,
+full attention residual, gate/up, and down residual segments.
+```
+
+Evidence from D1.5w:
+
+```text
+qwen3_segment_attention_residual_errors: 16 max_abs=1.000000
+
+No gate_up or down_residual segment errors were reported.
+The packet-level phase reference had zero errors under the existing
+one-BF16-ULP phase tolerance.
+```
+
+Root cause:
+
+```text
+The full O projection now runs as 32 chunks and accumulates by lane-local
+context partials plus source/target reducer sums. The PyTorch/Qwen semantic
+reference uses a different reduction order for the same O projection. The
+difference appears only in attention_residual and is bounded by one BF16 ULP.
+```
+
+Fix:
+
+```text
+Keep the packet-level phase reference as the strict dataflow/kernel gate.
+Allow one BF16 ULP for the qwen semantic attention_residual segment:
+
+  attention_residual tolerance = max(abs_tol, 1.0)
+
+Keep all other qwen semantic segments at the normal abs_tol.
+```
+
+Accepted recheck:
+
+```text
+phase_owned_errors: 0
+qwen3_phase_output_errors: 0
+```
