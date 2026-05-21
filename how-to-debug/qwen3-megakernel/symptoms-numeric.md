@@ -239,6 +239,84 @@ keys_cache_prefix_errors: 0
 values_cache_prefix_errors: 0
 ```
 
+## Production Phase Reference Fails But Qwen3 Reference Passes
+
+Symptom:
+
+```text
+phase_owned_max_abs: 17.921875
+phase_owned_errors: 2668
+qwen3_phase_output_max_abs: 0.003906
+qwen3_phase_output_errors: 0
+```
+
+Diagnostic:
+
+```text
+Do not change the NPU kernel first. Compare the two host references using the
+same packed phase packets:
+
+phase_owned_reference(packet stream) vs qwen3_reference(real model packets)
+```
+
+Evidence found:
+
+```text
+num_diff_gt_0.5 2668
+first bad indices:
+  layer 0 lane 0 pos 33
+  layer 0 lane 0 pos 34
+  layer 0 lane 0 pos 35
+  layer 0 lane 0 pos 48
+```
+
+With `output_values_per_lane=64`, those positions decode as:
+
+```text
+0..7   Q shard
+8..15  K shard
+16..23 V shard
+24..31 Q RoPE shard
+32..39 K RoPE shard
+40..47 attention residual shard
+48..55 gate/up shard
+56..63 layer residual shard
+```
+
+Root cause:
+
+```text
+The NPU output and Qwen3 reference were correct. The old
+phase_owned_reference gate_base still used:
+
+q + k + v + attention
+
+after q_rope and k_rope output slots had been inserted. It wrote gate/up
+reference values into the K RoPE slots and left the real gate/up slots as zero.
+```
+
+Fix:
+
+```text
+Update every host reference base offset when a per-lane output segment is added:
+
+gate_base = q + k + v + q_rope + k_rope + attention
+down_base = q + k + v + q_rope + k_rope + attention + gate_up
+```
+
+Accepted recheck:
+
+```text
+host-only reference compare:
+  num_diff_gt_0.5 0 max 0.0 mean 0.0
+
+NPU run:
+  phase_owned_max_abs: 0.003906
+  phase_owned_errors: 0
+  qwen3_phase_output_max_abs: 0.003906
+  qwen3_phase_output_errors: 0
+```
+
 ## BF16 Output Differs By One ULP Until Rounding Mode Is Set
 
 Symptom:

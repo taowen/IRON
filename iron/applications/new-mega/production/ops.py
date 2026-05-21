@@ -25,12 +25,32 @@ PHASE_LABELS = (
     "attention_chunk_1",
     "attention_chunk_2",
     "attention_chunk_3",
+    "attention_score_pv_0",
+    "attention_score_pv_1",
+    "attention_score_pv_2",
+    "attention_score_pv_3",
+    "attention_score_pv_4",
+    "attention_score_pv_5",
+    "attention_score_pv_6",
+    "attention_score_pv_7",
     "o_proj",
-    "post_norm",
     "gate_up",
     "down_proj",
-    "layer_residual",
     "next_layer_token",
+)
+
+ATTENTION_SCORE_PV_PHASES = (
+    "attention_score_pv_0",
+    "attention_score_pv_1",
+    "attention_score_pv_2",
+    "attention_score_pv_3",
+)
+
+ATTENTION_SCORE_PV_SECONDARY_PHASES = (
+    "attention_score_pv_4",
+    "attention_score_pv_5",
+    "attention_score_pv_6",
+    "attention_score_pv_7",
 )
 
 
@@ -48,10 +68,13 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
     phase_packets_per_layer: int = len(PHASE_LABELS)
     hidden_size: int = 1024
     attention_size: int = 2048
+    head_dim: int = 128
     intermediate_size: int = 3072
+    max_seq_len: int = 256
+    attention_chunk_size: int = 64
     q_rows_per_packet: int = 4
     fabric_group_size: int = 4
-    packet_elements: int = 15368
+    packet_elements: int = 16576
     context: AIEContext | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
@@ -61,14 +84,11 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
             raise ValueError("num_layers must be positive")
         if self.phase_packets_per_layer <= 0:
             raise ValueError("phase_packets_per_layer must be positive")
-        if self.phase_packets_per_layer < 2:
+        if self.phase_packets_per_layer != len(PHASE_LABELS):
             raise ValueError(
-                "phase_packets_per_layer must include a next_layer_token phase"
+                f"phase_packets_per_layer must be {len(PHASE_LABELS)} for the "
+                "production phase-owned body"
             )
-        if self.phase_packets_per_layer < 9:
-            raise ValueError("phase_packets_per_layer must include a gate_up phase")
-        if self.phase_packets_per_layer < 10:
-            raise ValueError("phase_packets_per_layer must include a down_proj phase")
         if self.packet_elements <= 0:
             raise ValueError("packet_elements must be positive")
         if self.packet_elements % 8 != 0:
@@ -77,29 +97,70 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
             raise ValueError("hidden_size must be positive")
         if self.attention_size <= 0:
             raise ValueError("attention_size must be positive")
+        if self.head_dim <= 0:
+            raise ValueError("head_dim must be positive")
+        if self.attention_size % self.head_dim != 0:
+            raise ValueError("attention_size must be divisible by head_dim")
+        if self.num_lanes > self.attention_head_count:
+            raise ValueError(
+                "production currently maps one attention context head per lane"
+            )
         if self.intermediate_size <= 0:
             raise ValueError("intermediate_size must be positive")
+        if self.max_seq_len <= 0:
+            raise ValueError("max_seq_len must be positive")
+        if self.attention_chunk_size <= 0:
+            raise ValueError("attention_chunk_size must be positive")
+        if self.max_seq_len % self.attention_chunk_size != 0:
+            raise ValueError("max_seq_len must be divisible by attention_chunk_size")
+        if self.attention_chunk_count != len(ATTENTION_SCORE_PV_PHASES):
+            raise ValueError(
+                "production currently expects exactly four attention score/PV chunks"
+            )
+        if self.head_dim != 128:
+            raise ValueError(
+                "production attention score/PV kernel currently expects head_dim=128"
+            )
         if self.q_rows_per_packet <= 0:
             raise ValueError("q_rows_per_packet must be positive")
+        if self.q_rows_per_packet > 16:
+            raise ValueError("q_rows_per_packet must be <= 16 for local FFN handoff")
+        if self.num_lanes * self.q_rows_per_packet > self.head_dim:
+            raise ValueError("current q/k norm+RoPE shard supports only the first head")
         if self.fabric_group_size <= 0:
             raise ValueError("fabric_group_size must be positive")
         if self.num_lanes % self.fabric_group_size != 0:
             raise ValueError("num_lanes must be divisible by fabric_group_size")
-        gate_up_elements = (2 + 2 * self.q_rows_per_packet) * self.hidden_size
+        gate_up_elements = 1 + (2 + 2 * self.q_rows_per_packet) * self.hidden_size
         o_elements = (
-            self.attention_size
+            2
+            + self.attention_size
             + self.q_rows_per_packet
             + self.q_rows_per_packet * self.attention_size
         )
         down_elements = (
-            self.intermediate_size
+            1
+            + self.intermediate_size
             + self.q_rows_per_packet
             + self.q_rows_per_packet * self.intermediate_size
         )
-        minimum_packet_elements = max(o_elements, gate_up_elements, down_elements)
+        norm_rope_elements = 1 + 4 * self.head_dim
+        attention_chunk_elements = (
+            self.head_dim
+            + 2 * self.attention_chunk_size * self.head_dim
+            + self.attention_chunk_size
+        )
+        minimum_packet_elements = max(
+            o_elements,
+            gate_up_elements,
+            down_elements,
+            norm_rope_elements,
+            attention_chunk_elements,
+        )
         if self.packet_elements < minimum_packet_elements:
             raise ValueError(
-                "packet_elements must hold o_proj, gate/up, and down phase payloads"
+                "packet_elements must hold o_proj, gate/up, down, q/k RoPE, "
+                "and attention score/PV phase payloads"
             )
         super().__init__(context=self.context)
 
@@ -114,7 +175,10 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
             f"_e{self.packet_elements}"
             f"_h{self.hidden_size}"
             f"_a{self.attention_size}"
+            f"_hd{self.head_dim}"
             f"_i{self.intermediate_size}"
+            f"_m{self.max_seq_len}"
+            f"_c{self.attention_chunk_size}"
             f"_q{self.q_rows_per_packet}"
             f"_g{self.fabric_group_size}"
             f"_{dev}"
@@ -141,6 +205,14 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
         return self.num_layers * self.output_values_per_layer
 
     @property
+    def attention_chunk_count(self) -> int:
+        return self.max_seq_len // self.attention_chunk_size
+
+    @property
+    def attention_head_count(self) -> int:
+        return self.attention_size // self.head_dim
+
+    @property
     def q_output_values_per_lane(self) -> int:
         return ((self.q_rows_per_packet + 7) // 8) * 8
 
@@ -151,6 +223,18 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
     @property
     def v_output_values_per_lane(self) -> int:
         return ((self.q_rows_per_packet + 7) // 8) * 8
+
+    @property
+    def q_rope_output_values_per_lane(self) -> int:
+        return ((self.q_rows_per_packet + 7) // 8) * 8
+
+    @property
+    def k_rope_output_values_per_lane(self) -> int:
+        return ((self.q_rows_per_packet + 7) // 8) * 8
+
+    @property
+    def context_output_values_per_lane(self) -> int:
+        return 2 * self.head_dim
 
     @property
     def attention_output_values_per_lane(self) -> int:
@@ -170,6 +254,9 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
             self.q_output_values_per_lane
             + self.k_output_values_per_lane
             + self.v_output_values_per_lane
+            + self.q_rope_output_values_per_lane
+            + self.k_rope_output_values_per_lane
+            + self.context_output_values_per_lane
             + self.attention_output_values_per_lane
             + self.gate_up_output_values_per_lane
             + self.residual_output_values_per_lane
@@ -201,7 +288,10 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
                     self.packet_elements,
                     self.hidden_size,
                     self.attention_size,
+                    self.head_dim,
                     self.intermediate_size,
+                    self.max_seq_len,
+                    self.attention_chunk_size,
                     self.q_rows_per_packet,
                     self.fabric_group_size,
                 ),

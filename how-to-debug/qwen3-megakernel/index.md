@@ -25,9 +25,11 @@ Scope:
 
 ```text
 persistent/           supported hand-authored IRON Program/Worker/ObjectFifo path
+new-mega/production   active phase-owned megakernel bring-up path
 ```
 
-Use `persistent/` as the active correctness and performance-debug baseline.
+Use `persistent/` as the accepted correctness and performance-debug baseline.
+Use `new-mega/production` for the current phase-owned megakernel bring-up.
 
 The current accepted persistent checkpoints are:
 

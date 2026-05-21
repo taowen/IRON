@@ -16,6 +16,7 @@ if str(THIS_DIR) not in sys.path:
 from iron.applications.qwen3_0_6b.qwen3_cpu import DEFAULT_MODEL, DEFAULT_PROMPT
 from iron.applications.qwen3_0_6b.qwen3_preflight import Qwen3PreflightError
 
+from ops import PHASE_LABELS
 from runner import (
     build_phase_owned_case,
     compile_phase_owned_stage,
@@ -35,9 +36,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--num-lanes", type=int, default=8)
     parser.add_argument("--num-layers", type=int, default=28)
-    parser.add_argument("--phase-packets-per-layer", type=int, default=11)
+    parser.add_argument(
+        "--phase-packets-per-layer", type=int, default=len(PHASE_LABELS)
+    )
     parser.add_argument("--hidden-size", type=int, default=1024)
     parser.add_argument("--attention-size", type=int, default=2048)
+    parser.add_argument("--head-dim", type=int, default=128)
     parser.add_argument("--intermediate-size", type=int, default=3072)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--revision", default=None)
@@ -45,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--raw-prompt", action="store_true")
     parser.add_argument("--enable-thinking", action="store_true")
     parser.add_argument("--max-seq-len", type=int, default=256)
+    parser.add_argument("--attention-chunk-size", type=int, default=64)
     parser.add_argument("--q-rows-per-packet", type=int, default=4)
     parser.add_argument(
         "--fabric-group-size",
@@ -81,7 +86,10 @@ def main() -> None:
             packet_elements=args.packet_elements,
             hidden_size=args.hidden_size,
             attention_size=args.attention_size,
+            head_dim=args.head_dim,
             intermediate_size=args.intermediate_size,
+            max_seq_len=args.max_seq_len,
+            attention_chunk_size=args.attention_chunk_size,
             q_rows_per_packet=args.q_rows_per_packet,
             fabric_group_size=args.fabric_group_size,
             build_dir=args.build_dir,
@@ -130,11 +138,18 @@ def main() -> None:
             "Workers consume shared broadcast packets plus lane-local phase "
             "streams loaded from real Qwen3 weights, phase 0 computes real "
             "row-sharded Q outputs, o_proj computes real attention residual "
-            "shards, attention chunk phases 0/1 compute real K/V projection "
-            "shards, gate_up computes real post-norm gate/up shards, down_proj "
-            "computes real layer residual shards, next_layer_token updates "
-            "tile-local hidden state, and resource use is bounded by lanes "
-            "rather than by statically appended layer stages."
+            "shards while each lane reads two lane-mapped context heads from "
+            "the preceding NPU attention phases, attention chunk phases 0/1 compute real K/V "
+            "projection shards, attention chunk phases 2/3 compute real "
+            "first-head Q/K RMSNorm+RoPE diagnostic shards, score/PV phases "
+            "compute real chunked online attention context for all 16 heads "
+            "using two sequential head groups per lane, "
+            "gate_up computes real post-norm gate/up shards while reading "
+            "local attention residual rows from the preceding O phase, "
+            "down_proj computes real layer residual shards while reading "
+            "local FFN hidden rows from the preceding gate_up phase, "
+            "next_layer_token updates tile-local hidden state, and resource use "
+            "is bounded by lanes rather than by statically appended layer stages."
         )
     else:
         print("decision: rejected")

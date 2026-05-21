@@ -240,6 +240,42 @@ values_cache_current vs local V reference
 values_cache_current vs v_context_stream_current
 ```
 
+## 30. Compare Independent Host References Before Editing Kernels
+
+Use when NPU output matches one reference but fails another.
+
+The production phase-owned runner keeps two reference views:
+
+```text
+phase_owned_reference:
+  emulates the packed phase packet stream and external kernel math
+
+qwen3_reference:
+  fills the same output slots from real Qwen3 tensors and row-shard helpers
+```
+
+When the NPU matched `qwen3_reference` but failed `phase_owned_reference`, the
+kernel was already correct. Comparing only the two host references found a stale
+output offset without rerunning NPU:
+
+```text
+num_diff_gt_0.5 2668
+first bad output slots: K RoPE and gate/up
+```
+
+Decode each failing flat index into:
+
+```text
+layer = index // output_values_per_layer
+lane  = (index % output_values_per_layer) // output_values_per_lane
+slot  = index % output_values_per_lane
+```
+
+Then map `slot` to the per-lane layout. In the diagnosed case, `gate_base` still
+ignored newly inserted `q_rope` and `k_rope` slots, so the reference wrote
+gate/up values into the K RoPE segment. The fix was purely host reference offset
+alignment; changing the external kernel would have been a blind edit.
+
 Interpretation:
 
 ```text
@@ -334,3 +370,138 @@ debug ladder first_full_ref_drift: layer_0_ffn_hidden_full_ref
 
 The fix was to scale final-only V-cache full-reference tolerance by layer depth
 and keep the debug ladder as the dataflow proof.
+
+## 32. Split Output Diff By Semantic Segment
+
+Use when a production phase-owned run passes or fails with one aggregate
+`max_abs` over a joined per-lane output object.
+
+Decode the flat output into:
+
+```text
+layer = index // output_values_per_layer
+lane  = (index % output_values_per_layer) // output_values_per_lane
+slot  = index % output_values_per_lane
+```
+
+Then aggregate error by semantic segment rather than by the whole tensor. The
+accepted first-head chunked score/softmax/PV run used this segment map:
+
+```text
+q
+k
+v
+q_rope
+k_rope
+context
+attention_residual
+gate_up
+residual
+```
+
+Evidence:
+
+```text
+q max 0.000000
+k max 0.003906
+v max 0.000122
+q_rope max 0.000000
+k_rope max 0.000000
+context max 0.312500
+attention max 0.000000
+gate_up max 0.000244
+residual max 0.000488
+```
+
+Interpretation:
+
+```text
+The aggregate max_abs=0.312500 came from the new context segment only. That
+matched the expected tolerance boundary for AIE exp2<bfloat16> online softmax;
+the surrounding dataflow and row-shard kernels remained near exact BF16 error.
+```
+
+## 33. Poison Host-Fed Slices To Prove A Real Phase Handoff
+
+Use when a downstream phase is supposed to consume an upstream NPU-produced
+activation, but the packet still carries a host reference copy for the parts not
+yet fully moved on-chip.
+
+The test is:
+
+```text
+1. Keep the upstream NPU phase unchanged.
+2. Overwrite the corresponding host-fed packet slice with an impossible value.
+3. Recompute the reference according to the intended NPU handoff.
+4. Run NPU and compare against that reference.
+```
+
+Accepted production example:
+
+```text
+phase:
+  O projection should read the lane-mapped context head from the preceding
+  score/softmax/PV phase. With num_lanes=8, this covers heads 0..7.
+
+fault injection:
+  for each lane, overwrite that lane's own O-packet host_attention_context
+  slice with 123.0
+
+result:
+  poison_o_host_lane_heads_npu_time_us=10760.835
+  poison_o_host_lane_heads_max_abs=0.017578
+  poison_o_host_lane_heads_mean_abs=0.000329
+  poison_o_host_lane_heads_errors_gt_0_5=0
+
+After extending each lane to two context heads:
+
+  overwrite both host-fed context slices claimed by the lane
+
+  poison_o_host_two_lane_heads_npu_time_us=11171.860
+  poison_o_host_two_lane_heads_max_abs=0.017578
+  poison_o_host_two_lane_heads_mean_abs=0.000309
+  poison_o_host_two_lane_heads_errors_gt_0_5=0
+
+After wiring O output into gate/up for local residual rows:
+
+  overwrite each lane's own host-fed gate_up attn_residual rows
+
+  poison_gate_host_local_residual_npu_time_us=11293.627
+  poison_gate_host_local_residual_max_abs=0.017578
+  poison_gate_host_local_residual_mean_abs=0.000312
+  poison_gate_host_local_residual_errors_gt_0_5=0
+
+After wiring gate/up output into down_proj for local FFN hidden rows:
+
+  overwrite each lane's own host-fed down_proj ffn_hidden rows
+
+  poison_down_host_local_ffn_npu_time_us=320777.251
+  poison_down_host_local_ffn_max_abs=0.437500
+  poison_down_host_local_ffn_mean_abs=0.007681
+  poison_down_host_local_ffn_errors_gt_0_5=0
+```
+
+Interpretation:
+
+```text
+If the O kernel still used the host-fed context slice for a lane, this poison
+would produce a large O-projection error in that lane's rows. Passing the
+poisoned run proves the O phase reads the lane-local context segment written by
+the previous attention phase.
+
+The same pattern applies to O->MLP handoff. If `gate_up` still reads the
+host-fed local residual rows, poisoning those rows would move gate/up outputs by
+a large amount. Passing the poisoned run proves those local rows are sourced
+from the previous O phase.
+
+It also applies to MLP-internal handoff. If `down_proj` still reads the
+host-fed local `ffn_hidden` rows, poisoning those rows would move every dense
+down row. Passing the poisoned run proves the local FFN rows are sourced from
+the previous `gate_up` phase. It does not prove full FFN coverage; non-local
+FFN rows remain host-fed until the design adds full-vector gather/broadcast or
+partial projection reduce.
+```
+
+This catches a common false-positive in megakernel development: the aggregate
+output matches because the host packet still contains the correct intermediate,
+not because the on-chip phase handoff is correct.

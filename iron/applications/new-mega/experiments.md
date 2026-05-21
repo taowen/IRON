@@ -1915,12 +1915,633 @@ attention placeholder phases, but every external kernel declaration must be
 checked at the Python ABI, C++ signature, and Worker call together.
 ```
 
+#### D1.5k. Real First-Head Q/K Norm+RoPE Shards In Attention Chunk Phases
+
+Status: accepted in production.
+
+Question:
+
+```text
+Can attention_chunk_2 and attention_chunk_3 stop being checksum placeholders
+and instead compute real Qwen3 first-head Q/K RMSNorm+RoPE row shards while
+preserving the same phase-owned Worker/FIFO topology?
+```
+
+Implementation:
+
+```text
+attention_chunk_2 packet:
+  row_base
+  raw Q head 0 [128]
+  q_norm weight [128]
+  RoPE cos [128]
+  RoPE sin [128]
+
+attention_chunk_3 packet:
+  row_base
+  raw K head 0 [128]
+  k_norm weight [128]
+  RoPE cos [128]
+  RoPE sin [128]
+
+new kernel:
+  new_mega_phase_norm_rope_shard_bf16
+```
+
+The current scope is intentionally first-head only:
+
+```text
+num_lanes=8
+q_rows_per_packet=4
+covered rows=32
+head_dim=128
+```
+
+Result:
+
+```text
+num_lanes=8
+num_layers=28
+hidden_size=1024
+attention_size=2048
+head_dim=128
+intermediate_size=3072
+q_rows_per_packet=4
+packet_elements=15368
+q/k/v/q_rope/k_rope/attention/gate_up/residual output values per lane = 8 each
+output_values_per_lane=64
+output_values_per_layer=512
+output_elements=14336
+preflight_compute_cores=8
+preflight_max_fifo_buffered_bytes=30736
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=1
+npu_time_us=388798.601
+phase_owned_max_abs=0.003906
+phase_owned_errors=0
+qwen3_phase_output_max_abs=0.003906
+qwen3_phase_output_errors=0
+
+large packet compile/preflight:
+  packet_elements=16896
+  packet_bytes=33792
+  preflight_compute_cores=8
+  preflight_max_fifo_buffered_bytes=33792
+```
+
+Debug note:
+
+```text
+The first NPU run had qwen3_phase_output_errors=0 but phase_owned_errors=2668.
+Host-only comparison of the two references found that phase_owned_reference was
+stale: gate_base had not been shifted by the inserted q_rope/k_rope output
+segments. The NPU kernel was correct; the failing boundary was the host
+reference layout.
+```
+
+Lesson:
+
+```text
+When inserting a new per-lane output segment, update the AIE output base, packet
+builder qwen3_reference base, phase_owned_reference base, printout, README
+shape table, and any debug index decoder together. If one reference passes and
+another fails, compare references before editing kernels.
+```
+
+#### D1.5l. Real First-Head Chunked Score/Softmax/PV
+
+Status: accepted in production.
+
+Question:
+
+```text
+Can the phase-owned topology replace the remaining attention placeholder with
+real fixed-cache chunked QK, online softmax, and PV computation without adding
+new FIFO endpoints or leaving the single Worker loop shape?
+```
+
+Implementation:
+
+```text
+phase labels:
+  attention_score_pv_0
+  attention_score_pv_1
+  attention_score_pv_2
+  attention_score_pv_3
+
+each packet:
+  q_head0[128]
+  k_cache_head0_chunk[64,128]
+  v_cache_head0_chunk[64,128]
+  mask_chunk[64]
+
+tile-local state:
+  attention_state[2] = running max, running sum
+  attention_acc[128] = online PV accumulator
+```
+
+Current scope:
+
+```text
+max_seq_len=256
+attention_chunk_size=64
+attention_chunk_count=4
+first query head only
+context[128] is emitted as a diagnostic output segment in every lane
+O projection still consumes host-packed full attention_context at this point
+```
+
+Result:
+
+```text
+num_lanes=8
+num_layers=28
+phase_packets_per_layer=13
+packet_elements=16576
+packet_bytes=33152
+context_output_values_per_lane=128
+output_values_per_lane=192
+output_values_per_layer=1536
+output_elements=43008
+preflight_compute_cores=8
+preflight_max_fifo_buffered_bytes=33152
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=1
+npu_time_us=254748.598
+phase_owned_max_abs=0.312500
+phase_owned_errors=0
+qwen3_phase_output_max_abs=0.312500
+qwen3_phase_output_errors=0
+
+large packet compile/preflight:
+  packet_elements=16896
+  packet_bytes=33792
+  preflight_compute_cores=8
+  preflight_max_fifo_buffered_bytes=33792
+```
+
+Segment diagnosis:
+
+```text
+q max=0.000000
+k max=0.003906
+v max=0.000122
+q_rope max=0.000000
+k_rope max=0.000000
+context max=0.312500
+attention_residual max=0.000000
+gate_up max=0.000244
+residual max=0.000488
+```
+
+Lesson:
+
+```text
+Adding chunked score/softmax/PV this way did not increase ObjectFIFO endpoint
+pressure: the packed lane-local stream absorbed four more phase packets. The
+dominant numeric diff is isolated to the context segment and is expected from
+the AIE exp2<bfloat16> approximation used in the online softmax path.
+```
+
 Remaining D1 work:
 
 ```text
-D1.5k expand Q/K/V shard coverage beyond the first 32 rows
-D1.5l replace remaining attention packet group with real q/k norm, RoPE, and chunked online attention
-D1.5m feed downstream phases from full NPU-produced activation vectors instead of host reference packets
+D1.5m feed O projection from NPU-produced head-0 attention context
+D1.5n expand context handoff to lane-mapped heads 0..7
+D1.5o feed downstream phases from full NPU-produced activation vectors instead of host reference packets
+D2 run repeated layers in the same phase-owned topology
+```
+
+#### D1.5m. O Projection Consumes NPU-Produced Head-0 Context
+
+Status: accepted in production.
+
+Question:
+
+```text
+Can the O projection phase consume the context emitted by the preceding
+chunked score/softmax/PV phase, instead of treating the attention result as
+only a diagnostic drain?
+```
+
+Implementation:
+
+```text
+o_proj packet layout:
+  context_head_index[1]
+  host_attention_context[2048]
+  residual_shard[q_rows_per_packet]
+  o_proj_weight_shard[q_rows_per_packet, 2048]
+
+kernel behavior:
+  for context indices inside context_head_index:
+    read lane_output[context_segment]
+  for all other context indices:
+    read host_attention_context
+```
+
+Current scope:
+
+```text
+context_head_index=0
+head-0 context is produced by NPU score/softmax/PV
+remaining 15 heads still come from the host-packed reference context
+all O row shards now depend on the preceding NPU attention phase for head 0
+```
+
+Result:
+
+```text
+num_lanes=8
+num_layers=28
+phase_packets_per_layer=13
+packet_elements=16576
+preflight_compute_cores=8
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=1
+npu_time_us=256452.003
+phase_owned_max_abs=0.312500
+phase_owned_mean_abs=0.007302
+phase_owned_errors=0
+qwen3_phase_output_max_abs=0.312500
+qwen3_phase_output_mean_abs=0.007302
+qwen3_phase_output_errors=0
+```
+
+Handoff diagnosis:
+
+```text
+host O-packet head-0 context overwritten with 123.0
+num_layers=1
+poison_o_host_head0_npu_time_us=10894.183
+poison_o_host_head0_max_abs=0.007812
+poison_o_host_head0_mean_abs=0.000304
+poison_o_host_head0_errors_gt_0_5=0
+```
+
+Interpretation:
+
+```text
+If the O kernel still read the host context slice for head 0, poisoning that
+slice would create a large O-projection error. The clean poison run proves the
+O phase is actually reading the lane-local context written by the previous
+attention phase.
+```
+
+Remaining D1 work:
+
+```text
+D1.5n expand context handoff to lane-mapped heads 0..7
+D1.5o remove host-packed context from O projection
+D1.5p feed gate_up from the NPU-produced attention residual
+D1.5q feed down_proj from NPU-produced FFN hidden
+D2 run repeated layers in the same phase-owned topology
+```
+
+#### D1.5n. Lane-Mapped Multi-Head Context Handoff
+
+Status: accepted in production.
+
+Question:
+
+```text
+Can the phase-owned topology move beyond a single head and have each lane
+compute and hand off a different real Qwen3 attention head without changing the
+ObjectFIFO graph?
+```
+
+Implementation:
+
+```text
+context_head_index = lane_id
+q_head = q_rope_heads[context_head_index]
+kv_head = context_head_index // (num_attention_heads / num_key_value_heads)
+k/v cache chunk = fixed cache for kv_head
+O phase replaces only that lane's context_head_index slice from lane_output
+```
+
+This keeps the topology fixed:
+
+```text
+compute_cores=8
+max tile inputs=2
+max tile outputs=1
+phase_packets_per_layer=13
+packet_elements=16576
+```
+
+Result:
+
+```text
+num_lanes=8
+attention_head_count=16
+npu_context_heads_per_layer=8
+num_layers=28
+npu_time_us=256714.949
+phase_owned_max_abs=0.437500
+phase_owned_mean_abs=0.006899
+phase_owned_errors=0
+qwen3_phase_output_max_abs=0.437500
+qwen3_phase_output_mean_abs=0.006899
+qwen3_phase_output_errors=0
+```
+
+Handoff diagnosis:
+
+```text
+each lane's host O-packet context head overwritten with 123.0
+num_layers=1
+poison_o_host_lane_heads_npu_time_us=10760.835
+poison_o_host_lane_heads_max_abs=0.017578
+poison_o_host_lane_heads_mean_abs=0.000329
+poison_o_host_lane_heads_errors_gt_0_5=0
+```
+
+Interpretation:
+
+```text
+The poison test would fail if any lane still read its own host-fed context
+slice. Passing it proves that O consumes lane-local NPU context for heads 0..7.
+The remaining host-packed context is now limited to heads 8..15.
+```
+
+Remaining D1 work:
+
+```text
+D1.5o compute heads 8..15 in a second per-lane score/PV group
+D1.5p add on-chip context gather/reduce so O sees all NPU-produced heads
+D1.5q remove remaining host-packed attention context from O projection
+D1.5r feed gate_up from the NPU-produced attention residual
+D1.5s feed down_proj from NPU-produced FFN hidden
+D2 run repeated layers in the same phase-owned topology
+```
+
+#### D1.5o. Two Context Heads Per Lane
+
+Status: accepted in production.
+
+Question:
+
+```text
+Can each lane compute two real Qwen3 attention heads, covering all 16 context
+heads, without adding new ObjectFIFO endpoints?
+```
+
+Implementation:
+
+```text
+phase_packets_per_layer = 17
+
+primary score/PV group:
+  attention_score_pv_0..3
+  context_head_index = lane_id
+
+secondary score/PV group:
+  attention_score_pv_4..7
+  context_head_index = lane_id + num_lanes
+
+O packet:
+  context_head_index0
+  context_head_index1
+  host_attention_context[2048]
+  residual_shard
+  O row shard
+```
+
+Topology result:
+
+```text
+compute_cores=8
+max tile inputs=2
+max tile outputs=1
+packet_elements=16576
+packet_bytes=33152
+context_output_values_per_lane=256
+output_values_per_lane=320
+input_elements=63121408
+output_elements=71680
+```
+
+NPU result:
+
+```text
+num_lanes=8
+attention_head_count=16
+npu_context_heads_per_layer=16
+num_layers=28
+npu_time_us=266653.221
+phase_owned_max_abs=0.437500
+phase_owned_mean_abs=0.007669
+phase_owned_errors=0
+qwen3_phase_output_max_abs=0.437500
+qwen3_phase_output_mean_abs=0.007669
+qwen3_phase_output_errors=0
+```
+
+Handoff diagnosis:
+
+```text
+each lane's two host O-packet context heads overwritten with 123.0
+num_layers=1
+poison_o_host_two_lane_heads_npu_time_us=11171.860
+poison_o_host_two_lane_heads_max_abs=0.017578
+poison_o_host_two_lane_heads_mean_abs=0.000309
+poison_o_host_two_lane_heads_errors_gt_0_5=0
+```
+
+Interpretation:
+
+```text
+All 16 heads are now produced by real NPU score/softmax/PV phases. However,
+each lane's O row-shard kernel can only read the two context heads stored in
+that same lane's output object. The O dot still reads other-lane heads from the
+host context packet. Fully removing host context requires an on-chip gather or
+partial-O reduce design.
+```
+
+Remaining D1 work:
+
+```text
+D1.5p design on-chip context gather/reduce for O projection
+D1.5q remove remaining host-packed other-lane context from O projection
+D1.5r feed gate_up from NPU-produced local attention residual rows
+D1.5s feed down_proj from NPU-produced FFN hidden
+D2 run repeated layers in the same phase-owned topology
+```
+
+#### D1.5r. Gate/Up Consumes NPU-Produced Local Attention Residual Rows
+
+Status: accepted in production.
+
+Question:
+
+```text
+Can the gate/up phase consume the previous O projection phase's local
+attention-residual rows instead of relying entirely on the host-packed
+attn_residual vector?
+```
+
+Implementation:
+
+```text
+gate_up packet layout:
+  residual_row_base[1]
+  host_attn_residual[1024]
+  post_norm_weight[1024]
+  gate_weight_shard[q_rows_per_packet,1024]
+  up_weight_shard[q_rows_per_packet,1024]
+
+gate_up kernel behavior:
+  for residual indices in [residual_row_base, residual_row_base + q_rows):
+    read lane_output[attention_output_base + local_row]
+  for all other indices:
+    read host_attn_residual
+```
+
+Topology result:
+
+```text
+phase_packets_per_layer=17
+packet_elements=16576
+compute_cores=8
+max tile inputs=2
+max tile outputs=1
+```
+
+NPU result:
+
+```text
+num_layers=28
+npu_time_us=269433.751
+phase_owned_max_abs=0.437500
+phase_owned_mean_abs=0.007677
+phase_owned_errors=0
+qwen3_phase_output_max_abs=0.437500
+qwen3_phase_output_mean_abs=0.007674
+qwen3_phase_output_errors=0
+```
+
+Handoff diagnosis:
+
+```text
+each lane's host gate_up attn_residual rows overwritten with 123.0
+num_layers=1
+poison_gate_host_local_residual_npu_time_us=11293.627
+poison_gate_host_local_residual_max_abs=0.017578
+poison_gate_host_local_residual_mean_abs=0.000312
+poison_gate_host_local_residual_errors_gt_0_5=0
+```
+
+Interpretation:
+
+```text
+The gate/up phase now has a real O->MLP dependency for local residual rows.
+The remaining host dependency is the rest of the 1024-wide residual vector,
+which still requires an on-chip residual gather/broadcast or a different MLP
+partitioning before host attn_residual can be removed.
+```
+
+Remaining D1 work:
+
+```text
+D1.5s design on-chip context/residual gather or partial projection reduce
+D1.5t remove remaining host-packed other-lane residual/context from O and gate_up
+D1.5u expand down_proj from local FFN rows to full NPU-produced FFN hidden
+D2 run repeated layers in the same phase-owned topology
+```
+
+#### D1.5s. Down Projection Consumes NPU-Produced Local FFN Hidden Rows
+
+Status: accepted in production.
+
+Question:
+
+```text
+Can down_proj consume the local FFN hidden rows produced by the previous
+gate_up phase instead of trusting the host-packed ffn_hidden vector for those
+rows?
+```
+
+Implementation:
+
+```text
+down_proj packet layout:
+  ffn_row_base[1]
+  host_ffn_hidden[3072]
+  residual_shard[q_rows_per_packet]
+  down_weight_shard[q_rows_per_packet,3072]
+
+down_proj kernel behavior:
+  precompute local_ffn[local_row] = silu(lane_output[gate_base + local_row])
+                                  * lane_output[up_base + local_row]
+  for ffn indices in [ffn_row_base, ffn_row_base + q_rows):
+    read local_ffn
+  for all other ffn indices:
+    read host_ffn_hidden
+```
+
+Topology result:
+
+```text
+phase_packets_per_layer=17
+packet_elements=16576
+compute_cores=8
+max tile inputs=2
+max tile outputs=1
+```
+
+NPU result:
+
+```text
+num_layers=28
+npu_time_us=319631.346
+phase_owned_max_abs=0.437500
+phase_owned_mean_abs=0.007681
+phase_owned_errors=0
+qwen3_phase_output_max_abs=0.500000
+qwen3_phase_output_mean_abs=0.007685
+qwen3_phase_output_errors=0
+```
+
+Segment diagnosis against `qwen3_reference`:
+
+```text
+q max=0.000000
+k max=0.003906
+v max=0.000122
+q_rope max=0.000000
+k_rope max=0.000000
+context max=0.437500
+attention_residual max=0.218750
+gate_up max=0.031250
+residual max=0.500000
+```
+
+Handoff diagnosis:
+
+```text
+each lane's host down_proj local FFN hidden rows overwritten with 123.0
+num_layers=28
+poison_down_host_local_ffn_npu_time_us=320777.251
+poison_down_host_local_ffn_max_abs=0.437500
+poison_down_host_local_ffn_mean_abs=0.007681
+poison_down_host_local_ffn_errors_gt_0_5=0
+```
+
+Interpretation:
+
+```text
+The local gate/up -> down dependency is now real. Passing the poison test means
+the down kernel is not silently reading the host copy for those local FFN rows.
+The remaining dependency is full-vector visibility: each down row still needs
+the other 3068 FFN hidden values, currently supplied by the host packet.
+```
+
+Remaining D1 work:
+
+```text
+D1.5t design on-chip context/residual/FFN gather or partial projection reduce
+D1.5u remove remaining host-packed other-lane context/residual/FFN from O, gate_up, and down_proj
 D2 run repeated layers in the same phase-owned topology
 ```
 

@@ -42,12 +42,13 @@ Current production code:
 ```text
 iron/applications/new-mega/production
   stage: phase-owned
-  status: resource skeleton, not Qwen3 math
+  status: real row-shard Qwen3 math in the phase-owned body
   boundaries:
     fixed lane Workers
     packed lane-local layer/phase streams
     Worker loop over layers and phases inside one dispatch
-    one input FIFO and one output FIFO per lane
+    shared broadcast stream plus one lane-local packet stream per lane
+    grouped join output stream per 4 lanes
 ```
 
 Production rule after correcting the D1.4b direction:
@@ -57,6 +58,29 @@ Do not grow the main path by adding another independent op dispatch or another
 static single-layer graph. Production has one path: phase-owned lane Workers
 consume packed phase streams. Real Qwen3 kernels must be inserted into that
 path.
+```
+
+Current accepted production math:
+
+```text
+phase 0:
+  real input RMSNorm + Q projection row shard
+attention_chunk_0:
+  real K projection row shard
+attention_chunk_1:
+  real V projection row shard
+attention_chunk_2:
+  real first-head Q RMSNorm + RoPE row shard
+attention_chunk_3:
+  real first-head K RMSNorm + RoPE row shard
+o_proj:
+  NPU-produced local context heads + host other-lane context + O projection row shard + residual add
+gate_up:
+  NPU-produced local attention residual rows + host remaining residual + post-attention RMSNorm + gate/up row shards
+down_proj:
+  NPU-produced local FFN hidden rows + host remaining FFN hidden + down projection row shard + residual add
+next_layer_token:
+  tile-local hidden_state update for the next layer
 ```
 
 The main shift is:
@@ -956,6 +980,210 @@ The useful topology rule after D1.5j is that a shared broadcast token may be
 held across multiple adjacent phases if all consumers advance in the same
 order. That let Q/K/V share input RMSNorm data without adding another FIFO.
 
+D1.5k accepted:
+
+```text
+attention_chunk_2 and attention_chunk_3 now use real Qwen3 data:
+  raw Q/K head 0 vectors
+  q_norm/k_norm weights
+  RoPE cos/sin values for the live decode position
+
+The AIE kernel computes first-head Q/K RMSNorm+RoPE row shards and writes them
+into new per-lane output segments.
+
+num_lanes=8, num_layers=28, hidden_size=1024, attention_size=2048,
+head_dim=128, intermediate_size=3072, fabric_group_size=4, q_rows_per_packet=4,
+packet_elements=15368, output_values_per_lane=64, compute_cores=8,
+max tile inputs=2, max tile outputs=1
+phase_owned_max_abs=0.003906, phase_owned_errors=0
+qwen3_phase_output_max_abs=0.003906, qwen3_phase_output_errors=0 at abs_tol=0.5
+large packet compile/preflight still passes at packet_elements=16896
+```
+
+The debug lesson after D1.5k is that the NPU can be correct while a stale host
+reference is wrong. When a new output segment is inserted, every base offset in
+the AIE call, packet builder, reference, printout, and docs must move together.
+
+D1.5l accepted:
+
+```text
+attention_score_pv_0..3 now use real Qwen3 data:
+  first-head Q[128]
+  fixed-cache K/V chunks [64,128]
+  runtime mask chunks [64]
+
+The AIE kernel maintains online softmax state and a 128-wide PV accumulator in
+tile-local buffers, then emits first-head context as a diagnostic output segment.
+
+num_lanes=8, num_layers=28, phase_packets_per_layer=13,
+max_seq_len=256, attention_chunk_size=64, packet_elements=16576,
+output_values_per_lane=192, compute_cores=8,
+max tile inputs=2, max tile outputs=1
+phase_owned_max_abs=0.312500, phase_owned_errors=0
+qwen3_phase_output_max_abs=0.312500, qwen3_phase_output_errors=0 at abs_tol=0.5
+large packet compile/preflight still passes at packet_elements=16896
+```
+
+The segment diff after D1.5l shows the new context segment dominates the error:
+
+```text
+context max_abs=0.312500
+all other segments max_abs<=0.003906
+```
+
+This is the expected tolerance boundary for the current AIE exp2<bfloat16>
+online softmax path, not a dataflow or DMA-layout failure.
+
+D1.5m accepted:
+
+```text
+o_proj packet now includes:
+  context_head_index[1]
+  host attention context[2048]
+  residual shard
+  O row shard
+
+The O kernel reads the selected head context from the lane-local context
+segment produced by the previous score/softmax/PV phase. For the accepted
+production step, context_head_index=0, so head 0 is no longer consumed from the
+host context packet. The remaining heads still come from the host packet.
+
+num_lanes=8, num_layers=28, phase_packets_per_layer=13,
+packet_elements=16576, output_values_per_lane=192, compute_cores=8,
+max tile inputs=2, max tile outputs=1
+phase_owned_max_abs=0.312500, phase_owned_errors=0
+qwen3_phase_output_max_abs=0.312500, qwen3_phase_output_errors=0 at abs_tol=0.5
+```
+
+The handoff was proven with a poison test:
+
+```text
+host O-packet head-0 context overwritten with 123.0
+poison_o_host_head0_max_abs=0.007812
+poison_o_host_head0_errors_gt_0_5=0
+```
+
+This proves the O phase is reading the NPU-produced context segment rather
+than accidentally passing because the host packet still carried the correct
+head-0 intermediate.
+
+D1.5n accepted:
+
+```text
+context_head_index now maps to lane_id
+lane 0 computes and hands off head 0
+lane 1 computes and hands off head 1
+...
+lane 7 computes and hands off head 7
+
+GQA mapping:
+  kv_head = context_head_index // 2
+
+num_lanes=8, attention_head_count=16, num_layers=28,
+phase_packets_per_layer=13, packet_elements=16576,
+compute_cores=8, max tile inputs=2, max tile outputs=1
+phase_owned_max_abs=0.437500, phase_owned_errors=0
+qwen3_phase_output_max_abs=0.437500, qwen3_phase_output_errors=0 at abs_tol=0.5
+```
+
+The multi-head handoff was proven by poisoning each lane's own host context
+slice:
+
+```text
+each lane's O-packet context head overwritten with 123.0
+poison_o_host_lane_heads_max_abs=0.017578
+poison_o_host_lane_heads_errors_gt_0_5=0
+```
+
+The remaining host context dependency is now heads 8..15 plus the absence of a
+multi-head gather/reduce path that would let every O row see all NPU-produced
+heads.
+
+D1.5o accepted:
+
+```text
+each lane now computes two context heads:
+  primary head = lane_id
+  secondary head = lane_id + num_lanes
+
+phase_packets_per_layer=17
+attention_score_pv_0..3 produce heads 0..7
+attention_score_pv_4..7 produce heads 8..15
+context_output_values_per_lane=256
+output_values_per_lane=320
+
+num_lanes=8, attention_head_count=16, npu_context_heads_per_layer=16,
+num_layers=28, packet_elements=16576,
+compute_cores=8, max tile inputs=2, max tile outputs=1
+phase_owned_max_abs=0.437500, phase_owned_errors=0
+qwen3_phase_output_max_abs=0.437500, qwen3_phase_output_errors=0 at abs_tol=0.5
+```
+
+The two-head handoff was proven by poisoning both host context slices claimed
+by each lane:
+
+```text
+poison_o_host_two_lane_heads_max_abs=0.017578
+poison_o_host_two_lane_heads_errors_gt_0_5=0
+```
+
+All 16 context heads are now produced by NPU score/softmax/PV phases. The
+remaining gap is not head production; it is cross-lane visibility for O
+projection. Each lane's O rows still use host context for heads produced by
+other lanes. Fully removing host context requires an on-chip context
+gather/broadcast or partial-O reduce.
+
+D1.5r accepted:
+
+```text
+gate_up packet now includes residual_row_base
+gate_up RMSNorm and gate/up dot read local residual rows from the preceding
+O phase's lane_output segment
+all other residual rows still come from host_attn_residual
+
+num_layers=28, phase_packets_per_layer=17, packet_elements=16576,
+compute_cores=8, max tile inputs=2, max tile outputs=1
+phase_owned_max_abs=0.437500, phase_owned_errors=0
+qwen3_phase_output_max_abs=0.437500, qwen3_phase_output_errors=0 at abs_tol=0.5
+```
+
+The O->MLP handoff was proven by poisoning host local residual rows:
+
+```text
+poison_gate_host_local_residual_max_abs=0.017578
+poison_gate_host_local_residual_errors_gt_0_5=0
+```
+
+This proves gate/up consumes the local rows produced by O. The remaining MLP
+gap is full-vector visibility: RMSNorm and dense gate/up rows still need the
+other 1020 residual values, currently supplied by the host packet.
+
+D1.5s accepted:
+
+```text
+down_proj packet now includes ffn_row_base
+down_proj dot reads local FFN hidden rows from the preceding gate_up
+lane_output segment
+all other FFN hidden rows still come from host_ffn_hidden
+
+num_layers=28, phase_packets_per_layer=17, packet_elements=16576,
+compute_cores=8, max tile inputs=2, max tile outputs=1
+phase_owned_max_abs=0.437500, phase_owned_errors=0
+qwen3_phase_output_max_abs=0.500000, qwen3_phase_output_errors=0 at abs_tol=0.5
+```
+
+The gate/up->down handoff was proven by poisoning host local FFN hidden rows:
+
+```text
+poison_down_host_local_ffn_max_abs=0.437500
+poison_down_host_local_ffn_errors_gt_0_5=0
+```
+
+This proves down consumes the local FFN rows produced by gate/up. It also makes
+the remaining issue sharper: down projection is dense over all 3072 FFN hidden
+values, so removing host FFN input requires full FFN visibility or a partial
+projection reduce.
+
 Production entry:
 
 ```bash
@@ -990,9 +1218,9 @@ resource stats are recorded
 Remaining D1 sequence:
 
 ```text
-D1.5k expand Q/K/V shard coverage beyond the first 32 rows
-D1.5l replace remaining attention packet group with real q/k norm, RoPE, and chunked online attention
-D1.5m feed downstream phases from full NPU-produced activation vectors instead of host reference packets
+D1.5t add an on-chip context/residual/FFN gather or partial projection reduce
+D1.5u remove remaining host-packed other-lane context/residual/FFN from O, gate_up, and down_proj
+D1.5v feed downstream phases from full NPU-produced activation vectors instead of host reference packets
 D2 run repeated layers in the same phase-owned topology
 ```
 

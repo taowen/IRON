@@ -252,7 +252,128 @@ context output matches reference
 two different positions run without recompile
 ```
 
-### 8. Performance Estimates Need Real Traffic And Measured Overheads
+The production phase-owned path now proves the first-head fixed-cache
+score/softmax/PV boundary inside the reusable Worker loop. It kept endpoint
+pressure flat by using four more lane-local packet phases instead of new FIFOs:
+
+```text
+phase_packets_per_layer=13
+packet_elements=16576
+preflight_compute_cores=8
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=1
+context_max_abs=0.312500 at abs_tol=0.5
+```
+
+For attention changes, always print segment-wise diffs. In the accepted run,
+the total `max_abs=0.312500` came only from the context segment; Q/K/V, RoPE,
+O residual, gate/up, and residual segments stayed near exact BF16 row-shard
+error.
+
+The next production step connected that context to O projection for head 0.
+The important diagnostic was to poison the still-present host copy:
+
+```text
+O packet host_attention_context[0:128] = 123.0
+poison_o_host_head0_max_abs=0.007812
+poison_o_host_head0_errors_gt_0_5=0
+```
+
+That proves the downstream O phase reads the lane-local context segment from
+the previous attention phase. Without this poison test, a passing O projection
+could still be a false pass caused by a correct host-packed intermediate.
+
+The following step generalized the same handoff to lane-mapped heads 0..7:
+
+```text
+context_head_index = lane_id
+kv_head = context_head_index // 2
+poison_o_host_lane_heads_max_abs=0.017578
+poison_o_host_lane_heads_errors_gt_0_5=0
+```
+
+The lesson is that GQA mapping must be part of the packet manifest, not an
+implicit reference assumption. The poison test should poison only the host
+slice that the lane claims to replace; poisoning unrelated heads would test a
+different dependency.
+
+The next step computed two heads per lane and covered all 16 attention heads:
+
+```text
+primary head = lane_id
+secondary head = lane_id + num_lanes
+phase_packets_per_layer=17
+npu_context_heads_per_layer=16
+poison_o_host_two_lane_heads_max_abs=0.017578
+poison_o_host_two_lane_heads_errors_gt_0_5=0
+```
+
+This separated two problems that had been easy to conflate:
+
+```text
+head production: solved for all 16 heads in the current packet-stream design
+O visibility: still unsolved, because each lane sees only its own two heads
+```
+
+The next real architecture problem is context gather/broadcast or partial-O
+reduce, not another per-head attention kernel.
+
+After wiring O into gate/up for local residual rows, the same poison technique
+proved the O->MLP handoff:
+
+```text
+gate_up residual_row_base = lane_id * q_rows_per_packet
+host gate_up attn_residual[local rows] = 123.0
+poison_gate_host_local_residual_max_abs=0.017578
+poison_gate_host_local_residual_errors_gt_0_5=0
+```
+
+This is progress, but it also sharpens the remaining problem: dense RMSNorm and
+gate/up rows need the full residual vector. Local-row handoff is not enough to
+remove host residual without gather/broadcast or a different projection
+partition.
+
+The same rule now applies to the gate/up->down handoff:
+
+```text
+down ffn_row_base = lane_id * q_rows_per_packet
+host down ffn_hidden[local rows] = 123.0
+poison_down_host_local_ffn_max_abs=0.437500
+poison_down_host_local_ffn_errors_gt_0_5=0
+```
+
+This proves down consumes the local FFN hidden rows produced by gate/up. It is
+not the end of the problem: every down row is dense over all 3072 FFN hidden
+values, so the other 3068 values are still host-fed. The remaining architecture
+work is a full-vector gather/broadcast or a partial projection reduce, not more
+local poison tests.
+
+### 8. Keep Independent References For The Phase-Owned Body
+
+The production phase-owned path now has two host references:
+
+```text
+phase_owned_reference:
+  follows the packed packet stream and external kernel ABI
+
+qwen3_reference:
+  fills the same output slots from real Qwen3 tensors
+```
+
+This caught a real bug after adding first-head Q/K RMSNorm+RoPE shards. The NPU
+matched `qwen3_reference`, but `phase_owned_reference` failed because its
+`gate_base` offset still ignored the inserted `q_rope` and `k_rope` output
+segments. The fix was reference layout alignment, not a kernel rewrite.
+
+Rule:
+
+```text
+When adding an output segment, update AIE output_base, packet-builder
+qwen3_reference, phase_owned_reference, printout, README dimensions, and debug
+slot mapping in the same change.
+```
+
+### 9. Performance Estimates Need Real Traffic And Measured Overheads
 
 The reviewed estimate assumes optimistic weight traffic and bandwidth. A useful
 estimate must include:

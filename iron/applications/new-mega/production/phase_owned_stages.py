@@ -20,7 +20,10 @@ def phase_owned_decode(
     packet_elements,
     hidden_size,
     attention_size,
+    head_dim,
     intermediate_size,
+    max_seq_len,
+    attention_chunk_size,
     q_rows_per_packet,
     fabric_group_size,
     kernel_object="phase_owned_kernels.o",
@@ -31,37 +34,75 @@ def phase_owned_decode(
         raise ValueError("num_layers must be positive")
     if phase_packets_per_layer <= 0:
         raise ValueError("phase_packets_per_layer must be positive")
-    if phase_packets_per_layer < 2:
+    if phase_packets_per_layer != 17:
         raise ValueError(
-            "phase_packets_per_layer must include a next_layer_token phase"
+            "phase_packets_per_layer must be 17 for the production phase-owned body"
         )
-    if phase_packets_per_layer < 9:
-        raise ValueError("phase_packets_per_layer must include a gate_up phase")
-    if phase_packets_per_layer < 10:
-        raise ValueError("phase_packets_per_layer must include a down_proj phase")
     if packet_elements <= 0:
         raise ValueError("packet_elements must be positive")
     if hidden_size <= 0:
         raise ValueError("hidden_size must be positive")
     if attention_size <= 0:
         raise ValueError("attention_size must be positive")
+    if head_dim <= 0:
+        raise ValueError("head_dim must be positive")
+    if attention_size % head_dim != 0:
+        raise ValueError("attention_size must be divisible by head_dim")
+    attention_head_count = attention_size // head_dim
+    if num_lanes > attention_head_count:
+        raise ValueError(
+            "production currently maps one attention context head per lane"
+        )
     if intermediate_size <= 0:
         raise ValueError("intermediate_size must be positive")
+    if max_seq_len <= 0:
+        raise ValueError("max_seq_len must be positive")
+    if attention_chunk_size <= 0:
+        raise ValueError("attention_chunk_size must be positive")
+    if max_seq_len % attention_chunk_size != 0:
+        raise ValueError("max_seq_len must be divisible by attention_chunk_size")
+    attention_chunk_count = max_seq_len // attention_chunk_size
+    if attention_chunk_count != 4:
+        raise ValueError("production currently expects exactly four attention chunks")
+    if head_dim != 128:
+        raise ValueError(
+            "production attention score/PV kernel currently expects head_dim=128"
+        )
     if q_rows_per_packet <= 0:
         raise ValueError("q_rows_per_packet must be positive")
+    if q_rows_per_packet > 16:
+        raise ValueError("q_rows_per_packet must be <= 16 for local FFN handoff")
+    if num_lanes * q_rows_per_packet > head_dim:
+        raise ValueError("current q/k norm+RoPE shard supports only the first head")
     if fabric_group_size <= 0:
         raise ValueError("fabric_group_size must be positive")
     if num_lanes % fabric_group_size != 0:
         raise ValueError("num_lanes must be divisible by fabric_group_size")
-    gate_up_elements = (2 + 2 * q_rows_per_packet) * hidden_size
-    o_elements = attention_size + q_rows_per_packet + q_rows_per_packet * attention_size
-    down_elements = (
-        intermediate_size + q_rows_per_packet + q_rows_per_packet * intermediate_size
+    gate_up_elements = 1 + (2 + 2 * q_rows_per_packet) * hidden_size
+    o_elements = (
+        2 + attention_size + q_rows_per_packet + q_rows_per_packet * attention_size
     )
-    minimum_packet_elements = max(o_elements, gate_up_elements, down_elements)
+    down_elements = (
+        1
+        + intermediate_size
+        + q_rows_per_packet
+        + q_rows_per_packet * intermediate_size
+    )
+    norm_rope_elements = 1 + 4 * head_dim
+    attention_chunk_elements = (
+        head_dim + 2 * attention_chunk_size * head_dim + attention_chunk_size
+    )
+    minimum_packet_elements = max(
+        o_elements,
+        gate_up_elements,
+        down_elements,
+        norm_rope_elements,
+        attention_chunk_elements,
+    )
     if packet_elements < minimum_packet_elements:
         raise ValueError(
-            "packet_elements must hold o_proj, gate/up, and down phase payloads"
+            "packet_elements must hold o_proj, gate/up, down, q/k RoPE, "
+            "and attention score/PV phase payloads"
         )
 
     dtype = bfloat16
@@ -72,6 +113,9 @@ def phase_owned_decode(
     q_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
     k_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
     v_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
+    q_rope_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
+    k_rope_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
+    context_output_values_per_lane = 2 * head_dim
     attention_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
     gate_up_output_values_per_lane = ((2 * q_rows_per_packet + 7) // 8) * 8
     residual_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
@@ -79,6 +123,9 @@ def phase_owned_decode(
         q_output_values_per_lane
         + k_output_values_per_lane
         + v_output_values_per_lane
+        + q_rope_output_values_per_lane
+        + k_rope_output_values_per_lane
+        + context_output_values_per_lane
         + attention_output_values_per_lane
         + gate_up_output_values_per_lane
         + residual_output_values_per_lane
@@ -97,6 +144,8 @@ def phase_owned_decode(
     lane_output_ty = np.ndarray[(output_values_per_lane,), np.dtype[dtype]]
     hidden_state_ty = np.ndarray[(hidden_size,), np.dtype[dtype]]
     state_ty = np.ndarray[(1,), np.dtype[np.float32]]
+    attention_state_ty = np.ndarray[(2,), np.dtype[np.float32]]
+    attention_acc_ty = np.ndarray[(head_dim,), np.dtype[np.float32]]
 
     init_kernel = Kernel(
         "new_mega_phase_state_init_f32",
@@ -131,6 +180,7 @@ def phase_owned_decode(
             np.int32,
             np.int32,
             np.int32,
+            np.int32,
         ],
     )
     projection_kernel = Kernel(
@@ -149,6 +199,48 @@ def phase_owned_decode(
             np.int32,
         ],
     )
+    norm_rope_kernel = Kernel(
+        "new_mega_phase_norm_rope_shard_bf16",
+        kernel_object,
+        [
+            packet_ty,
+            state_ty,
+            lane_output_ty,
+            np.int32,
+            np.int32,
+            np.int32,
+            np.int32,
+            np.int32,
+        ],
+    )
+    attention_init_kernel = Kernel(
+        "new_mega_phase_attention_init_f32",
+        kernel_object,
+        [attention_state_ty, attention_acc_ty, np.int32],
+    )
+    attention_update_kernel = Kernel(
+        "new_mega_phase_attention_update_packed_bf16",
+        kernel_object,
+        [
+            packet_ty,
+            attention_state_ty,
+            attention_acc_ty,
+            np.int32,
+            np.int32,
+        ],
+    )
+    attention_finalize_kernel = Kernel(
+        "new_mega_phase_attention_finalize_bf16",
+        kernel_object,
+        [
+            attention_state_ty,
+            attention_acc_ty,
+            state_ty,
+            lane_output_ty,
+            np.int32,
+            np.int32,
+        ],
+    )
     o_kernel = Kernel(
         "new_mega_phase_o_residual_shard_bf16",
         kernel_object,
@@ -156,6 +248,8 @@ def phase_owned_decode(
             packet_ty,
             state_ty,
             lane_output_ty,
+            np.int32,
+            np.int32,
             np.int32,
             np.int32,
             np.int32,
@@ -177,12 +271,8 @@ def phase_owned_decode(
             np.int32,
             np.int32,
             np.int32,
+            np.int32,
         ],
-    )
-    packet_kernel = Kernel(
-        "new_mega_phase_packet_accum_bf16",
-        kernel_object,
-        [packet_ty, state_ty, np.int32, np.int32, np.int32],
     )
     next_hidden_kernel = Kernel(
         "new_mega_phase_next_hidden_bf16",
@@ -253,6 +343,20 @@ def phase_owned_decode(
         )
         for lane in range(num_lanes)
     ]
+    attention_states = [
+        Buffer(
+            initial_value=np.zeros(shape=(2,), dtype=np.float32),
+            name=f"new_mega_phase_lane_{lane}_attention_state",
+        )
+        for lane in range(num_lanes)
+    ]
+    attention_accs = [
+        Buffer(
+            initial_value=np.zeros(shape=(head_dim,), dtype=np.float32),
+            name=f"new_mega_phase_lane_{lane}_attention_acc",
+        )
+        for lane in range(num_lanes)
+    ]
 
     def lane_worker_body(
         shared_fifo,
@@ -260,13 +364,18 @@ def phase_owned_decode(
         lane_output_fifo,
         hidden_state,
         state,
+        attention_state,
+        attention_acc,
         init_kernel,
         q_shard_kernel,
         projection_kernel,
+        norm_rope_kernel,
+        attention_init_kernel,
+        attention_update_kernel,
+        attention_finalize_kernel,
         o_kernel,
         gate_up_kernel,
         down_kernel,
-        packet_kernel,
         next_hidden_kernel,
     ):
         init_kernel(state)
@@ -320,18 +429,85 @@ def phase_owned_decode(
             shared_fifo.release(1)
             packet_fifo.release(1)
 
-            for phase_tail in range_(2):
+            packet = packet_fifo.acquire(1)
+            norm_rope_kernel(
+                packet,
+                state,
+                lane_output,
+                packet_elements,
+                head_dim,
+                q_rows_per_packet,
+                q_output_values_per_lane
+                + k_output_values_per_lane
+                + v_output_values_per_lane,
+                q_rope_output_values_per_lane,
+            )
+            packet_fifo.release(1)
+
+            packet = packet_fifo.acquire(1)
+            norm_rope_kernel(
+                packet,
+                state,
+                lane_output,
+                packet_elements,
+                head_dim,
+                q_rows_per_packet,
+                q_output_values_per_lane
+                + k_output_values_per_lane
+                + v_output_values_per_lane
+                + q_rope_output_values_per_lane,
+                k_rope_output_values_per_lane,
+            )
+            packet_fifo.release(1)
+
+            attention_init_kernel(attention_state, attention_acc, head_dim)
+            for _ in range_(attention_chunk_count):
                 packet = packet_fifo.acquire(1)
-                layer_i32 = index.casts(T.i32(), layer)
-                phase_i32 = index.casts(T.i32(), phase_tail)
-                packet_kernel(
+                attention_update_kernel(
                     packet,
-                    state,
-                    packet_elements,
-                    layer_i32,
-                    phase_i32,
+                    attention_state,
+                    attention_acc,
+                    attention_chunk_size,
+                    head_dim,
                 )
                 packet_fifo.release(1)
+            attention_finalize_kernel(
+                attention_state,
+                attention_acc,
+                state,
+                lane_output,
+                q_output_values_per_lane
+                + k_output_values_per_lane
+                + v_output_values_per_lane
+                + q_rope_output_values_per_lane
+                + k_rope_output_values_per_lane,
+                head_dim,
+            )
+
+            attention_init_kernel(attention_state, attention_acc, head_dim)
+            for _ in range_(attention_chunk_count):
+                packet = packet_fifo.acquire(1)
+                attention_update_kernel(
+                    packet,
+                    attention_state,
+                    attention_acc,
+                    attention_chunk_size,
+                    head_dim,
+                )
+                packet_fifo.release(1)
+            attention_finalize_kernel(
+                attention_state,
+                attention_acc,
+                state,
+                lane_output,
+                q_output_values_per_lane
+                + k_output_values_per_lane
+                + v_output_values_per_lane
+                + q_rope_output_values_per_lane
+                + k_rope_output_values_per_lane
+                + head_dim,
+                head_dim,
+            )
 
             packet = packet_fifo.acquire(1)
             o_kernel(
@@ -343,24 +519,20 @@ def phase_owned_decode(
                 q_rows_per_packet,
                 q_output_values_per_lane
                 + k_output_values_per_lane
-                + v_output_values_per_lane,
+                + v_output_values_per_lane
+                + q_rope_output_values_per_lane
+                + k_rope_output_values_per_lane,
+                head_dim,
+                q_output_values_per_lane
+                + k_output_values_per_lane
+                + v_output_values_per_lane
+                + q_rope_output_values_per_lane
+                + k_rope_output_values_per_lane
+                + context_output_values_per_lane,
                 attention_output_values_per_lane,
                 output_values_per_lane,
             )
             packet_fifo.release(1)
-
-            for phase_tail in range_(1):
-                packet = packet_fifo.acquire(1)
-                layer_i32 = index.casts(T.i32(), layer)
-                phase_i32 = index.casts(T.i32(), phase_tail)
-                packet_kernel(
-                    packet,
-                    state,
-                    packet_elements,
-                    layer_i32,
-                    phase_i32,
-                )
-                packet_fifo.release(1)
 
             packet = packet_fifo.acquire(1)
             gate_up_kernel(
@@ -373,6 +545,15 @@ def phase_owned_decode(
                 q_output_values_per_lane
                 + k_output_values_per_lane
                 + v_output_values_per_lane
+                + q_rope_output_values_per_lane
+                + k_rope_output_values_per_lane
+                + context_output_values_per_lane,
+                q_output_values_per_lane
+                + k_output_values_per_lane
+                + v_output_values_per_lane
+                + q_rope_output_values_per_lane
+                + k_rope_output_values_per_lane
+                + context_output_values_per_lane
                 + attention_output_values_per_lane,
                 output_values_per_lane,
             )
@@ -390,25 +571,22 @@ def phase_owned_decode(
                 q_output_values_per_lane
                 + k_output_values_per_lane
                 + v_output_values_per_lane
+                + q_rope_output_values_per_lane
+                + k_rope_output_values_per_lane
+                + context_output_values_per_lane
+                + attention_output_values_per_lane,
+                q_output_values_per_lane
+                + k_output_values_per_lane
+                + v_output_values_per_lane
+                + q_rope_output_values_per_lane
+                + k_rope_output_values_per_lane
+                + context_output_values_per_lane
                 + attention_output_values_per_lane
                 + gate_up_output_values_per_lane,
                 output_values_per_lane,
             )
             packet_fifo.release(1)
             lane_output_fifo.release(1)
-
-            for phase_tail in range_(phase_packets_per_layer - 10):
-                packet = packet_fifo.acquire(1)
-                layer_i32 = index.casts(T.i32(), layer)
-                phase_i32 = index.casts(T.i32(), phase_tail)
-                packet_kernel(
-                    packet,
-                    state,
-                    packet_elements,
-                    layer_i32,
-                    phase_i32,
-                )
-                packet_fifo.release(1)
 
             packet = packet_fifo.acquire(1)
             layer_i32 = index.casts(T.i32(), layer)
@@ -431,13 +609,18 @@ def phase_owned_decode(
                 lane_output_fifos[lane].prod(),
                 hidden_states[lane],
                 states[lane],
+                attention_states[lane],
+                attention_accs[lane],
                 init_kernel,
                 q_shard_kernel,
                 projection_kernel,
+                norm_rope_kernel,
+                attention_init_kernel,
+                attention_update_kernel,
+                attention_finalize_kernel,
                 o_kernel,
                 gate_up_kernel,
                 down_kernel,
-                packet_kernel,
                 next_hidden_kernel,
             ],
             stack_size=0xD00,
