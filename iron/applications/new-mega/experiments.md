@@ -114,15 +114,20 @@ A1. RTP scalar cross-invocation proof
 B1. real-shape standalone GEMV scaling
     [accepted]
     |
-    +--> B2. GEMV L2 split/forward/join topology proof
+    +--> B2. GEMV L2 split/forward/join topology proof [deferred]
               |
               +--> B3. segment-major packing for the new topology
 
 C1. two-phase same-Worker protocol proof
+    [accepted]
     |
     +--> C2. phase skip / inactive FIFO protocol proof
+         [partially accepted: static pruning only, not same-artifact dynamic skip]
+         |
+         +--> D0. static phase ownership resource skeleton
+              [accepted: packed lane-local streams]
 
-Only after A4 + B2/B3 + C1 are accepted:
+Only after A0/A0B + B1 + C1/C2 + D0 are accepted:
     D1. single Qwen3 layer integration
     D2. 28-layer decode body integration
     D3. end-to-end boundary inventory
@@ -131,9 +136,10 @@ Only after A4 + B2/B3 + C1 are accepted:
 If A1 fails, do not use RTP as the attention-position mechanism. A0 gives the
 accepted replacement for the attention read side: fixed max-cache movement plus
 runtime mask data. A0B gives the accepted replacement for current-K/V writeback:
-fixed present outputs plus host memcpy. If B1/B2 fail, the full-array GEMV speed
-direction must be redesigned. If C1 fails, a universal phase-based Worker
-design must be rejected or replaced with static phase ownership.
+fixed present outputs plus host memcpy. B2 is deferred because B1 already gave
+a useful near-term column policy signal and L2 topology is not the current
+blocking mechanism. C2 rejected same-artifact dynamic skipping, so D0 tested
+the safer static phase ownership direction.
 
 ## A. Position Reuse Experiments
 
@@ -447,11 +453,22 @@ not just increasing column count.
 
 ### B2. GEMV L2 Split/Forward/Join Topology
 
+Status: deferred.
+
 Question:
 
 ```text
 Can GEMV use an L3->L2->L1 topology so runtime endpoint count scales with
 columns instead of compute tiles?
+```
+
+Reason for deferral:
+
+```text
+B1 already proved existing GEMV is legal for all real Qwen3 shapes and exposed
+non-monotonic column scaling. The next architectural blocker is not L2 topology
+alone; it is whether a layer/state-machine Worker protocol can run multiple
+phases without host dispatch explosion.
 ```
 
 Why it matters:
@@ -528,6 +545,8 @@ exist in current IRON.
 
 ### C1. Two-Phase Same-Worker Protocol
 
+Status: accepted.
+
 Question:
 
 ```text
@@ -571,7 +590,26 @@ host cannot signal phase progress after Worker start
 phase value is stale
 ```
 
+Result:
+
+```text
+Accepted. One Worker executed phase0 then phase1 in a single dispatch:
+state = 2 * phase0 + 1
+out = state + 3 * phase1 + 7
+
+max_abs=0, errors=0
+```
+
+Conclusion:
+
+```text
+FIFO token order is sufficient for a fixed two-phase same-Worker protocol when
+both phases always run and every acquire/release is balanced.
+```
+
 ### C2. Inactive FIFO / Phase Skip Protocol
+
+Status: partially accepted.
 
 Question:
 
@@ -603,6 +641,87 @@ dummy tokens consume the scarce endpoints/BDs
 Worker-side if statements cannot prevent acquire deadlock
 ```
 
+Result:
+
+```text
+active variant: arg_count=3, max_abs=0, errors=0
+skip variant:   arg_count=2, max_abs=0, errors=0
+
+same_artifact=False
+runtime_bin size changed 420 -> 300 bytes
+xclbin size changed 10570 -> 10138 bytes
+```
+
+Conclusion:
+
+```text
+Inactive FIFO tokens can be removed by compiling a different static graph and
+runtime ABI. This avoids dummy DMA for skipped phases, but it is not a
+same-artifact dynamic phase skip mechanism.
+```
+
+Implication:
+
+```text
+A universal phase-based same-artifact Worker is still not proven. The accepted
+safe direction is static phase ownership or separate artifacts unless a later
+runtime-control proof shows same-artifact branch-controlled acquire omission.
+```
+
+### D0. Static Phase Ownership Resource Skeleton
+
+Status: accepted.
+
+Question:
+
+```text
+Can a fixed phase-owner topology compile and run without recreating the
+endpoint/BD/L1 pressure that made larger static graphs fragile?
+```
+
+Design:
+
+```text
+8 lane Workers
+1 input ObjectFIFO per lane
+1 output ObjectFIFO per lane
+11 fixed phase packets per lane
+packet size = 16896 BF16 elements = 33792 bytes
+```
+
+Result:
+
+```text
+preflight_compute_cores: 8
+preflight_max_fifo_buffered_bytes: 33792
+preflight_total_dma_tasks: 16
+preflight_max_dma_tasks_per_fifo: 1
+preflight_max_compute_tile_inputs: 1
+preflight_max_compute_tile_outputs: 1
+preflight_non_advancing_acquires: 0
+npu_time_us: 5538.108
+max_abs: 0.000000
+errors: 0
+decision: accepted
+```
+
+Debug note:
+
+```text
+Scalar BF16 output FIFOs are not safe DMA payloads. `memref<1xbf16>` failed
+aiecc because DMA BD transfer length must be a multiple of 4 bytes. The
+accepted graph pads output objects to `memref<8xbf16>` so they also satisfy
+the stricter 16-byte FIFO alignment preflight rule.
+```
+
+Conclusion:
+
+```text
+Packed lane-local streams are the current resource-safe way to express a fixed
+multi-phase layer skeleton. This avoids the endpoint explosion of one FIFO per
+phase input. It does not prove high tile utilization or real Qwen3 math.
+```
+
 ## D. Qwen3 Integration Experiments
 
 Start these only after the dependent mechanism proofs pass.
@@ -612,9 +731,10 @@ Start these only after the dependent mechanism proofs pass.
 Dependencies:
 
 ```text
-A4 accepted
-B2 or a clearly faster B1 topology accepted
-C1 accepted if using phase-based Workers
+A0/A0B accepted for fixed attention read and host KV writeback
+B1 accepted for real-shape GEMV column policy
+C1/C2 accepted/partially accepted for phase protocol limits
+D0 accepted for static phase ownership resource safety
 ```
 
 Acceptance:
@@ -668,19 +788,23 @@ wall-time buckets are measured
 Do the next work in this order:
 
 ```text
-1. A1: RTP scalar cross-invocation proof.
-2. A2: RTP replaces a core immediate in a tiny Worker.
-3. A3: current-K/V offset proof.
-4. A4: attention same-artifact two-position proof.
-5. B1/B2: GEMV scaling and L2 topology proof.
-6. C1/C2: phase protocol proof, only if we still want phase-based Workers.
-7. D1: single Qwen3 layer integration.
+1. D1: single Qwen3 layer integration using the accepted A0/A0B/B1/C1/C2/D0
+   mechanisms.
+2. Keep final norm / LM head on CPU until the decode body is faster than the
+   accepted persistent baseline.
+3. Use packed lane-local streams for the first D1 graph; do not create one
+   FIFO per phase input.
+4. Measure whether the lane Workers are compute-bound or DMA-bound before
+   adding more columns.
+5. Only revisit RTP/dynamic BD/control-packet work if fixed max-cache + host
+   writeback becomes the measured bottleneck.
 ```
 
 Reason:
 
 ```text
-Dynamic position is the hardest blocker and attention is its earliest real
-test. If A1/A2/A3/A4 fail, there is no point in building a large new Qwen3
-layer graph around the same assumption.
+A0 and A0B removed the need for dynamic attention/KV offsets in the first new
+architecture. D0 showed the safer static phase ownership graph shape can pass
+resource preflight. The next unknown is no longer "can the skeleton compile";
+it is whether real Qwen3 layer math fits and improves measured token time.
 ```

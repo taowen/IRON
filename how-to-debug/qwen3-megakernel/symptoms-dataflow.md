@@ -95,6 +95,101 @@ Use explicit data dependencies, phase tokens, or a different dataflow shape.
 For attention score, packing Q/current-K before score avoids the phase barrier.
 ```
 
+## Inactive FIFO Skip Requires A Different Static Graph
+
+Symptom:
+
+```text
+A phase-based Worker design wants to skip an inactive phase without filling
+dummy FIFO tokens.
+```
+
+Diagnostic:
+
+```text
+Build two small variants from the same source:
+
+active:
+  Worker acquires phase0 and optional FIFOs.
+  Runtime has phase0, optional, output BOs.
+
+skip:
+  Worker never creates/acquires the optional FIFO.
+  Runtime has only phase0 and output BOs.
+
+Compare MLIR, runtime .bin, xclbin, and runtime argument counts.
+```
+
+Evidence from C2:
+
+```text
+active arg_count=3, skip arg_count=2
+active and skip both matched CPU reference
+same_artifact=False
+runtime_bin size changed 420 -> 300 bytes
+xclbin size changed 10570 -> 10138 bytes
+```
+
+Root cause:
+
+```text
+Removing an inactive FIFO token is a static dataflow/ABI change in the current
+IRON Runtime/ObjectFIFO model. It avoids dummy DMA only by compiling a different
+graph. It does not prove same-artifact dynamic phase skipping.
+```
+
+Fix direction:
+
+```text
+Use static phase ownership or separate artifacts for phase sets that need
+different FIFO dependencies. Do not rely on dummy tokens as a scalable
+megakernel mechanism, and do not assume a Worker-side conditional can remove
+Runtime.fill tasks from the same artifact.
+```
+
+## DMA BD Transfer Length Is Not 4-Byte Aligned
+
+Symptom:
+
+```text
+aiecc fails during resource allocation:
+
+error: 'aie.dma_bd' op transfer length must be multiple of 4
+note: see current operation: "aie.dma_bd"(...)
+      : (memref<1xbf16>) -> ()
+```
+
+Diagnostic:
+
+```text
+Inspect the memref in the failing `aie.dma_bd` note. If it is a one-element
+BF16/F16/i16 ObjectFIFO object, the DMA transfer length is only 2 bytes even
+though the shape and FIFO endpoint counts are otherwise legal.
+```
+
+Evidence from D0:
+
+```text
+The static phase ownership skeleton used an output FIFO object shaped
+memref<1xbf16>. The first compile failed before preflight with the 4-byte
+transfer-length diagnostic above.
+```
+
+Root cause:
+
+```text
+AIE DMA BD transfer lengths must be 4-byte aligned. A scalar BF16 FIFO object
+is a legal-looking IRON type but not a legal DMA transfer payload.
+```
+
+Fix:
+
+```text
+Pad scalar BF16/F16 DMA-visible objects to at least two elements and ignore the
+padding element semantically. Prefer 16-byte object alignment for megakernel
+FIFOs because the preflight linter already enforces that stricter rule.
+```
+
 ## Worker Closure Calls An Unresolved Kernel
 
 Symptom:

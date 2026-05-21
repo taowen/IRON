@@ -6,11 +6,12 @@ SPDX-License-Identifier: Apache-2.0
 # Lessons For The Next Qwen3 Megakernel
 
 This note records what we have learned from the current
-`qwen3_0_6b/persistent` work and from reviewing `ARCHITECTURE.md`.
+`qwen3_0_6b/persistent` work and from reviewing the earlier external
+architecture draft.
 
-Treat `ARCHITECTURE.md` as a set of hypotheses, not as an implementation
-blueprint. It identifies some real pressure points, but it does not yet cover
-the whole Qwen3 inference path and it assumes several IRON behaviors that are
+Treat that earlier draft as a set of hypotheses, not as an implementation
+blueprint. It identified some real pressure points, but it did not yet cover
+the whole Qwen3 inference path and it assumed several IRON behaviors that were
 not proven.
 
 ## Current Ground Truth
@@ -359,6 +360,45 @@ BF16 stores in new AIE kernels should set conv_even rounding explicitly.
 Without that, a correct dataflow can fail by one BF16 ULP.
 ```
 
+### 13. Static Phase Ownership Needs Packed Lane Streams
+
+C1 proved a fixed multi-phase Worker protocol. C2 showed that skipping inactive
+FIFO dependencies without dummy DMA requires a different static graph. D0 then
+tested the resource-safe version of static phase ownership:
+
+```text
+8 lane Workers
+1 packed input FIFO per lane
+1 padded output FIFO per lane
+11 fixed phase packets per lane
+packet size = 33792 bytes
+```
+
+That graph passed full aiecc, preflight, and NPU execution:
+
+```text
+compute_cores=8
+max_compute_tile_inputs=1
+max_compute_tile_outputs=1
+max_fifo_buffered_bytes=33792
+max_dma_tasks_per_fifo=1
+```
+
+The lesson is not that this skeleton is fast. The lesson is that a real
+phase-owned Qwen3 layer should avoid "one FIFO per phase input" and instead
+pack each lane's fixed phase payloads into a small number of homogeneous
+streams. That is how to keep endpoint and BD pressure bounded while preserving
+a fixed phase order.
+
+The debug lesson was also concrete:
+
+```text
+Do not create scalar BF16/F16 DMA-visible FIFO objects. memref<1xbf16> failed
+aiecc because DMA BD transfer length must be 4-byte aligned; memref<2xbf16>
+passed that hardware rule but failed the stricter 16-byte FIFO preflight. Pad
+small metadata/output objects to 16 bytes.
+```
+
 ## What To Do Next
 
 The next useful `new-mega` work should be a proof ladder, not a full rewrite.
@@ -366,12 +406,15 @@ The next useful `new-mega` work should be a proof ladder, not a full rewrite.
 Recommended order:
 
 ```text
-1. Carry A0's fixed-chunk masked attention into the Qwen3 attention read path.
-2. Carry A0B's host-side present K/V writeback into the Qwen3 token loop.
-3. Scale GEMV to a small multi-tile shape using GEMM-style L2 split/join.
-4. Run preflight and full aiecc, not just MLIR generation.
-5. Measure against current standalone GEMV and F.linear reference.
-6. Only then test phase sequencing for two GEMV phases.
+1. Build D1: one Qwen3 layer using fixed-chunk attention read, host-side
+   present K/V writeback, and packed lane-local phase streams.
+2. Keep each compute tile to one or two input FIFOs and one output FIFO.
+3. Run preflight and full aiecc before executing on NPU.
+4. Verify every layer boundary against PyTorch/reference buffers.
+5. Measure whether lane Workers are compute-bound or DMA-bound before adding
+   more columns.
+6. Only then decide whether a GEMM-style L2 topology is worth pulling into the
+   phase-owned graph.
 ```
 
 Acceptance for the first new-mega experiment:

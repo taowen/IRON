@@ -67,6 +67,8 @@ were used in this repository. Detailed entries are split by failure class.
 
 - [Static MLIR Shows One FIFO Drained Twice](symptoms-dataflow.md#static-mlir-shows-one-fifo-drained-twice)
 - [Runtime Start Does Not Create A Phase Barrier](symptoms-dataflow.md#runtime-start-does-not-create-a-phase-barrier)
+- [Inactive FIFO Skip Requires A Different Static Graph](symptoms-dataflow.md#inactive-fifo-skip-requires-a-different-static-graph)
+- [DMA BD Transfer Length Is Not 4-Byte Aligned](symptoms-dataflow.md#dma-bd-transfer-length-is-not-4-byte-aligned)
 - [Worker Closure Calls An Unresolved Kernel](symptoms-dataflow.md#worker-closure-calls-an-unresolved-kernel)
 - [Attention Scores Overwrite The First GQA Head](symptoms-dataflow.md#attention-scores-overwrite-the-first-gqa-head)
 - [PV/context Fails During L1 Buffer Allocation](symptoms-dataflow.md#pvcontext-fails-during-l1-buffer-allocation)
