@@ -60,6 +60,14 @@ This diagnosed the RoPE mismatch. Existing RoPE tests use
 `rel_tol=0.05, abs_tol=0.5`; applying GEMV's `abs_tol=1e-6` to RoPE produced
 false failures.
 
+The A0B host-side KV writeback experiment used the same method but reached a
+different conclusion. `max_summary_abs=0.062500` remained after the CPU
+reference was changed to the same sequential accumulation order as the AIE
+kernel, so the issue was not operator tolerance and not cache writeback. The
+first bad boundary was the float-to-bfloat16 store. Adding
+`aie::set_rounding(aie::rounding_mode::conv_even)` before BF16 stores made the
+output exact.
+
 ## 18. Use Error Cardinality To Find Layout Bugs
 
 Use when a numeric mismatch has a structured count.

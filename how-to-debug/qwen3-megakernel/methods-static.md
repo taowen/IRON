@@ -103,6 +103,20 @@ K cache block
 The fix was a graph change, not a C++ dot-product change: introduce a qk-pair
 packing stage so score has only two inputs.
 
+The same method diagnosed the A0 fixed-chunk attention experiment. The failed
+graph had four input FIFOs into one Worker:
+
+```text
+Q
+K chunk
+V chunk
+mask chunk
+```
+
+The accepted graph packed `K/V/mask` into one chunk stream and kept `Q` as the
+second input. This let the same fixed-TAP attention artifact run multiple
+positions using mask data only.
+
 ## 14. Read L1 MemoryMap Literally
 
 Use when aiecc says buffers do not fit.
@@ -1024,8 +1038,32 @@ pos26 -> pos27:
   changed_diff_lines=64
   runtime .bin changed_bytes=8
   runtime .bin has eight u32 patch candidates, each +256 bytes
+  xclbin changed_bytes=126
   main_aie_cdo_elfs.bin changed_bytes=56
   six main_core_*.elf files changed
+```
+
+The artifact diff tool now also maps changed core-ELF bytes back to section and
+symbol context. Same-bucket pos26 -> pos27 produced `.text` patch candidates in
+these core functions:
+
+```text
+main_core_1_5.elf: core_1_5/FUNC, 16 changed instruction words
+main_core_2_2.elf: core_2_2/FUNC,  4 changed instruction words
+main_core_2_3.elf: core_2_3/FUNC,  8 changed instruction words
+main_core_4_2.elf: core_4_2/FUNC, 16 changed instruction words
+main_core_4_3.elf: core_4_3/FUNC,  4 changed instruction words
+main_core_4_4.elf: core_4_4/FUNC,  8 changed instruction words
+```
+
+The observed u32 deltas were instruction encodings, not scalar data slots:
+
+```text
+core_elf_patch_candidate:
+  section=.text
+  symbol=core_1_5/FUNC
+  value=54526600->56623752
+  delta=2097152
 ```
 
 Interpretation:
@@ -1042,6 +1080,8 @@ So this is not a pure `.bin` patch problem:
 ```text
 patching only the runtime .bin is insufficient
 bucketed precompile alone is insufficient while core ELFs bake exact position
+raw ELF/CDO byte patching is not a safe first implementation target unless
+  every changed instruction word is mapped to a stable relocation/encoding rule
 ```
 
 Check a cache-block boundary separately:
@@ -1091,10 +1131,14 @@ pos63 -> pos64:
 Decision rule:
 
 ```text
-First move position and valid length into runtime metadata, or prove ELF/CDO
-patch sites. After that, choose between patching the remaining `.bin` DMA
-offset words inside a cache block and precompiling one variant per active
-cache-block count.
+First move position and valid length into a numerically verified runtime path,
+or prove a stable ELF/CDO patch rule. After that, choose between patching the
+remaining `.bin` DMA offset words inside a cache block and precompiling one
+variant per active cache-block count.
+
+Until then, exact-position precompile is useful as a measurement/runtime
+selection baseline only. It removes JIT compilation from the token loop, but it
+does not solve artifact count or setup-time growth.
 ```
 
 ## 47. Check ObjectFIFO Object Alignment After Metadata Tails

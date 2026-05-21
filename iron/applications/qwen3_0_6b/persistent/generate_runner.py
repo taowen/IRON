@@ -212,8 +212,26 @@ def run_generate(
             for chunk_len in sorted(set(chunk_lengths_for_model()))
         }
 
+    def precompile_decode_positions() -> None:
+        decode_count = max(1, args.max_new_tokens - 1)
+        first_position = prefill_state.position
+        start = time.perf_counter()
+        for offset in range(decode_count):
+            get_position_chunk_ops(first_position + offset)
+        elapsed = time.perf_counter() - start
+        print(
+            "generate_precompile_positions_s: "
+            f"{elapsed:.3f} positions={decode_count} "
+            f"first_position={first_position} "
+            f"last_position={first_position + decode_count - 1}"
+        )
+
+    if getattr(args, "precompile_generate_positions", False):
+        precompile_decode_positions()
+
     if args.compile_only:
-        get_position_chunk_ops(prefill_state.position)
+        if not getattr(args, "precompile_generate_positions", False):
+            get_position_chunk_ops(prefill_state.position)
         return False
 
     generated_tokens = [first_token]

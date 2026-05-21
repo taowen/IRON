@@ -24,6 +24,37 @@ class DmaBd:
     line: str
 
 
+@dataclass(frozen=True)
+class ElfSection:
+    name: str
+    sh_type: int
+    addr: int
+    offset: int
+    size: int
+    link: int
+    entsize: int
+
+
+@dataclass(frozen=True)
+class ElfSymbol:
+    name: str
+    value: int
+    size: int
+    info: int
+    shndx: int
+
+    @property
+    def type_name(self) -> str:
+        symbol_type = self.info & 0xF
+        return {
+            0: "NOTYPE",
+            1: "OBJECT",
+            2: "FUNC",
+            3: "SECTION",
+            4: "FILE",
+        }.get(symbol_type, f"type{symbol_type}")
+
+
 def _path_has_prj_parent(path: Path) -> bool:
     return any(part.endswith(".mlir.prj") for part in path.parts)
 
@@ -157,6 +188,172 @@ def _u32_word_diffs(left: Path, right: Path) -> list[tuple[int, int, int]]:
     return diffs
 
 
+def _read_c_string(blob: bytes, offset: int) -> str:
+    if offset < 0 or offset >= len(blob):
+        return ""
+    end = blob.find(b"\0", offset)
+    if end < 0:
+        end = len(blob)
+    return blob[offset:end].decode(errors="replace")
+
+
+def _parse_elf32(path: Path) -> tuple[list[ElfSection], list[ElfSymbol]]:
+    blob = path.read_bytes()
+    if len(blob) < 52 or blob[:4] != b"\x7fELF":
+        return [], []
+    if blob[4] != 1 or blob[5] != 1:
+        return [], []
+
+    (
+        _e_type,
+        _e_machine,
+        _e_version,
+        _e_entry,
+        _e_phoff,
+        e_shoff,
+        _e_flags,
+        _e_ehsize,
+        _e_phentsize,
+        _e_phnum,
+        e_shentsize,
+        e_shnum,
+        e_shstrndx,
+    ) = struct.unpack_from("<HHIIIIIHHHHHH", blob, 16)
+    if e_shoff <= 0 or e_shentsize < 40 or e_shnum <= 0:
+        return [], []
+
+    raw_sections = []
+    for index in range(e_shnum):
+        offset = e_shoff + index * e_shentsize
+        if offset + 40 > len(blob):
+            return [], []
+        raw_sections.append(struct.unpack_from("<IIIIIIIIII", blob, offset))
+
+    if not 0 <= e_shstrndx < len(raw_sections):
+        return [], []
+    shstr = raw_sections[e_shstrndx]
+    shstr_blob = blob[shstr[4] : shstr[4] + shstr[5]]
+
+    sections: list[ElfSection] = []
+    for raw in raw_sections:
+        (
+            sh_name,
+            sh_type,
+            _sh_flags,
+            sh_addr,
+            sh_offset,
+            sh_size,
+            sh_link,
+            _sh_info,
+            _sh_addralign,
+            sh_entsize,
+        ) = raw
+        sections.append(
+            ElfSection(
+                name=_read_c_string(shstr_blob, sh_name),
+                sh_type=sh_type,
+                addr=sh_addr,
+                offset=sh_offset,
+                size=sh_size,
+                link=sh_link,
+                entsize=sh_entsize,
+            )
+        )
+
+    symbols: list[ElfSymbol] = []
+    for section in sections:
+        if section.sh_type != 2 or section.entsize < 16:
+            continue
+        if not 0 <= section.link < len(sections):
+            continue
+        strtab = sections[section.link]
+        strtab_blob = blob[strtab.offset : strtab.offset + strtab.size]
+        count = section.size // section.entsize
+        for index in range(count):
+            offset = section.offset + index * section.entsize
+            if offset + 16 > len(blob):
+                break
+            st_name, st_value, st_size, st_info, _st_other, st_shndx = (
+                struct.unpack_from("<IIIBBH", blob, offset)
+            )
+            name = _read_c_string(strtab_blob, st_name)
+            if not name:
+                continue
+            symbols.append(
+                ElfSymbol(
+                    name=name,
+                    value=st_value,
+                    size=st_size,
+                    info=st_info,
+                    shndx=st_shndx,
+                )
+            )
+    return sections, symbols
+
+
+def _section_for_file_offset(
+    sections: list[ElfSection], file_offset: int
+) -> tuple[ElfSection, int] | None:
+    for section in sections:
+        if section.size <= 0:
+            continue
+        if section.offset <= file_offset < section.offset + section.size:
+            return section, section.addr + (file_offset - section.offset)
+    return None
+
+
+def _symbol_for_vaddr(symbols: list[ElfSymbol], vaddr: int) -> ElfSymbol | None:
+    sized_matches = [
+        symbol
+        for symbol in symbols
+        if symbol.size > 0 and symbol.value <= vaddr < symbol.value + symbol.size
+    ]
+    if sized_matches:
+        return max(sized_matches, key=lambda symbol: symbol.size)
+    preceding = [
+        symbol
+        for symbol in symbols
+        if symbol.value <= vaddr and symbol.type_name in {"FUNC", "OBJECT", "NOTYPE"}
+    ]
+    if not preceding:
+        return None
+    return max(preceding, key=lambda symbol: symbol.value)
+
+
+def _print_core_elf_patch_sites(left: Path, right: Path) -> None:
+    sections, symbols = _parse_elf32(left)
+    if not sections:
+        return
+    for offset, left_word, right_word in _u32_word_diffs(left, right):
+        located = _section_for_file_offset(sections, offset)
+        if located is None:
+            print(
+                "  core_elf_patch_candidate:"
+                f" file_offset={offset}"
+                " section=<none>"
+                f" value={left_word}->{right_word}"
+                f" delta={right_word - left_word}"
+            )
+            continue
+        section, vaddr = located
+        symbol = _symbol_for_vaddr(symbols, vaddr)
+        symbol_text = "<none>"
+        symbol_delta = ""
+        if symbol is not None:
+            symbol_text = f"{symbol.name}/{symbol.type_name}"
+            symbol_delta = f" symbol_offset={vaddr - symbol.value}"
+        print(
+            "  core_elf_patch_candidate:"
+            f" file_offset={offset}"
+            f" section={section.name}"
+            f" vaddr=0x{vaddr:x}"
+            f" symbol={symbol_text}"
+            f"{symbol_delta}"
+            f" value={left_word}->{right_word}"
+            f" delta={right_word - left_word}"
+        )
+
+
 def _count_diff_bytes(left: Path, right: Path) -> int:
     return len(_byte_diffs(left, right))
 
@@ -249,6 +446,9 @@ def _print_prj_summary(left_prj: Path | None, right_prj: Path | None) -> None:
     print(f"  changed_core_elves={len(changed_elves)}")
     for name, changed_bytes in changed_elves:
         print(f"  core_elf_change: {name} changed_bytes={changed_bytes}")
+        left_elf = left_prj / name
+        right_elf = right_prj / name
+        _print_core_elf_patch_sites(left_elf, right_elf)
 
 
 def parse_args() -> argparse.Namespace:

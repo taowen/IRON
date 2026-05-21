@@ -31,6 +31,7 @@ methods are split by diagnostic boundary.
 | Decode is correct and NPU time dominates | 35, 41, 42 |
 | Decode is correct but compile still happens per position | 6, 46 |
 | Packed weight artifact, offset, or XRT sub-buffer risk | 33, 34 |
+| Sweep script fails after loading many xclbins | 49 |
 
 ### Runtime
 
@@ -46,6 +47,7 @@ methods are split by diagnostic boundary.
 - [33. Prove Packed Weight BO Slices With Token Match](methods-runtime.md#33-prove-packed-weight-bo-slices-with-token-match)
 - [42. Run A Phase Sensitivity Probe Before Widening](methods-runtime.md#42-run-a-phase-sensitivity-probe-before-widening)
 - [48. Treat Control Packets As A Last-Resort Runtime Patch Path](methods-runtime.md#48-treat-control-packets-as-a-last-resort-runtime-patch-path)
+- [49. Cleanup Runtime Between Independent Artifact Sweeps](methods-runtime.md#49-cleanup-runtime-between-independent-artifact-sweeps)
 
 ### Static
 

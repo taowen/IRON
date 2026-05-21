@@ -178,6 +178,16 @@ def parse_args():
             "weight/cache XRT buffers."
         ),
     )
+    parser.add_argument(
+        "--precompile-generate-positions",
+        action="store_true",
+        help=(
+            "For --fast-generate, compile every exact decode-position variant "
+            "needed by --max-new-tokens before the token loop. This is a "
+            "diagnostic/runtime-selection baseline, not a dynamic-position "
+            "artifact reuse mechanism."
+        ),
+    )
     parser.add_argument("--verify-repeat", type=int, default=1)
     parser.add_argument(
         "--max-new-tokens",

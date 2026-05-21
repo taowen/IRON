@@ -118,6 +118,65 @@ Do not build score as a three-input worker. Pack Q and current K in a prior
 two-input worker, then run score as qk_pair + k_cache_block.
 ```
 
+## Fixed-Chunk Attention Worker Exceeds Input DMA Channels
+
+Symptom:
+
+```text
+error: 'aie.tile' op number of input DMA channel exceeded!
+%tile_0_2 = aie.tile(0, 2)
+```
+
+Trigger:
+
+```text
+The first A0 fixed-chunk decode-attention experiment used four independent
+input ObjectFIFOs into one Worker:
+
+Q
+K chunk
+V chunk
+mask chunk
+```
+
+Diagnostic:
+
+```text
+Read the aiecc error as an ObjectFIFO graph resource error. The failing tile
+was the only compute tile in the experiment, and the design had four logical
+input streams. No C++ math kernel had run yet, so changing dot-product code
+would not address the cause.
+```
+
+Root cause:
+
+```text
+The resource that failed was the number of independent tile input DMA streams,
+not L1 bytes and not TAP correctness. K, V, and mask were each legal as data
+objects, but the combined fan-in exceeded the tile channel budget.
+```
+
+Fix used:
+
+```text
+Pack K/V/mask per sequence chunk on the host side:
+
+packed_chunk = K[64,128] || V[64,128] || mask[64]
+
+Then the Worker has only two input ObjectFIFOs:
+
+Q
+packed_chunk
+```
+
+Evidence:
+
+```text
+The accepted A0 experiment ran one xclbin/runtime .bin for positions
+0, 26, 63, 64, 127, 200, and 255. All matched the CPU fixed-chunk attention
+reference with max_abs <= 0.000244.
+```
+
 ## K Cache Matrix Does Not Fit In L1
 
 Symptom:

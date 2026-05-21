@@ -239,6 +239,60 @@ keys_cache_prefix_errors: 0
 values_cache_prefix_errors: 0
 ```
 
+## BF16 Output Differs By One ULP Until Rounding Mode Is Set
+
+Symptom:
+
+```text
+present_k_max_abs: 0.003906
+present_v_max_abs: 0.003906
+max_summary_abs: 0.062500
+```
+
+Context:
+
+```text
+The A0B host-side KV writeback experiment had correct dataflow:
+same artifact across 70 dispatches, host wrote present K/V into the packed
+cache, and the next invocation read those rows back. The only failure was a
+small BF16-valued numeric mismatch.
+```
+
+Diagnostics used:
+
+```text
+1. Keep the host writeback path unchanged.
+2. Change the CPU reference from torch.sum to the same sequential row order as
+   the AIE kernel.
+3. Re-run. The error stayed at 0.062500, so reduction order was not the cause.
+4. Inspect the BF16 store boundary in the C++ kernel.
+```
+
+Root cause:
+
+```text
+The C++ kernel cast float values to bfloat16 without explicitly setting the AIE
+rounding mode. That did not match the CPU reference's BF16 conversion.
+```
+
+Fix:
+
+```cpp
+::aie::set_rounding(aie::rounding_mode::conv_even);
+```
+
+Add this before BF16-producing arithmetic or final BF16 stores in the external
+kernel.
+
+Accepted recheck:
+
+```text
+max_present_k_abs: 0.000000
+max_present_v_abs: 0.000000
+max_summary_abs: 0.000000
+decision: accepted
+```
+
 ## Full-Layer Attention Residual Fails Strict Full-Reference Tolerance
 
 Symptom:

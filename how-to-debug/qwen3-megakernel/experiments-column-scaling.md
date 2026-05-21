@@ -35,6 +35,7 @@ Then record only the experiment decision here.
 | `archive/experiments-column-scaling-2026-05-21-state-machine-resource-probe.md` | resource-scaling check before descriptor/state-machine work |
 | `archive/experiments-column-scaling-2026-05-21-position-artifact-diff.md` | adjacent-position MLIR/bin/xclbin diff and bucket boundary diagnosis |
 | `archive/experiments-column-scaling-2026-05-21-runtime-position-metadata-rejected.md` | runtime position metadata stream attempt, timeout/NaN diagnosis, and rejection |
+| `archive/experiments-column-scaling-2026-05-21-position-precompile-and-elf-patch-sites.md` | ELF patch-site proof and exact-position precompile runtime-selection baseline |
 
 Symptom and method notes remain split by diagnosis type:
 
@@ -71,6 +72,8 @@ Known-good gate:
 default prompt: token_match=True, new_text='Paris', NPU time 105.293 ms
 prompt suite:  5/5 token steps matched for Fibonacci, weekdays, numeric, opposite
 suite mean:    100.961 ms after direct gate/up+SiLU
+precompile mode: --precompile-generate-positions moves exact-position compiles
+                 before the token loop; Fibonacci full chunk=28 matched 2/2
 preflight:     compute_cores=30, ObjectFIFOs=53, max_tile_inputs=2,
                max_tile_outputs=2, max_fifo_buffered_bytes=32768
 static calls:  76,160 calls/token; qwen3_silu_mul_shard_bf16 has no call sites
@@ -88,8 +91,14 @@ layer_iterations. Resources do not grow linearly with layers.
 
 The missing "true megakernel" piece is now narrower: position/cache-dependent
 compile artifacts and runtime metadata are still static per decode position.
-The next speed work should target position-specific compile/runtime constants,
-not worker-per-layer removal.
+The accepted measurement baseline is exact-position precompile with runtime
+selection: it removes JIT compile from the token loop, but setup cost and
+artifact count still scale with generated tokens.
+
+Raw ELF/CDO patching is not selected as the next implementation path. Same-
+bucket pos26->pos27 changes instruction words in six core ELFs, not only
+runtime `.bin` DMA offset words. `NpuControlPacketOp` remains a last-resort
+low-level path because IRON does not expose a safe runtime BD rewrite workflow.
 
 The latest direct-graph phase probe says the MLP-side increment is still the
 larger measured target:
@@ -152,6 +161,8 @@ The detailed logs live in `archive/`. Keep only decision-quality summaries here:
 | layer-iteration resource probe | accepted | accepted graph compute cores/endpoints do not grow linearly with layers; descriptor work should target position-specific compile/runtime constants, not worker-per-layer removal |
 | adjacent-position artifact diff | accepted | pos26->pos27 changes only position/mask constants plus four current-K/V DMA offsets in MLIR, but both runtime `.bin` and embedded AIE ELFs change, so `.bin` patching alone is insufficient |
 | runtime position metadata through attention streams | rejected | score/mask metadata variants compiled and attention-probe ran, but full-layer generate timed out; attention-probe produced NaN residuals, so the branch is numerically unsafe and default code is restored to static position |
+| ELF/CDO patch-site proof | rejected as implementation path | changed core-ELF bytes map to `.text` instruction words in six core functions; no stable scalar metadata slot or relocation rule has been proven |
+| exact-position precompile | accepted as measurement baseline | full chunk=28 Fibonacci precompiled positions 17/18 before the token loop and matched 2/2 decode steps; setup/artifact count still scales with token count |
 | direct input RMSNorm fusion | rejected | preflight hit `max_tile_inputs=3 > 2` |
 | direct O-proj row sharding | deferred | two freed cores are not enough without redesigning residual/MLP boundary |
 | three-way gate/up with independent weight stream | rejected | placement trace shows accepted graph already uses 16 runtime outputs; third gate/up stream needs a 17th output endpoint |
@@ -171,9 +182,9 @@ diagnosis-quality result.
 | 4 | accepted | Check whether the accepted graph's resources grow linearly with layer count | `layers=1/8/28` preflight shows compute cores 29/30/30 and runtime outputs 16/16/16, so worker-per-layer growth is not the current blocker |
 | 5 | accepted | Diff adjacent-position artifacts and identify what changes between decode positions | pos26/27 and pos63/64 artifact diffs identify runtime `.bin` DMA offsets, AIE-core position constants, and cache-block bucket boundaries |
 | 6 | rejected | Move position and valid length out through widened attention metadata streams | attempted score/mask/V metadata streams reached `ERT_CMD_STATE_TIMEOUT` or NaN attention-probe output; default path is restored and this exact stream-widening design is rejected |
-| 7 | active | Choose safer per-position reuse mechanism after metadata rejection | compare ELF/CDO patch-site proof, NpuControlPacketOp/BD rewrite risk, and cache-block bucket variants; no option is accepted until token correctness and artifact diffs prove it |
-| 8 | next | Build the selected no-per-token-compile path | multi-token generate reuses artifacts or bucket variants, token IDs match PyTorch, and no new host dispatch is introduced |
-| 9 | later | Revisit MLP body speed after metadata path is settled | new graph-body change must beat the accepted direct-SiLU baseline on a multi-token prompt suite, not only default prompt |
+| 7 | accepted | Choose safer per-position reuse mechanism after metadata rejection | raw ELF/CDO patching rejected by instruction-word patch-site proof; exact-position precompile accepted only as hot-loop measurement/runtime-selection baseline |
+| 8 | active | Use exact-position precompile to separate hot-loop timing from setup-time artifact generation | run multi-token prompt suites with precompiled exact positions; token IDs must match PyTorch and token loop must not compile new variants |
+| 9 | next | Revisit MLP body speed using the precompiled hot-loop baseline | new graph-body change must beat the accepted direct-SiLU baseline on a multi-token prompt suite, not only default prompt |
 | 10 | later | Revisit final norm / LM head only after the NPU body improves | end-to-end token time including output/argmax beats CPU `F.linear` tail |
 
 Rejected step 1 result:
@@ -268,31 +279,67 @@ Decision:
   raw runtime .bin patching alone is insufficient, because AIE core ELFs also
   bake position and valid length. Bucketed precompile alone is also insufficient
   until those scalar values become runtime metadata or proven ELF/CDO patch
-  sites. The next implementation target is dynamic position metadata for
-  attention score, mask, V merge, and context workers.
+  sites. The first dynamic metadata attempt is now rejected; the current safe
+  baseline is exact-position precompile while a different runtime scalar path
+  is investigated.
 ```
 
-Current step 6 candidate:
+Rejected step 6 result:
 
 ```text
-Problem to solve:
-  AIE core code currently bakes position into:
-    qwen3_attention_scores_bf16(..., position, ...)
-    qwen3_merge_current_v_bf16(..., position, ...)
-    qwen3_attention_context_bf16(..., position, ...)
-    mask_bf16(..., position + 1, max_seq_len)
+Attempt:
+  move position and valid length through widened existing attention metadata
+  streams so score/mask/V/context workers no longer bake immediate constants.
 
-Candidate:
-  extend the existing attention2 runtime metadata stream. It already carries
-  per-layer q_norm, k_norm, and RoPE LUT metadata. Add dynamic position/valid
-  length metadata, or a small adjacent metadata FIFO if packing as bf16 is too
-  fragile.
+Result:
+  variants reached ERT_CMD_STATE_TIMEOUT or attention-probe NaN residuals.
+  Padding ObjectFIFO metadata tails fixed a real alignment blind spot, but did
+  not fix the numeric/runtime failure.
 
-Acceptance:
-  pos26 -> pos27 full artifact diff no longer changes core ELFs/CDO due to
-  attention position constants
-  token_match=True for default and one multi-token raw prompt
-  runtime endpoint counts stay within the accepted limits
+Decision:
+  this exact stream-widening design is rejected. Keep the accepted static-
+  position graph as the correctness baseline.
+```
+
+Accepted step 7 result:
+
+```text
+ELF/CDO patch-site proof:
+  runtime .bin has only eight u32 DMA-offset patch candidates for pos26->pos27
+  but six core ELFs also change. The changed core-ELF words map to `.text`
+  instruction words inside core_* functions, with no proven stable relocation
+  rule. Raw ELF/CDO patching is therefore rejected as the next implementation.
+
+NpuControlPacketOp / BD rewrite:
+  remains last-resort. It is a real hardware capability, but current IRON does
+  not expose a safe workflow for runtime BD/register rewrite plus DMA
+  quiescence proof.
+
+Exact-position precompile:
+  accepted as a measurement/runtime-selection baseline. It compiles every exact
+  position needed by --max-new-tokens before the token loop and then reuses
+  chunk_op_cache. It does not solve total setup time or artifact count growth.
+```
+
+Active step 8 result so far:
+
+```text
+Implemented:
+  --precompile-generate-positions
+
+Validation:
+  raw prompt: Fibonacci numbers: 1, 1, 2, 3,
+  layer_chunk_size=28
+  generate_precompile_positions_s: 20.324
+  positions: 17, 18
+  token_step 1: token_match=True, npu_next_token=20 text='5'
+  token_step 2: token_match=True, npu_next_token=11 text=','
+  new_text=' 5,'
+
+Interpretation:
+  precompiled exact variants can be selected at runtime without adding a new
+  host dispatch and without compiling inside the token loop. This is now the
+  correct baseline for comparing graph-body speed changes.
 ```
 
 ## Canonical Recheck Commands

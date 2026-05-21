@@ -259,6 +259,55 @@ packed_weights[4195328] = norm_weight + Wq + Wk + Wv
 packed_outputs[5120] = x_norm + queries_raw + keys_raw + values
 ```
 
+## CREATE_HWCTX Fails After Many Distinct Xclbins In One Process
+
+Symptom:
+
+```text
+RuntimeError: DRM_IOCTL_AMDXDNA_CREATE_HWCTX IOCTL failed (err=-22):
+Invalid argument
+```
+
+Context:
+
+```text
+B1 real-shape GEMV scaling loaded many different GEMV xclbins in one Python
+process. The first 24 configurations ran, then the following `down`
+configurations failed while creating an XRT hardware context.
+```
+
+Diagnostic:
+
+```text
+Rerun the failed shape alone in a fresh process before changing the operator.
+```
+
+Evidence:
+
+```text
+down 1024x3072 at columns 1/2/4/8 passed in a fresh process.
+```
+
+Root cause:
+
+```text
+The failing boundary was runtime context lifetime/resource cleanup from loading
+many distinct xclbins in one process. It was not a GEMV shape, TAP, placement,
+or numeric failure.
+```
+
+Fix:
+
+```python
+import aie.utils as aie_utils
+
+aie_utils.DefaultNPURuntime.cleanup()
+```
+
+Call cleanup after each independent operator configuration in sweep scripts.
+Do not add this inside the hot token loop; this is for experiments that load
+many different artifacts in one process.
+
 Accepted evidence after the fix:
 
 ```text

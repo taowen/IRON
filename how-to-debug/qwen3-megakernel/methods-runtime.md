@@ -416,3 +416,33 @@ control packets after a small isolated BD rewrite proof demonstrates:
   DMA quiescence point
   token-correct run after the rewrite
 ```
+
+## 49. Cleanup Runtime Between Independent Artifact Sweeps
+
+Use when one diagnostic script compiles or loads many unrelated xclbins and
+later configurations fail in XRT hardware-context creation.
+
+Symptom:
+
+```text
+DRM_IOCTL_AMDXDNA_CREATE_HWCTX IOCTL failed (err=-22): Invalid argument
+```
+
+Check:
+
+```text
+Run the failing configuration by itself in a fresh process. If it passes, the
+operator shape is not the root cause.
+```
+
+Fix for sweep scripts:
+
+```python
+try:
+    run_one_operator_configuration()
+finally:
+    aie_utils.DefaultNPURuntime.cleanup()
+```
+
+Do not use this as a performance hot-loop mechanism. It is for diagnostic
+sweeps that intentionally load many different artifacts.
