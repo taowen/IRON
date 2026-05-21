@@ -39,7 +39,7 @@ O_PROJECTION_PHASES = tuple(
     f"o_proj_chunk_{chunk}" for chunk in range(O_PROJECTION_CHUNK_COUNT)
 )
 FFN_REDUCE_CHUNK_ROWS = O_PROJECTION_CHUNK_ROWS
-FFN_REDUCE_GROUP_COUNT = 4
+FFN_REDUCE_GROUP_COUNT = 8
 FFN_REDUCE_PHASES = tuple(
     phase
     for chunk in range(FFN_REDUCE_GROUP_COUNT)

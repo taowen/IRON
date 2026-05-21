@@ -75,21 +75,22 @@ stage: phase-owned
 body: one fixed topology with lane Workers looping over 28 layers
 num_lanes: 8
 compute_cores: 12
-phase_packets_per_layer: 54
+phase_packets_per_layer: 62
 position/cache policy: fixed max-cache reads + host-owned KV writeback
 ```
 
 Current accepted production evidence:
 
 ```text
-D1.5y Four FFN Reduced Groups Feed Down Projection
-  lane_core_text_bytes=15968
-  npu_time_us=748574.161
+D1.5z Eight FFN Reduced Groups Feed Down Projection
+  ffn_npu_rows=256
+  lane_core_text_bytes=15360
+  npu_time_us=1040519.463
   phase_owned_max_abs=1.000000
-  phase_owned_mean_abs=0.011803
+  phase_owned_mean_abs=0.011808
   phase_owned_errors=0
   qwen3_phase_output_max_abs=1.000000
-  qwen3_phase_output_mean_abs=0.011796
+  qwen3_phase_output_mean_abs=0.011807
   qwen3_phase_output_errors=0
 ```
 
@@ -100,15 +101,15 @@ one dispatch runs the 28-layer phase-owned body
 O projection is chunked into 32 row chunks
 O partial products are reduced across all 8 lanes through fixed reducers
 gate_up consumes the full NPU-produced attention residual
-gate_up emits four 32-row FFN partial groups through the same reducer fabric
-down_proj consumes NPU-produced FFN rows 0..127
+gate_up emits eight 32-row FFN partial groups through the same reducer fabric
+down_proj consumes NPU-produced FFN rows 0..255
 resource use is bounded by lane/reducer topology, not by num_layers * phases
 ```
 
 What production does not yet prove:
 
 ```text
-down_proj is not yet free of host-packed FFN hidden rows 128..3071
+down_proj is not yet free of host-packed FFN hidden rows 256..3071
 final norm / LM head / sampling are not inside the production megakernel
 multi-token cache update remains host-owned between dispatches
 the production body is not yet faster than the accepted persistent baseline
@@ -155,7 +156,9 @@ D1 phase-owned Qwen3 integration [in progress]
     |
     +--> D1.5y first 128 FFN rows via reducer [accepted]
     |
-    +--> D1.5z remove remaining host FFN hidden dependency [next]
+    +--> D1.5z first 256 FFN rows via reducer [accepted]
+    |
+    +--> D1.5zz remove remaining host FFN hidden dependency [next]
     |
     v
 D2 28-layer decode body performance/token validation
@@ -215,27 +218,65 @@ full Qwen3 semantic comparison:
   attention/FFN partial values, not only host-packed exact reference values
 ```
 
-## Current Experiment: D1.5z
+## Last Accepted Experiment: D1.5z
+
+Status: accepted.
+
+Question:
+
+```text
+Can production extend the gate_up -> reducer -> down handoff from four 32-row
+FFN groups to eight 32-row groups without increasing lane program text or
+exceeding FIFO endpoint, L1, BD/routing, or AIE program-memory budgets?
+```
+
+Accepted change:
+
+```text
+FFN_REDUCE_GROUP_COUNT=8
+phase_packets_per_layer=62
+ffn_reduced covers rows 0..255
+host_ffn_hidden covers rows 256..3071
+```
+
+Resource finding:
+
+```text
+compile-only accepted
+lane core .text = 15360 bytes
+
+Increasing the loop trip count and phase stream length did not add lane
+program text. This supports the phase-owned state-machine direction: phase
+count grows runtime/input bytes, but not compute-worker count.
+```
+
+Performance finding:
+
+```text
+npu_time_us=1040519.463
+
+This is slower than the 4-group result. Extending FFN handoff by adding more
+packet phases is correctness progress, not a speed path. To go faster, remove
+host packet volume and reduce repeated gate/down packet traffic rather than
+blindly increasing group count.
+```
+
+## Current Experiment: D1.5zz
 
 Status: next.
 
 Question:
 
 ```text
-How should production remove host_ffn_hidden[128:3072] from down_proj without
-exceeding FIFO endpoint, L1, BD/routing, or AIE program-memory budgets?
+How should production remove host_ffn_hidden[256:3072] from down_proj without
+linearly increasing packet stream size and NPU runtime?
 ```
 
-Known constraint from D1.5y:
+Known constraint:
 
 ```text
-lane core program memory is already tight
-  standalone ffn_partial kernel: 16880 bytes -> rejected
-  four FFN chunks with diagnostics: 17904 bytes -> rejected
-  accepted slim lane core:          15968 bytes
-
-Adding small kernels to the lane Worker is risky. Program memory must be
-checked with llvm-size before running NPU.
+lane program memory is no longer the immediate blocker for more groups, but
+runtime and host packet volume are now visibly worsening.
 ```
 
 Candidate A, full FFN gather/broadcast:
@@ -270,7 +311,7 @@ it converts the remaining host activation dependency into a reduce problem
 it keeps the output shape small: q_rows_per_packet residual rows per owner lane
 ```
 
-Acceptance for D1.5y:
+Acceptance for D1.5zz:
 
 ```text
 preflight passes
@@ -370,7 +411,7 @@ wall-time buckets are measured
 Do the next work in this order:
 
 ```text
-1. D1.5z: remove host_ffn_hidden[128:3072], preferably by down partial reduce
+1. D1.5zz: remove host_ffn_hidden[256:3072], preferably by down partial reduce
    or a streaming down accumulation plan that does not add lane program text.
 2. Keep final norm / LM head on CPU until the decode body is faster than the
    accepted persistent baseline.

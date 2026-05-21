@@ -193,6 +193,28 @@ phase_owned_errors: 0
 qwen3_phase_output_errors: 0
 ```
 
+Follow-up scale check:
+
+```text
+FFN_REDUCE_GROUP_COUNT=8
+phase_packets_per_layer=62
+ffn_npu_rows=256
+lane core .text: 15360 bytes
+NPU run accepted
+phase_owned_errors: 0
+qwen3_phase_output_errors: 0
+npu_time_us: 1040519.463
+```
+
+Lesson:
+
+```text
+Increasing the phase-owned loop trip count did not increase lane program text
+in this case. The next bottleneck moved to runtime/input volume: more FFN
+handoff groups mean more lane packets and more reducer tokens. Treat this as a
+performance symptom, not a program-memory symptom.
+```
+
 ## Persistent QKV Exceeds Output DMA Channels
 
 Symptom:

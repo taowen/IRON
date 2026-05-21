@@ -1348,6 +1348,8 @@ def print_phase_owned_run(result: PhaseOwnedRunResult) -> None:
     print(f"attention_chunk_count: {op.attention_chunk_count}")
     print(f"q_rows_per_packet: {op.q_rows_per_packet}")
     print(f"fabric_group_size: {op.fabric_group_size}")
+    print(f"ffn_reduce_group_count: {op.ffn_reduce_group_count}")
+    print(f"ffn_npu_rows: {op.ffn_npu_rows}")
     print(f"shared_packet_elements: {op.shared_packet_elements}")
     print(f"shared_input_elements: {op.shared_input_elements}")
     print(f"tile_local_hidden_elements: {op.hidden_size}")

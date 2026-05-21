@@ -83,7 +83,7 @@ def phase_owned_decode(
     if hidden_size % o_projection_chunk_rows != 0:
         raise ValueError("hidden_size must be divisible by O projection chunk rows")
     o_projection_chunk_count = hidden_size // o_projection_chunk_rows
-    ffn_reduce_group_count = 4
+    ffn_reduce_group_count = 8
     ffn_npu_rows = ffn_reduce_group_count * o_projection_chunk_rows
     if ffn_npu_rows > intermediate_size:
         raise ValueError("FFN NPU-covered rows exceed intermediate_size")
