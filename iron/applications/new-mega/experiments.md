@@ -2540,8 +2540,127 @@ the other 3068 FFN hidden values, currently supplied by the host packet.
 Remaining D1 work:
 
 ```text
-D1.5t design on-chip context/residual/FFN gather or partial projection reduce
-D1.5u remove remaining host-packed other-lane context/residual/FFN from O, gate_up, and down_proj
+D1.5u remove remaining host-packed other-fabric-group context from O
+D1.5v design residual/FFN gather or partial projection reduce for gate_up/down
+D2 run repeated layers in the same phase-owned topology
+```
+
+#### D1.5t. O Projection Same-Fabric-Group Partial Reduce
+
+Status: accepted in production.
+
+Question:
+
+```text
+Can O projection stop reading host context for the heads produced by other
+lanes in the same 4-lane fabric group by computing lane-local partial products
+and reducing them on-chip?
+```
+
+Rejected first design:
+
+```text
+lane inputs:
+  shared hidden/norm broadcast
+  lane packet stream
+  o_reduced return stream
+
+aiecc failure:
+  error: 'aie.tile' op number of input DMA channel exceeded!
+  %tile_0_2 = aie.tile(0, 2)
+```
+
+Diagnosis:
+
+```text
+The MLIR ObjectFIFO graph showed three independent input FIFOs entering the
+same lane tile:
+  new_mega_phase_shared_packets_broadcast_g0
+  new_mega_phase_lane_0_packets
+  new_mega_phase_lane_0_o_reduced
+
+This was a real endpoint/resource failure before any O math ran. Changing TAP
+sizes or rewriting the O dot loop would not fix it.
+```
+
+Fix:
+
+```text
+Remove the shared ObjectFifo from the production dataflow.
+
+phase 0 lane packet now carries:
+  hidden[1024]
+  input_norm_weight[1024]
+  q_proj row block
+
+Each lane Worker caches input_norm_weight in tile-local memory and reuses it
+for Q/K/V projection phases. The runtime arg spec still has a legacy shared
+input buffer for ABI stability, but the IRON graph no longer creates or fills a
+shared ObjectFifo.
+```
+
+O partial-reduce topology:
+
+```text
+for each fabric group of 4 lanes:
+  every lane computes partial rows for all rows owned by the group
+  4 lane partial vectors join into one reducer Worker
+  reducer sums partials over producer lanes
+  reducer output splits the reduced rows back to owner lanes
+  owner lane adds host-provided other-fabric-group contribution and residual
+```
+
+NPU result:
+
+```text
+num_layers=28
+phase_packets_per_layer=17
+packet_elements=16576
+preflight_compute_cores=10
+preflight_total_dma_tasks=10
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=2
+npu_time_us=311612.850
+phase_owned_max_abs=1.000000
+phase_owned_mean_abs=0.007770
+phase_owned_errors=0 at phase abs_tol=1.0
+qwen3_phase_output_max_abs=0.500000
+qwen3_phase_output_mean_abs=0.007813
+qwen3_phase_output_errors=0 at abs_tol=0.5
+```
+
+Numeric diagnosis:
+
+```text
+The first accepted NPU run matched qwen3_reference but had one phase-reference
+slot at exactly 1.0 absolute difference:
+
+layer 25, lane 3, attention_residual row 1
+actual=182.0
+phase_owned_reference=181.0
+qwen3_reference=182.0
+
+Host-only comparison of phase_owned_reference against qwen3_reference showed
+the same one-slot difference. That makes it a reference/reduction-boundary BF16
+ULP issue, not a NPU dataflow bug.
+```
+
+Interpretation:
+
+```text
+The current production graph now has a real on-chip partial projection reduce
+for the same fabric group. It still uses host-packed contribution for the other
+fabric group, so O is not fully host-free yet. The resource lesson is stronger
+than the speed result: any reduce return FIFO consumes a tile input channel, so
+low-bandwidth shared metadata must be packed into an existing lane packet or
+cached tile-locally before adding the reduce path.
+```
+
+Remaining D1 work:
+
+```text
+D1.5u extend O partial reduce across both fabric groups or add a second reduce
+D1.5v remove host residual/FFN dependencies using gather or partial reduce
 D2 run repeated layers in the same phase-owned topology
 ```
 

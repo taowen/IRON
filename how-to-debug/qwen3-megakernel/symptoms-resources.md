@@ -177,6 +177,83 @@ The accepted A0 experiment ran one xclbin/runtime .bin for positions
 reference with max_abs <= 0.000244.
 ```
 
+## Reduce Return Path Exceeds Lane Input DMA Channels
+
+Symptom:
+
+```text
+error: 'aie.tile' op number of input DMA channel exceeded!
+%tile_0_2 = aie.tile(0, 2)
+```
+
+Trigger:
+
+```text
+The first production O partial-reduce design added a return FIFO from the group
+reducer back to each lane while the lane already consumed:
+
+shared hidden/norm broadcast
+lane-local phase packet stream
+```
+
+Diagnostic used:
+
+```bash
+rg -n "tile_0_2|objectfifo|o_reduced|shared_packets|lane_0_packets" \
+  build_new_mega_production_o_partial_reduce_compile/*.mlir
+```
+
+Evidence found:
+
+```text
+The lane tile had three independent input ObjectFIFOs:
+
+new_mega_phase_shared_packets_broadcast_g0
+new_mega_phase_lane_0_packets
+new_mega_phase_lane_0_o_reduced
+```
+
+Root cause:
+
+```text
+The reduce return stream was structurally necessary, but the existing shared
+broadcast stream consumed the second lane input channel. The graph failed
+before any O projection math ran. This was not a TAP stride problem, not a
+placement typo, and not an external-kernel ABI problem.
+```
+
+Fix used:
+
+```text
+Remove the shared ObjectFifo from production.
+
+Pack hidden and input_norm_weight into the phase 0 lane packet:
+  hidden[1024]
+  input_norm_weight[1024]
+  q_proj row block
+
+Cache input_norm_weight in a tile-local Buffer and reuse it in later Q/K/V
+projection phases.
+```
+
+Recheck:
+
+```text
+preflight_compute_cores=10
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=2
+full aiecc passes
+NPU run completes with qwen3_phase_output_errors=0
+```
+
+General rule:
+
+```text
+Any on-chip reduce/gather return path consumes a real ObjectFIFO endpoint.
+Before adding it, move low-bandwidth metadata out of independent FIFOs and into
+existing packets or tile-local state.
+```
+
 ## Production Input QKV Rope Worker Exceeds Input DMA Channels
 
 Symptom:

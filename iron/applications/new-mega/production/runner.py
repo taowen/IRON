@@ -188,6 +188,53 @@ def _pack_attention_chunk_packet(
     lane_packets[mask_start : mask_start + chunk_size] = mask[chunk_start:chunk_end]
 
 
+def _context_heads_from_lane_packets(
+    lane_f32: torch.Tensor,
+    lane_start: int,
+    layer: int,
+    op: NewMegaPhaseOwnedDecode,
+) -> list[torch.Tensor]:
+    context_heads = []
+    for phase_group in (
+        ATTENTION_SCORE_PV_PHASE_INDICES,
+        ATTENTION_SCORE_PV_SECONDARY_PHASE_INDICES,
+    ):
+        q_head = None
+        k_chunks = []
+        v_chunks = []
+        mask_chunks = []
+        for phase in phase_group:
+            packet_index = layer * op.phase_packets_per_layer + phase
+            start = lane_start + packet_index * op.packet_elements
+            packet = lane_f32[start : start + op.packet_elements]
+            if q_head is None:
+                q_head = packet[: op.head_dim].clone()
+            k_start = op.head_dim
+            v_start = k_start + op.attention_chunk_size * op.head_dim
+            mask_start = v_start + op.attention_chunk_size * op.head_dim
+            k_chunks.append(
+                packet[k_start:v_start].view(op.attention_chunk_size, op.head_dim)
+            )
+            v_chunks.append(
+                packet[v_start:mask_start].view(op.attention_chunk_size, op.head_dim)
+            )
+            mask_chunks.append(
+                packet[mask_start : mask_start + op.attention_chunk_size]
+            )
+        if q_head is None:
+            raise ValueError("attention score/PV phases are required")
+        context_heads.append(
+            _attention_context_head(
+                q_head,
+                torch.cat(k_chunks, dim=0),
+                torch.cat(v_chunks, dim=0),
+                torch.cat(mask_chunks, dim=0),
+                op.head_dim,
+            ).to(torch.float32)
+        )
+    return context_heads
+
+
 def _attention_decode_context_and_output(
     model: Qwen3ForCausalLM,
     x: torch.Tensor,
@@ -280,7 +327,6 @@ def phase_owned_reference(
     op: NewMegaPhaseOwnedDecode,
 ) -> torch.Tensor:
     expected = torch.zeros((op.output_elements,), dtype=torch.float32)
-    shared_f32 = shared_packets.to(torch.float32)
     lane_f32 = lane_packets.to(torch.float32)
     lane_span = op.total_phase_packets * op.packet_elements
     q_stride = op.q_output_values_per_lane
@@ -298,19 +344,17 @@ def phase_owned_reference(
         hidden_state = torch.zeros((op.hidden_size,), dtype=torch.float32)
         lane_start = lane * lane_span
         for layer in range(op.num_layers):
-            shared_start = layer * op.shared_packet_elements
-            shared = shared_f32[shared_start : shared_start + op.shared_packet_elements]
-            if layer == 0:
-                hidden_state = shared[: op.hidden_size].clone()
-            weight = shared[op.hidden_size : 2 * op.hidden_size]
-            mean_square = (hidden_state * hidden_state).mean(dtype=torch.float32)
-            inv_rms = torch.rsqrt(mean_square + 1.0e-6)
             q_packet_index = layer * op.phase_packets_per_layer
             q_packet_start = lane_start + q_packet_index * op.packet_elements
             q_packet = lane_f32[q_packet_start : q_packet_start + op.packet_elements]
+            if layer == 0:
+                hidden_state = q_packet[: op.hidden_size].clone()
+            weight = q_packet[op.hidden_size : 2 * op.hidden_size]
+            mean_square = (hidden_state * hidden_state).mean(dtype=torch.float32)
+            inv_rms = torch.rsqrt(mean_square + 1.0e-6)
             output_start = layer * out_layer_span + lane * out_lane_stride
             for row in range(op.q_rows_per_packet):
-                q_row_start = row * op.hidden_size
+                q_row_start = 2 * op.hidden_size + row * op.hidden_size
                 q_acc = torch.zeros((), dtype=torch.float32)
                 for i in range(op.hidden_size):
                     xnorm = hidden_state[i] * inv_rms * weight[i]
@@ -396,49 +440,13 @@ def phase_owned_reference(
                 + q_rope_stride
                 + k_rope_stride
             )
-            context_heads = []
-            for slot, phase_group in enumerate(
-                (
-                    ATTENTION_SCORE_PV_PHASE_INDICES,
-                    ATTENTION_SCORE_PV_SECONDARY_PHASE_INDICES,
-                )
-            ):
-                q_head = None
-                k_chunks = []
-                v_chunks = []
-                mask_chunks = []
-                for phase in phase_group:
-                    packet_index = layer * op.phase_packets_per_layer + phase
-                    start = lane_start + packet_index * op.packet_elements
-                    packet = lane_f32[start : start + op.packet_elements]
-                    if q_head is None:
-                        q_head = packet[: op.head_dim].clone()
-                    k_start = op.head_dim
-                    v_start = k_start + op.attention_chunk_size * op.head_dim
-                    mask_start = v_start + op.attention_chunk_size * op.head_dim
-                    k_chunks.append(
-                        packet[k_start:v_start].view(
-                            op.attention_chunk_size, op.head_dim
-                        )
-                    )
-                    v_chunks.append(
-                        packet[v_start:mask_start].view(
-                            op.attention_chunk_size, op.head_dim
-                        )
-                    )
-                    mask_chunks.append(
-                        packet[mask_start : mask_start + op.attention_chunk_size]
-                    )
-                if q_head is None:
-                    raise ValueError("attention score/PV phases are required")
-                context_head = _attention_context_head(
-                    q_head,
-                    torch.cat(k_chunks, dim=0),
-                    torch.cat(v_chunks, dim=0),
-                    torch.cat(mask_chunks, dim=0),
-                    op.head_dim,
-                ).to(torch.float32)
-                context_heads.append(context_head)
+            context_heads = _context_heads_from_lane_packets(
+                lane_f32,
+                lane_start,
+                layer,
+                op,
+            )
+            for slot, context_head in enumerate(context_heads):
                 slot_start = context_base + slot * op.head_dim
                 expected[slot_start : slot_start + op.head_dim] = context_head
                 acc += context_head.sum(dtype=torch.float32)
@@ -446,21 +454,43 @@ def phase_owned_reference(
             o_packet_index = layer * op.phase_packets_per_layer + O_PHASE
             o_start = lane_start + o_packet_index * op.packet_elements
             o_packet = lane_f32[o_start : o_start + op.packet_elements]
-            context_head_indices = [
-                int(float(o_packet[0].item())),
-                int(float(o_packet[1].item())),
-            ]
-            attention_context = o_packet[2 : 2 + op.attention_size].clone()
-            for slot, context_head_index in enumerate(context_head_indices):
-                context_head_start = context_head_index * op.head_dim
-                context_head_end = context_head_start + op.head_dim
-                attention_context[context_head_start:context_head_end] = context_heads[
-                    slot
+            group_rows = op.fabric_group_size * op.q_rows_per_packet
+            host_other_plus_residual = o_packet[2 : 2 + op.q_rows_per_packet]
+            weight_block_start = 2 + op.q_rows_per_packet
+            group_start_lane = (lane // op.fabric_group_size) * op.fabric_group_size
+            group_partials = torch.zeros((group_rows,), dtype=torch.float32)
+            for producer_lane in range(
+                group_start_lane, group_start_lane + op.fabric_group_size
+            ):
+                producer_lane_start = producer_lane * lane_span
+                producer_context_heads = _context_heads_from_lane_packets(
+                    lane_f32,
+                    producer_lane_start,
+                    layer,
+                    op,
+                )
+                producer_o_packet_start = (
+                    producer_lane_start + o_packet_index * op.packet_elements
+                )
+                producer_o_packet = lane_f32[
+                    producer_o_packet_start : producer_o_packet_start
+                    + op.packet_elements
                 ]
-            attention_residual_shard = o_packet[
-                2 + op.attention_size : 2 + op.attention_size + op.q_rows_per_packet
-            ]
-            o_block_start = 2 + op.attention_size + op.q_rows_per_packet
+                producer_weight_start = 2 + op.q_rows_per_packet
+                producer_weight_block = producer_o_packet[
+                    producer_weight_start : producer_weight_start
+                    + group_rows * op.context_output_values_per_lane
+                ].view(group_rows, op.context_output_values_per_lane)
+                producer_context = torch.cat(producer_context_heads).to(torch.float32)
+                producer_weight_block = producer_weight_block.to(torch.float32)
+                for group_row in range(group_rows):
+                    partial = torch.zeros((), dtype=torch.float32)
+                    for dim in range(op.context_output_values_per_lane):
+                        partial += (
+                            producer_context[dim]
+                            * producer_weight_block[group_row, dim]
+                        )
+                    group_partials[group_row] += partial
             attention_base = (
                 output_start
                 + q_stride
@@ -471,11 +501,8 @@ def phase_owned_reference(
                 + context_stride
             )
             for row in range(op.q_rows_per_packet):
-                row_start = o_block_start + row * op.attention_size
-                o_acc = torch.zeros((), dtype=torch.float32)
-                for i in range(op.attention_size):
-                    o_acc += attention_context[i] * o_packet[row_start + i]
-                residual_acc = attention_residual_shard[row] + o_acc
+                group_row = lane % op.fabric_group_size * op.q_rows_per_packet + row
+                residual_acc = host_other_plus_residual[row] + group_partials[group_row]
                 expected[attention_base + row] = residual_acc
                 acc += residual_acc
 
@@ -763,6 +790,10 @@ def build_phase_owned_case(
             secondary_context_head_index = lane + op.num_lanes
             kv_head_index = context_head_index // repeats
             secondary_kv_head_index = secondary_context_head_index // repeats
+            lane_packets[q_packet_start : q_packet_start + op.hidden_size] = hidden
+            lane_packets[
+                q_packet_start + op.hidden_size : q_packet_start + 2 * op.hidden_size
+            ] = input_norm_weight
             lane_packets[q_rope_packet_start] = torch.tensor(
                 row_base, dtype=torch.bfloat16
             )
@@ -793,7 +824,7 @@ def build_phase_owned_case(
             ] = sin_values
             for row in range(op.q_rows_per_packet):
                 q_row = row_base + row
-                dst = q_packet_start + row * op.hidden_size
+                dst = q_packet_start + (2 + row) * op.hidden_size
                 lane_packets[dst : dst + op.hidden_size] = q_weight[q_row]
                 out = layer_idx * out_layer_span + lane * out_lane_stride + row
                 qwen3_reference[out] = _kernel_normed_row_dot(
@@ -907,16 +938,22 @@ def build_phase_owned_case(
             lane_start = lane * lane_span
             o_packet_index = layer_idx * op.phase_packets_per_layer + O_PHASE
             o_packet_start = lane_start + o_packet_index * op.packet_elements
-            lane_packets[o_packet_start] = torch.tensor(lane, dtype=torch.bfloat16)
-            lane_packets[o_packet_start + 1] = torch.tensor(
-                lane + op.num_lanes, dtype=torch.bfloat16
-            )
-            lane_packets[
-                o_packet_start + 2 : o_packet_start + 2 + op.attention_size
-            ] = attention_context
             row_base = lane * op.q_rows_per_packet
-            residual_base = o_packet_start + 2 + op.attention_size
-            o_weight_base = residual_base + op.q_rows_per_packet
+            group_id = lane // op.fabric_group_size
+            group_start_lane = group_id * op.fabric_group_size
+            group_row_base = group_start_lane * op.q_rows_per_packet
+            group_rows = op.fabric_group_size * op.q_rows_per_packet
+            group_head_indices = []
+            for producer_lane in range(
+                group_start_lane, group_start_lane + op.fabric_group_size
+            ):
+                group_head_indices.extend([producer_lane, producer_lane + op.num_lanes])
+            lane_packets[o_packet_start] = torch.tensor(
+                group_row_base, dtype=torch.bfloat16
+            )
+            lane_packets[o_packet_start + 1] = torch.tensor(lane, dtype=torch.bfloat16)
+            host_base = o_packet_start + 2
+            o_weight_base = host_base + op.q_rows_per_packet
             out_base = (
                 layer_idx * out_layer_span
                 + lane * out_lane_stride
@@ -929,22 +966,47 @@ def build_phase_owned_case(
             )
             for row in range(op.q_rows_per_packet):
                 proj_row = row_base + row
-                lane_packets[residual_base + row] = hidden[proj_row]
-                weight_dst = o_weight_base + row * op.attention_size
-                lane_packets[weight_dst : weight_dst + op.attention_size] = o_weight[
-                    proj_row
+                host_other = hidden[proj_row].to(torch.float32)
+                for head in range(cfg.num_attention_heads):
+                    if head in group_head_indices:
+                        continue
+                    head_start = head * op.head_dim
+                    head_end = head_start + op.head_dim
+                    host_other += (
+                        attention_context[head_start:head_end].to(torch.float32)
+                        * o_weight[proj_row, head_start:head_end].to(torch.float32)
+                    ).sum(dtype=torch.float32)
+                lane_packets[host_base + row] = host_other.to(torch.bfloat16)
+            local_head_indices = [lane, lane + op.num_lanes]
+            for group_row in range(group_rows):
+                proj_row = group_row_base + group_row
+                weight_dst = (
+                    o_weight_base + group_row * op.context_output_values_per_lane
+                )
+                for slot, head in enumerate(local_head_indices):
+                    head_start = head * op.head_dim
+                    head_end = head_start + op.head_dim
+                    dst = weight_dst + slot * op.head_dim
+                    lane_packets[dst : dst + op.head_dim] = o_weight[
+                        proj_row, head_start:head_end
+                    ]
+            group_context = attention_context.clone()
+            for producer_lane in range(
+                group_start_lane, group_start_lane + op.fabric_group_size
+            ):
+                head_start = producer_lane * op.head_dim
+                group_context[head_start : head_start + op.head_dim] = context_heads[
+                    producer_lane
                 ]
-                lane_context = attention_context.clone()
-                head_start = lane * op.head_dim
-                lane_context[head_start : head_start + op.head_dim] = context_heads[
-                    lane
-                ]
-                secondary_head_start = (lane + op.num_lanes) * op.head_dim
-                lane_context[
+                secondary_head = producer_lane + op.num_lanes
+                secondary_head_start = secondary_head * op.head_dim
+                group_context[
                     secondary_head_start : secondary_head_start + op.head_dim
-                ] = context_heads[lane + op.num_lanes]
+                ] = context_heads[secondary_head]
+            for row in range(op.q_rows_per_packet):
+                proj_row = row_base + row
                 qwen3_reference[out_base + row] = _kernel_down_residual_row(
-                    lane_context,
+                    group_context,
                     o_weight[proj_row],
                     hidden[proj_row],
                 )
@@ -1117,9 +1179,10 @@ def compile_phase_owned_stage(
 ) -> tuple[NewMegaPhaseOwnedDecode, PersistentPreflightResult]:
     context = AIEContext(build_dir=build_dir)
     if packet_elements is None:
+        q_phase_elements = (2 + q_rows_per_packet) * hidden_size
         gate_up_elements = 1 + (2 + 2 * q_rows_per_packet) * hidden_size
         o_elements = (
-            2 + attention_size + q_rows_per_packet + q_rows_per_packet * attention_size
+            2 + q_rows_per_packet + fabric_group_size * q_rows_per_packet * 2 * head_dim
         )
         down_elements = (
             1
@@ -1133,6 +1196,7 @@ def compile_phase_owned_stage(
         )
         packet_elements = max(
             o_elements,
+            q_phase_elements,
             gate_up_elements,
             down_elements,
             norm_rope_elements,
@@ -1197,7 +1261,8 @@ def run_phase_owned_stage(
     diff = (actual.to(torch.float32) - case.expected.to(torch.float32)).abs()
     max_abs = float(diff.max().item())
     mean_abs = float(diff.mean().item())
-    errors = int((diff > abs_tol).sum().item())
+    phase_abs_tol = max(abs_tol, 1.0)
+    errors = int((diff > phase_abs_tol).sum().item())
     qwen3_diff = (
         actual.to(torch.float32) - case.qwen3_reference.to(torch.float32)
     ).abs()

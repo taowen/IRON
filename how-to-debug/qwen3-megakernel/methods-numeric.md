@@ -505,3 +505,65 @@ partial projection reduce.
 This catches a common false-positive in megakernel development: the aggregate
 output matches because the host packet still contains the correct intermediate,
 not because the on-chip phase handoff is correct.
+
+## 34. Check Packet Reference Against Semantic Reference Before Editing Kernels
+
+Use when the NPU matches the full model/semantic reference, but the packet-level
+phase reference reports a small number of mismatches.
+
+The production O partial-reduce bring-up produced this first accepted run:
+
+```text
+qwen3_phase_output_errors=0 at abs_tol=0.5
+phase_owned_errors=1 at abs_tol=0.5
+```
+
+The bad slot decoded to:
+
+```text
+layer 25
+lane 3
+segment attention_residual
+row 1
+actual = 182.0
+phase_owned_reference = 181.0
+qwen3_reference = 182.0
+```
+
+The decisive diagnostic was host-only:
+
+```text
+compare phase_owned_reference against qwen3_reference without running NPU
+```
+
+It reproduced the same single difference:
+
+```text
+bad_count=1
+max_abs=1.0
+same layer/lane/slot
+```
+
+Interpretation:
+
+```text
+The NPU dataflow and kernel matched the semantic Qwen reference. The mismatch
+was a packet-reference/reduction-boundary BF16 ULP issue. Rewriting the O
+kernel or the ObjectFifo graph would have been a blind edit.
+```
+
+Fix used:
+
+```text
+Keep the semantic Qwen reference gate strict at abs_tol=0.5.
+Allow the packet-level phase-owned reduce boundary one BF16 ULP:
+  phase_abs_tol = max(abs_tol, 1.0)
+```
+
+Rule:
+
+```text
+When two references disagree, debug the references first. Only edit the NPU
+kernel after the packet reference and semantic reference agree on which value
+the kernel should produce.
+```

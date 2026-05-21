@@ -31,9 +31,9 @@ void new_mega_phase_state_init_f32(float *__restrict state)
     event1();
 }
 
-void new_mega_phase0_q_shard_bf16(const bfloat16 *__restrict shared_packet,
-                                  const bfloat16 *__restrict lane_packet,
+void new_mega_phase0_q_shard_bf16(const bfloat16 *__restrict lane_packet,
                                   bfloat16 *__restrict hidden_state,
+                                  bfloat16 *__restrict norm_weight_state,
                                   float *__restrict state,
                                   bfloat16 *__restrict lane_output,
                                   int32_t packet_size,
@@ -47,8 +47,11 @@ void new_mega_phase0_q_shard_bf16(const bfloat16 *__restrict shared_packet,
 
     if (layer_id == 0) {
         for (int32_t i = 0; i < hidden_size; i++) {
-            hidden_state[i] = shared_packet[i];
+            hidden_state[i] = lane_packet[i];
         }
+    }
+    for (int32_t i = 0; i < hidden_size; i++) {
+        norm_weight_state[i] = lane_packet[hidden_size + i];
     }
 
     float mean_square = 0.0f;
@@ -59,12 +62,13 @@ void new_mega_phase0_q_shard_bf16(const bfloat16 *__restrict shared_packet,
     mean_square /= static_cast<float>(hidden_size);
 
     const float inv_rms = aie::invsqrt(mean_square + 0.000001f);
-    const bfloat16 *weight = shared_packet + hidden_size;
+    const bfloat16 *weight = norm_weight_state;
+    const bfloat16 *q_block = lane_packet + 2 * hidden_size;
     float checksum = state[0];
     ::aie::set_rounding(aie::rounding_mode::conv_even);
 
     for (int32_t row = 0; row < q_rows_per_packet; row++) {
-        const bfloat16 *q_row = lane_packet + row * hidden_size;
+        const bfloat16 *q_row = q_block + row * hidden_size;
         float q_acc = 0.0f;
         for (int32_t i = 0; i < hidden_size; i++) {
             const float xnorm = static_cast<float>(hidden_state[i]) * inv_rms * static_cast<float>(weight[i]);
@@ -145,9 +149,9 @@ void new_mega_phase_gate_up_shard_bf16(const bfloat16 *__restrict packet,
     event1();
 }
 
-void new_mega_phase_projection_shard_bf16(const bfloat16 *__restrict shared_packet,
-                                          const bfloat16 *__restrict lane_packet,
+void new_mega_phase_projection_shard_bf16(const bfloat16 *__restrict lane_packet,
                                           const bfloat16 *__restrict hidden_state,
+                                          const bfloat16 *__restrict norm_weight_state,
                                           float *__restrict state,
                                           bfloat16 *__restrict lane_output,
                                           int32_t packet_size,
@@ -167,7 +171,7 @@ void new_mega_phase_projection_shard_bf16(const bfloat16 *__restrict shared_pack
     mean_square /= static_cast<float>(hidden_size);
 
     const float inv_rms = aie::invsqrt(mean_square + 0.000001f);
-    const bfloat16 *weight = shared_packet + hidden_size;
+    const bfloat16 *weight = norm_weight_state;
     float checksum = state[0];
     ::aie::set_rounding(aie::rounding_mode::conv_even);
 
@@ -365,49 +369,79 @@ void new_mega_phase_attention_finalize_bf16(const float *__restrict attention_st
     event1();
 }
 
-void new_mega_phase_o_residual_shard_bf16(const bfloat16 *__restrict packet,
-                                          float *__restrict state,
-                                          bfloat16 *__restrict lane_output,
-                                          int32_t packet_size,
-                                          int32_t attention_size,
-                                          int32_t q_rows_per_packet,
-                                          int32_t context_output_base,
-                                          int32_t head_dim,
-                                          int32_t attention_output_base,
-                                          int32_t attention_output_values_per_lane,
-                                          int32_t output_values_per_lane)
+void new_mega_phase_o_partial_shard_bf16(const bfloat16 *__restrict packet,
+                                         float *__restrict state,
+                                         const bfloat16 *__restrict lane_output,
+                                         float *__restrict partial_output,
+                                         int32_t packet_size,
+                                         int32_t head_dim,
+                                         int32_t q_rows_per_packet,
+                                         int32_t fabric_group_size,
+                                         int32_t context_output_base)
 {
     event0();
     (void)packet_size;
-    (void)output_values_per_lane;
 
-    const int32_t context_head_index0 = static_cast<int32_t>(static_cast<float>(packet[0]));
-    const int32_t context_head_index1 = static_cast<int32_t>(static_cast<float>(packet[1]));
-    const int32_t context_head_start0 = context_head_index0 * head_dim;
-    const int32_t context_head_end0 = context_head_start0 + head_dim;
-    const int32_t context_head_start1 = context_head_index1 * head_dim;
-    const int32_t context_head_end1 = context_head_start1 + head_dim;
-    const bfloat16 *attention_context = packet + 2;
-    const bfloat16 *residual_shard = attention_context + attention_size;
-    const bfloat16 *o_block = residual_shard + q_rows_per_packet;
+    const int32_t group_rows = fabric_group_size * q_rows_per_packet;
+    const bfloat16 *o_local_weight_block = packet + 2 + q_rows_per_packet;
 
     float checksum = state[0];
+
+    for (int32_t row = 0; row < group_rows; row++) {
+        const bfloat16 *o_row = o_local_weight_block + row * 2 * head_dim;
+        float partial = 0.0f;
+        for (int32_t dim = 0; dim < head_dim; dim++) {
+            partial += static_cast<float>(lane_output[context_output_base + dim]) * static_cast<float>(o_row[dim]);
+        }
+        for (int32_t dim = 0; dim < head_dim; dim++) {
+            partial += static_cast<float>(lane_output[context_output_base + head_dim + dim]) *
+                       static_cast<float>(o_row[head_dim + dim]);
+        }
+        partial_output[row] = partial;
+        checksum += partial;
+    }
+
+    state[0] = checksum;
+    event1();
+}
+
+void new_mega_phase_o_reduce_group_f32(const float *__restrict group_partials,
+                                       float *__restrict group_reduced,
+                                       int32_t fabric_group_size,
+                                       int32_t q_rows_per_packet)
+{
+    event0();
+
+    const int32_t group_rows = fabric_group_size * q_rows_per_packet;
+    for (int32_t row = 0; row < group_rows; row++) {
+        float acc = 0.0f;
+        for (int32_t lane = 0; lane < fabric_group_size; lane++) {
+            acc += group_partials[lane * group_rows + row];
+        }
+        group_reduced[row] = acc;
+    }
+
+    event1();
+}
+
+void new_mega_phase_o_finalize_reduced_bf16(const bfloat16 *__restrict packet,
+                                            const float *__restrict reduced_rows,
+                                            float *__restrict state,
+                                            bfloat16 *__restrict lane_output,
+                                            int32_t packet_size,
+                                            int32_t q_rows_per_packet,
+                                            int32_t attention_output_base,
+                                            int32_t attention_output_values_per_lane)
+{
+    event0();
+    (void)packet_size;
     ::aie::set_rounding(aie::rounding_mode::conv_even);
 
+    const bfloat16 *host_other_plus_residual = packet + 2;
+    float checksum = state[0];
+
     for (int32_t row = 0; row < q_rows_per_packet; row++) {
-        const bfloat16 *o_row = o_block + row * attention_size;
-        float o_acc = 0.0f;
-        for (int32_t i = 0; i < attention_size; i++) {
-            float context_value = static_cast<float>(attention_context[i]);
-            if (i >= context_head_start0 && i < context_head_end0) {
-                context_value = static_cast<float>(lane_output[context_output_base + i - context_head_start0]);
-            } else if (i >= context_head_start1 && i < context_head_end1) {
-                context_value =
-                    static_cast<float>(lane_output[context_output_base + head_dim + i - context_head_start1]);
-            }
-            o_acc += context_value * static_cast<float>(o_row[i]);
-        }
-        const float residual = o_acc + static_cast<float>(residual_shard[row]);
+        const float residual = static_cast<float>(host_other_plus_residual[row]) + reduced_rows[row];
         checksum += residual;
         lane_output[attention_output_base + row] = static_cast<bfloat16>(residual);
     }

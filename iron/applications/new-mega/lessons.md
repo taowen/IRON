@@ -967,6 +967,52 @@ all three projections reuse the same input RMSNorm weight without adding FIFO
 endpoints. The tradeoff is temporal: every lane in the broadcast group must
 advance through those phases in the same order.
 
+D1.5t changed that rule after adding a real reduce return path:
+
+```text
+O partial projection reduce:
+  each lane computes same-fabric-group O partials from its two context heads
+  one reducer Worker per 4-lane group sums those partials
+  reduced rows return to the owner lanes
+
+accepted resource shape:
+  num_lanes=8
+  reducer_workers=2
+  compute_cores=10
+  max_tile_inputs=2
+  max_tile_outputs=2
+  phase_owned_errors=0 at phase abs_tol=1.0
+  qwen3_phase_output_errors=0 at abs_tol=0.5
+```
+
+The first implementation failed before running any math:
+
+```text
+error: 'aie.tile' op number of input DMA channel exceeded!
+%tile_0_2 = aie.tile(0, 2)
+```
+
+MLIR inspection showed the lane tile had three independent inputs:
+
+```text
+shared hidden/norm broadcast
+lane packet stream
+O reduced return stream
+```
+
+The fix was to remove the shared ObjectFifo from production. Phase 0 now packs
+hidden and input-norm weight into the lane packet, and the Worker caches the
+norm weight in tile-local memory for K/V phases. The durable lesson is that a
+reduce return path consumes one of the lane tile's scarce input channels. When
+adding reduce/gather paths, first move low-bandwidth metadata into existing
+packets or tile-local state.
+
+The numeric lesson was also concrete. The NPU matched the Qwen semantic
+reference at `abs_tol=0.5`, but one packet-level phase reference slot differed
+by exactly one BF16 ULP around value 182. Host-only comparison reproduced the
+same slot, so the correct action was to adjust the phase-boundary tolerance to
+one BF16 ULP while keeping the Qwen semantic tolerance unchanged.
+
 ## What To Do Next
 
 The next useful `new-mega` work should continue the proof ladder, not jump to a
@@ -975,15 +1021,16 @@ full rewrite.
 Recommended order:
 
 ```text
-1. Expand Q/K/V shard coverage beyond the first 32 rows.
-2. Keep broadcast/join fabric grouped at four lanes unless a measured placement
-   experiment proves wider groups are legal.
+1. Extend O partial reduce across both fabric groups or add a second-stage
+   reduce so O no longer needs host context contribution.
+2. Apply the same resource discipline to gate_up/down: decide gather/broadcast
+   versus partial projection reduce before changing kernels.
 3. Run preflight and full aiecc before executing on NPU.
-4. Verify every inserted phase against PyTorch/reference buffers.
-5. Measure whether lane Workers are compute-bound or DMA-bound before adding
-   more columns.
-6. Only then decide whether a GEMM-style L2 topology is worth pulling into the
-   phase-owned graph.
+4. Verify every inserted phase against both packet-level and Qwen semantic
+   references.
+5. Measure whether lane Workers or reducer Workers are compute-bound or
+   DMA-bound before adding more columns.
+6. Keep old standalone/static-op paths out of production.
 ```
 
 Acceptance for the first new-mega experiment:

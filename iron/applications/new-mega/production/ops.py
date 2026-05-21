@@ -131,12 +131,14 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
             raise ValueError("fabric_group_size must be positive")
         if self.num_lanes % self.fabric_group_size != 0:
             raise ValueError("num_lanes must be divisible by fabric_group_size")
+        q_phase_elements = (2 + self.q_rows_per_packet) * self.hidden_size
         gate_up_elements = 1 + (2 + 2 * self.q_rows_per_packet) * self.hidden_size
         o_elements = (
             2
-            + self.attention_size
             + self.q_rows_per_packet
-            + self.q_rows_per_packet * self.attention_size
+            + self.fabric_group_size
+            * self.q_rows_per_packet
+            * self.context_output_values_per_lane
         )
         down_elements = (
             1
@@ -152,6 +154,7 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
         )
         minimum_packet_elements = max(
             o_elements,
+            q_phase_elements,
             gate_up_elements,
             down_elements,
             norm_rope_elements,

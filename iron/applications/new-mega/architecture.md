@@ -47,8 +47,10 @@ iron/applications/new-mega/production
     fixed lane Workers
     packed lane-local layer/phase streams
     Worker loop over layers and phases inside one dispatch
-    shared broadcast stream plus one lane-local packet stream per lane
+    phase 0 lane packet carries hidden/norm metadata
+    lane-local tile buffers carry hidden and input norm across phases
     grouped join output stream per 4 lanes
+    fixed reducer Workers sum same-fabric-group O partial products
 ```
 
 Production rule after correcting the D1.4b direction:
@@ -74,7 +76,7 @@ attention_chunk_2:
 attention_chunk_3:
   real first-head K RMSNorm + RoPE row shard
 o_proj:
-  NPU-produced local context heads + host other-lane context + O projection row shard + residual add
+  NPU-produced same-fabric-group context heads + O partial reduce + host other-fabric-group contribution + residual add
 gate_up:
   NPU-produced local attention residual rows + host remaining residual + post-attention RMSNorm + gate/up row shards
 down_proj:
@@ -1184,6 +1186,43 @@ the remaining issue sharper: down projection is dense over all 3072 FFN hidden
 values, so removing host FFN input requires full FFN visibility or a partial
 projection reduce.
 
+D1.5t accepted:
+
+```text
+O projection now uses an on-chip same-fabric-group partial reduce:
+  each lane computes partial O rows from its two NPU-produced context heads
+  all four lanes in the fabric group contribute to the group's O rows
+  a fixed reducer Worker sums the four partial vectors
+  the reduced rows return to owner lanes
+  host packet supplies only the other fabric group's O contribution plus residual
+
+num_layers=28, phase_packets_per_layer=17, packet_elements=16576,
+compute_cores=10, total_dma_tasks=10,
+max tile inputs=2, max tile outputs=2
+phase_owned_max_abs=1.000000, phase_owned_errors=0 at phase abs_tol=1.0
+qwen3_phase_output_max_abs=0.500000, qwen3_phase_output_errors=0 at abs_tol=0.5
+npu_time_us=311612.850
+```
+
+The rejected first attempt is the important architecture lesson:
+
+```text
+shared broadcast FIFO + lane packet FIFO + O reduced return FIFO
+  -> three input FIFOs on the lane tile
+  -> aiecc input DMA channel exceeded
+```
+
+The accepted fix removed the shared ObjectFifo from the graph. Phase 0 now
+packs hidden and input-norm weight into the lane packet and caches the norm
+weight in a tile-local buffer for K/V projection phases. This keeps the reducer
+return FIFO within the two-input tile budget. The runtime arg spec still has a
+legacy shared input buffer for compatibility, but production no longer creates
+or fills a shared ObjectFifo.
+
+This is the first real partial projection reduce in the production path. It is
+still only same-fabric-group visibility. Fully removing host context from O
+requires reducing both fabric groups or adding a cross-group gather/broadcast.
+
 Production entry:
 
 ```bash
@@ -1218,9 +1257,9 @@ resource stats are recorded
 Remaining D1 sequence:
 
 ```text
-D1.5t add an on-chip context/residual/FFN gather or partial projection reduce
-D1.5u remove remaining host-packed other-lane context/residual/FFN from O, gate_up, and down_proj
-D1.5v feed downstream phases from full NPU-produced activation vectors instead of host reference packets
+D1.5u extend O partial reduce across both fabric groups
+D1.5v remove host-packed residual/FFN inputs with gather or partial reduce
+D1.5w feed downstream phases from full NPU-produced activation vectors instead of host reference packets
 D2 run repeated layers in the same phase-owned topology
 ```
 

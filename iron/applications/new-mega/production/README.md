@@ -21,34 +21,41 @@ This stage is the current resource-bounded phase-owned megakernel body:
 ```text
 fixed lane Workers
 packed lane-local phase streams
-shared phase stream broadcast in 4-lane fabric groups
 row-sharded phase outputs joined in the same groups
 tile-local hidden_state[1024] carried across layer iterations
+tile-local input_norm_weight[1024] cached from the phase 0 packet
 loop over layers inside each Worker
-two input ObjectFIFOs and one output ObjectFIFO per lane in the proven fabric
+two input ObjectFIFOs and two output ObjectFIFOs per lane in the proven fabric
+two fixed group reducer Workers for O partial projection reduce
 resource use bounded by num_lanes, not by num_layers * num_phases
 ```
 
-Phase 0 broadcasts shared hidden/norm data, computes lane-local row-sharded Q
-projection outputs, and joins the shard outputs. The first two attention chunk
-phases compute real K/V projection row shards. Attention chunk phases 2 and 3
-compute real first-head Q/K RMSNorm+RoPE row shards. The four
+Phase 0 reads hidden/norm data from the lane-local packet, caches the norm
+weight in tile-local memory, computes lane-local row-sharded Q projection
+outputs, and joins the shard outputs. The first two attention chunk phases
+compute real K/V projection row shards by reusing the cached norm weight.
+Attention chunk phases 2 and 3 compute real first-head Q/K RMSNorm+RoPE row
+shards. The four
 primary `attention_score_pv_*` phases and the four secondary score/PV phases
 run real fixed-cache chunked QK, online softmax, and PV for all 16 attention
-heads. The `o_proj` phase now consumes each lane's two NPU-produced context
-heads from the previous phases and uses host-packed context only for heads
-owned by other lanes. The `gate_up` phase consumes the local attention residual
-rows produced by `o_proj`; the `down_proj` phase consumes the local FFN hidden
-rows produced by `gate_up`. The remaining non-local context/residual/FFN values
-are still host-packed until an on-chip gather/broadcast or partial-reduce design
-replaces them. Layer 0 initializes a tile-local hidden buffer from the shared
-stream; each `next_layer_token` phase updates that buffer for the next layer.
-`state[0]` is only a checksum for diagnostics, not the
-activation handoff. The runner uses the local Qwen3-0.6B safetensors by default
-and fills phase packets with real layer hidden inputs, first-head raw Q/K
-vectors, Q/K norm weights, RoPE cos/sin values, fixed-cache GQA K/V/mask chunks,
-remaining attention context, projection row shards, FFN hidden vectors,
-residual shards, and next-layer hidden values.
+heads. The `o_proj` phase now computes same-fabric-group partial O projection
+contributions on the lane Workers, sends those partials to one reducer Worker
+per 4-lane group, receives the reduced same-group rows back, and finalizes the
+local attention residual rows. Host-packed values still provide the other
+fabric group's context contribution and the non-local residual/FFN values until
+a second reduce/gather step removes them. The `gate_up` phase consumes the
+local attention residual rows produced by `o_proj`; the `down_proj` phase
+consumes the local FFN hidden rows produced by `gate_up`. Layer 0 initializes a
+tile-local hidden buffer from the phase 0 packet; each `next_layer_token` phase
+updates that buffer for the next layer. `state[0]` is only a checksum for
+diagnostics, not the activation handoff. The runner uses the local Qwen3-0.6B
+safetensors by default and fills phase packets with real layer hidden inputs,
+input norm weights, first-head raw Q/K vectors, Q/K norm weights, RoPE cos/sin
+values, fixed-cache GQA K/V/mask chunks, projection row shards, partial reduce
+metadata, FFN hidden vectors, residual shards, and next-layer hidden values.
+The runtime arg spec still contains a legacy shared input buffer so the runner
+ABI stays stable, but production no longer creates or fills a shared
+ObjectFifo.
 
 ## Run
 
@@ -115,8 +122,8 @@ default production body:
   attention_chunk_count=4
   q_rows_per_packet=4
   fabric_group_size=4
-  shared_packet_elements=2048
   tile_local_hidden_elements=1024
+  tile_local_input_norm_weight_elements=1024
   q_output_values_per_lane=8
   k_output_values_per_lane=8
   v_output_values_per_lane=8
@@ -136,33 +143,36 @@ default production body:
   attention_chunk_3=first-head K RMSNorm + RoPE row shard
   attention_score_pv_0..3=lane-mapped heads 0..7 fixed-cache QK + online softmax + PV
   attention_score_pv_4..7=lane-mapped heads 8..15 fixed-cache QK + online softmax + PV
-  o_proj=NPU-produced two lane-mapped context heads + host other-lane context + lane-local O row shards + residual add
+  o_proj=NPU-produced same-fabric-group context heads + group partial reduce + host other-fabric-group contribution + residual add
   gate_up=NPU-produced local attention residual rows + host remaining residual + real post RMSNorm + lane-local gate/up row shards
   down_proj=NPU-produced local FFN hidden rows + host remaining FFN hidden + lane-local down row shards + residual add
   next_layer_token=updates tile-local hidden_state for the next layer
   inputs=real Qwen3 hidden/norm/qkv_proj/qk_norm_rope/kv_cache_mask/o_proj/post_norm/gate/up/down/next-hidden packets
-  preflight_compute_cores=8
-  preflight_total_dma_tasks=12
+  preflight_compute_cores=10
+  preflight_total_dma_tasks=10
   preflight_max_compute_tile_inputs=2
-  preflight_max_compute_tile_outputs=1
-  npu_time_us=319631.346
-  phase_owned_max_abs=0.437500
-  phase_owned_mean_abs=0.007681
+  preflight_max_compute_tile_outputs=2
+  npu_time_us=311612.850
+  phase_owned_max_abs=1.000000
+  phase_owned_mean_abs=0.007770
   phase_owned_errors=0
   qwen3_phase_output_max_abs=0.500000
-  qwen3_phase_output_mean_abs=0.007685
+  qwen3_phase_output_mean_abs=0.007813
   qwen3_phase_output_errors=0 at abs_tol=0.5
+  phase_owned_reference_errors=0 at abs_tol=1.0
 
-  segment max_abs against qwen3_reference:
-    q=0.000000
-    k=0.003906
-    v=0.000122
-    q_rope=0.000000
-    k_rope=0.000000
-    context=0.437500
-    attention_residual=0.218750
-    gate_up=0.031250
-    residual=0.500000
+  O partial-reduce resource diagnosis:
+    first design failed aiecc with tile input DMA channel exceeded
+    failing lane tile had three input FIFOs: shared, lane packet, o_reduced
+    fix removed shared ObjectFifo and packed hidden/norm into phase 0 packet
+    reducer workers added two compute cores but kept each tile at <=2 inputs
+
+  phase-owned reference tolerance:
+    one phase-level O reduce slot differed from qwen semantic reference by
+    exactly one BF16 ULP (181 vs 182 at value scale ~182)
+    qwen semantic reference passed at abs_tol=0.5
+    phase-owned packet reference is checked at abs_tol=1.0 for this reduce
+    boundary while qwen reference remains at abs_tol=0.5
 
   O handoff poison test, num_layers=1:
     each lane's two host O-packet context heads overwritten with 123.0
@@ -202,10 +212,10 @@ large packet compile/preflight:
 ## Next Work
 
 ```text
-1. Add on-chip context gather/reduce so every O row can see all NPU-produced heads.
-2. Remove the remaining host-packed other-lane attention context from O projection.
-3. Expand gate_up handoff beyond local residual rows once full residual coverage exists.
-4. Expand down_proj handoff beyond local FFN rows once full gate/up coverage exists.
-5. Keep grouped broadcast/join fan-in at 4 lanes unless a measured placer result proves wider groups.
+1. Extend O partial reduce across both fabric groups so O projection no longer needs host context contribution.
+2. Decide whether gate_up should use residual gather/broadcast or the same partial projection reduce pattern.
+3. Decide whether down_proj should use FFN gather/broadcast or partial projection reduce.
+4. Add a cheap poison/diagnostic harness for the O partial-reduce path that avoids a full recompile.
+5. Keep grouped fan-in at 4 lanes unless a measured placer result proves wider groups.
 6. Do not add another production standalone op or static single-layer graph.
 ```
