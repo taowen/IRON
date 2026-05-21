@@ -70,11 +70,15 @@ def phase_owned_decode(
     input_elements = num_lanes * total_phase_packets * packet_elements
     shared_input_elements = num_layers * shared_packet_elements
     q_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
+    k_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
+    v_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
     attention_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
     gate_up_output_values_per_lane = ((2 * q_rows_per_packet + 7) // 8) * 8
     residual_output_values_per_lane = ((q_rows_per_packet + 7) // 8) * 8
     output_values_per_lane = (
         q_output_values_per_lane
+        + k_output_values_per_lane
+        + v_output_values_per_lane
         + attention_output_values_per_lane
         + gate_up_output_values_per_lane
         + residual_output_values_per_lane
@@ -127,6 +131,21 @@ def phase_owned_decode(
             np.int32,
             np.int32,
             np.int32,
+        ],
+    )
+    projection_kernel = Kernel(
+        "new_mega_phase_projection_shard_bf16",
+        kernel_object,
+        [
+            shared_packet_ty,
+            packet_ty,
+            hidden_state_ty,
+            state_ty,
+            lane_output_ty,
+            np.int32,
+            np.int32,
+            np.int32,
+            np.int32,
             np.int32,
         ],
     )
@@ -152,8 +171,6 @@ def phase_owned_decode(
             packet_ty,
             state_ty,
             lane_output_ty,
-            np.int32,
-            np.int32,
             np.int32,
             np.int32,
             np.int32,
@@ -245,6 +262,7 @@ def phase_owned_decode(
         state,
         init_kernel,
         q_shard_kernel,
+        projection_kernel,
         o_kernel,
         gate_up_kernel,
         down_kernel,
@@ -269,10 +287,40 @@ def phase_owned_decode(
                 q_output_values_per_lane,
                 layer_i32,
             )
+            packet_fifo.release(1)
+
+            packet = packet_fifo.acquire(1)
+            projection_kernel(
+                shared,
+                packet,
+                hidden_state,
+                state,
+                lane_output,
+                packet_elements,
+                hidden_size,
+                q_rows_per_packet,
+                q_output_values_per_lane,
+                k_output_values_per_lane,
+            )
+            packet_fifo.release(1)
+
+            packet = packet_fifo.acquire(1)
+            projection_kernel(
+                shared,
+                packet,
+                hidden_state,
+                state,
+                lane_output,
+                packet_elements,
+                hidden_size,
+                q_rows_per_packet,
+                q_output_values_per_lane + k_output_values_per_lane,
+                v_output_values_per_lane,
+            )
             shared_fifo.release(1)
             packet_fifo.release(1)
 
-            for phase_tail in range_(4):
+            for phase_tail in range_(2):
                 packet = packet_fifo.acquire(1)
                 layer_i32 = index.casts(T.i32(), layer)
                 phase_i32 = index.casts(T.i32(), phase_tail)
@@ -293,7 +341,9 @@ def phase_owned_decode(
                 packet_elements,
                 attention_size,
                 q_rows_per_packet,
-                q_output_values_per_lane,
+                q_output_values_per_lane
+                + k_output_values_per_lane
+                + v_output_values_per_lane,
                 attention_output_values_per_lane,
                 output_values_per_lane,
             )
@@ -320,8 +370,10 @@ def phase_owned_decode(
                 packet_elements,
                 hidden_size,
                 q_rows_per_packet,
-                q_output_values_per_lane,
-                attention_output_values_per_lane,
+                q_output_values_per_lane
+                + k_output_values_per_lane
+                + v_output_values_per_lane
+                + attention_output_values_per_lane,
                 output_values_per_lane,
             )
             packet_fifo.release(1)
@@ -335,9 +387,11 @@ def phase_owned_decode(
                 hidden_size,
                 intermediate_size,
                 q_rows_per_packet,
-                q_output_values_per_lane,
-                attention_output_values_per_lane,
-                gate_up_output_values_per_lane,
+                q_output_values_per_lane
+                + k_output_values_per_lane
+                + v_output_values_per_lane
+                + attention_output_values_per_lane
+                + gate_up_output_values_per_lane,
                 output_values_per_lane,
             )
             packet_fifo.release(1)
@@ -379,6 +433,7 @@ def phase_owned_decode(
                 states[lane],
                 init_kernel,
                 q_shard_kernel,
+                projection_kernel,
                 o_kernel,
                 gate_up_kernel,
                 down_kernel,

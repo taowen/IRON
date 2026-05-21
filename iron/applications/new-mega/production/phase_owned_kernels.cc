@@ -73,8 +73,7 @@ void new_mega_phase_gate_up_shard_bf16(const bfloat16 *__restrict packet,
                                        int32_t packet_size,
                                        int32_t hidden_size,
                                        int32_t q_rows_per_packet,
-                                       int32_t q_output_values_per_lane,
-                                       int32_t attention_output_values_per_lane,
+                                       int32_t gate_output_base,
                                        int32_t output_values_per_lane)
 {
     event0();
@@ -94,7 +93,6 @@ void new_mega_phase_gate_up_shard_bf16(const bfloat16 *__restrict packet,
 
     const float inv_rms = aie::invsqrt(mean_square + 0.000001f);
     float checksum = state[0];
-    const int32_t gate_output_base = q_output_values_per_lane + attention_output_values_per_lane;
     ::aie::set_rounding(aie::rounding_mode::conv_even);
 
     for (int32_t row = 0; row < q_rows_per_packet; row++) {
@@ -121,13 +119,58 @@ void new_mega_phase_gate_up_shard_bf16(const bfloat16 *__restrict packet,
     event1();
 }
 
+void new_mega_phase_projection_shard_bf16(const bfloat16 *__restrict shared_packet,
+                                          const bfloat16 *__restrict lane_packet,
+                                          const bfloat16 *__restrict hidden_state,
+                                          float *__restrict state,
+                                          bfloat16 *__restrict lane_output,
+                                          int32_t packet_size,
+                                          int32_t hidden_size,
+                                          int32_t q_rows_per_packet,
+                                          int32_t output_base,
+                                          int32_t output_values)
+{
+    event0();
+    (void)packet_size;
+
+    float mean_square = 0.0f;
+    for (int32_t i = 0; i < hidden_size; i++) {
+        const float x = static_cast<float>(hidden_state[i]);
+        mean_square += x * x;
+    }
+    mean_square /= static_cast<float>(hidden_size);
+
+    const float inv_rms = aie::invsqrt(mean_square + 0.000001f);
+    const bfloat16 *weight = shared_packet + hidden_size;
+    float checksum = state[0];
+    ::aie::set_rounding(aie::rounding_mode::conv_even);
+
+    for (int32_t row = 0; row < q_rows_per_packet; row++) {
+        const bfloat16 *proj_row = lane_packet + row * hidden_size;
+        float proj_acc = 0.0f;
+        for (int32_t i = 0; i < hidden_size; i++) {
+            const float xnorm = static_cast<float>(hidden_state[i]) * inv_rms * static_cast<float>(weight[i]);
+            proj_acc += xnorm * static_cast<float>(proj_row[i]);
+        }
+        checksum += proj_acc;
+        lane_output[output_base + row] = static_cast<bfloat16>(proj_acc);
+    }
+
+    for (int32_t row = q_rows_per_packet; row < output_values; row++) {
+        lane_output[output_base + row] = static_cast<bfloat16>(0.0f);
+    }
+
+    state[0] = checksum;
+    event1();
+}
+
 void new_mega_phase_o_residual_shard_bf16(const bfloat16 *__restrict packet,
                                           float *__restrict state,
                                           bfloat16 *__restrict lane_output,
                                           int32_t packet_size,
                                           int32_t attention_size,
                                           int32_t q_rows_per_packet,
-                                          int32_t q_output_values_per_lane,
+                                          int32_t attention_output_base,
                                           int32_t attention_output_values_per_lane,
                                           int32_t output_values_per_lane)
 {
@@ -138,7 +181,6 @@ void new_mega_phase_o_residual_shard_bf16(const bfloat16 *__restrict packet,
     const bfloat16 *attention_context = packet;
     const bfloat16 *residual_shard = packet + attention_size;
     const bfloat16 *o_block = residual_shard + q_rows_per_packet;
-    const int32_t attention_output_base = q_output_values_per_lane;
 
     float checksum = state[0];
     ::aie::set_rounding(aie::rounding_mode::conv_even);
@@ -171,9 +213,7 @@ void new_mega_phase_down_residual_shard_bf16(const bfloat16 *__restrict packet,
                                              int32_t hidden_size,
                                              int32_t intermediate_size,
                                              int32_t q_rows_per_packet,
-                                             int32_t q_output_values_per_lane,
-                                             int32_t attention_output_values_per_lane,
-                                             int32_t gate_up_output_values_per_lane,
+                                             int32_t residual_output_base,
                                              int32_t output_values_per_lane)
 {
     event0();
@@ -183,8 +223,6 @@ void new_mega_phase_down_residual_shard_bf16(const bfloat16 *__restrict packet,
     const bfloat16 *ffn_hidden = packet;
     const bfloat16 *residual_shard = packet + intermediate_size;
     const bfloat16 *down_block = residual_shard + q_rows_per_packet;
-    const int32_t residual_output_base =
-        q_output_values_per_lane + attention_output_values_per_lane + gate_up_output_values_per_lane;
 
     float checksum = state[0];
     ::aie::set_rounding(aie::rounding_mode::conv_even);

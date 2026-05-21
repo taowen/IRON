@@ -145,12 +145,20 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
         return ((self.q_rows_per_packet + 7) // 8) * 8
 
     @property
-    def gate_up_output_values_per_lane(self) -> int:
-        return ((2 * self.q_rows_per_packet + 7) // 8) * 8
+    def k_output_values_per_lane(self) -> int:
+        return ((self.q_rows_per_packet + 7) // 8) * 8
+
+    @property
+    def v_output_values_per_lane(self) -> int:
+        return ((self.q_rows_per_packet + 7) // 8) * 8
 
     @property
     def attention_output_values_per_lane(self) -> int:
         return ((self.q_rows_per_packet + 7) // 8) * 8
+
+    @property
+    def gate_up_output_values_per_lane(self) -> int:
+        return ((2 * self.q_rows_per_packet + 7) // 8) * 8
 
     @property
     def residual_output_values_per_lane(self) -> int:
@@ -160,6 +168,8 @@ class NewMegaPhaseOwnedDecode(MLIROperator):
     def output_values_per_lane(self) -> int:
         return (
             self.q_output_values_per_lane
+            + self.k_output_values_per_lane
+            + self.v_output_values_per_lane
             + self.attention_output_values_per_lane
             + self.gate_up_output_values_per_lane
             + self.residual_output_values_per_lane

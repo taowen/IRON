@@ -37,6 +37,8 @@ from iron.common.context import AIEContext
 
 from ops import PHASE_LABELS, NewMegaPhaseOwnedDecode
 
+K_PHASE = PHASE_LABELS.index("attention_chunk_0")
+V_PHASE = PHASE_LABELS.index("attention_chunk_1")
 O_PHASE = PHASE_LABELS.index("o_proj")
 GATE_UP_PHASE = PHASE_LABELS.index("gate_up")
 DOWN_PHASE = PHASE_LABELS.index("down_proj")
@@ -172,6 +174,8 @@ def phase_owned_reference(
     lane_f32 = lane_packets.to(torch.float32)
     lane_span = op.total_phase_packets * op.packet_elements
     q_stride = op.q_output_values_per_lane
+    k_stride = op.k_output_values_per_lane
+    v_stride = op.v_output_values_per_lane
     attention_stride = op.attention_output_values_per_lane
     gate_up_stride = op.gate_up_output_values_per_lane
     out_lane_stride = op.output_values_per_lane
@@ -202,7 +206,34 @@ def phase_owned_reference(
                     q_acc += xnorm * q_packet[q_row_start + i]
                 expected[output_start + row] = q_acc
                 acc += q_acc
-            for phase in range(1, O_PHASE):
+
+            k_packet_index = layer * op.phase_packets_per_layer + K_PHASE
+            k_start = lane_start + k_packet_index * op.packet_elements
+            k_packet = lane_f32[k_start : k_start + op.packet_elements]
+            k_base = output_start + q_stride
+            for row in range(op.q_rows_per_packet):
+                row_start = row * op.hidden_size
+                k_acc = torch.zeros((), dtype=torch.float32)
+                for i in range(op.hidden_size):
+                    xnorm = hidden_state[i] * inv_rms * weight[i]
+                    k_acc += xnorm * k_packet[row_start + i]
+                expected[k_base + row] = k_acc
+                acc += k_acc
+
+            v_packet_index = layer * op.phase_packets_per_layer + V_PHASE
+            v_start = lane_start + v_packet_index * op.packet_elements
+            v_packet = lane_f32[v_start : v_start + op.packet_elements]
+            v_base = output_start + q_stride + k_stride
+            for row in range(op.q_rows_per_packet):
+                row_start = row * op.hidden_size
+                v_acc = torch.zeros((), dtype=torch.float32)
+                for i in range(op.hidden_size):
+                    xnorm = hidden_state[i] * inv_rms * weight[i]
+                    v_acc += xnorm * v_packet[row_start + i]
+                expected[v_base + row] = v_acc
+                acc += v_acc
+
+            for phase in range(V_PHASE + 1, O_PHASE):
                 packet_index = layer * op.phase_packets_per_layer + phase
                 start = lane_start + packet_index * op.packet_elements
                 end = start + op.packet_elements
@@ -219,7 +250,7 @@ def phase_owned_reference(
                 op.attention_size : op.attention_size + op.q_rows_per_packet
             ]
             o_block_start = op.attention_size + op.q_rows_per_packet
-            attention_base = output_start + q_stride
+            attention_base = output_start + q_stride + k_stride + v_stride
             for row in range(op.q_rows_per_packet):
                 row_start = o_block_start + row * op.attention_size
                 o_acc = torch.zeros((), dtype=torch.float32)
@@ -253,7 +284,7 @@ def phase_owned_reference(
             ]
             mean_square = (attn_residual * attn_residual).mean(dtype=torch.float32)
             inv_rms = torch.rsqrt(mean_square + 1.0e-6)
-            gate_base = output_start + q_stride + attention_stride
+            gate_base = output_start + q_stride + k_stride + v_stride + attention_stride
             up_base = gate_base + op.q_rows_per_packet
             for row in range(op.q_rows_per_packet):
                 gate_acc = torch.zeros((), dtype=torch.float32)
@@ -284,7 +315,14 @@ def phase_owned_reference(
                 op.intermediate_size : op.intermediate_size + op.q_rows_per_packet
             ]
             down_block_start = op.intermediate_size + op.q_rows_per_packet
-            residual_base = output_start + q_stride + attention_stride + gate_up_stride
+            residual_base = (
+                output_start
+                + q_stride
+                + k_stride
+                + v_stride
+                + attention_stride
+                + gate_up_stride
+            )
             for row in range(op.q_rows_per_packet):
                 row_start = down_block_start + row * op.intermediate_size
                 down_acc = torch.zeros((), dtype=torch.float32)
@@ -345,6 +383,9 @@ def build_phase_owned_case(
     output_rows = op.num_lanes * op.q_rows_per_packet
     if output_rows > cfg.num_attention_heads * cfg.head_dim:
         raise ValueError("Q shard rows exceed Qwen3 q_proj output rows")
+    kv_rows = cfg.num_key_value_heads * cfg.head_dim
+    if output_rows > kv_rows:
+        raise ValueError("K/V shard rows exceed Qwen3 key/value projection rows")
     if output_rows > cfg.intermediate_size:
         raise ValueError("gate/up shard rows exceed Qwen3 intermediate_size")
 
@@ -357,6 +398,8 @@ def build_phase_owned_case(
     qwen3_reference = torch.zeros((op.output_elements,), dtype=torch.bfloat16)
 
     q_stride = op.q_output_values_per_lane
+    k_stride = op.k_output_values_per_lane
+    v_stride = op.v_output_values_per_lane
     attention_stride = op.attention_output_values_per_lane
     gate_up_stride = op.gate_up_output_values_per_lane
     out_lane_stride = op.output_values_per_lane
@@ -385,11 +428,17 @@ def build_phase_owned_case(
             cfg.rms_norm_eps,
         )
         q_weight = model.w(f"{attn}.q_proj.weight").contiguous()
+        k_weight = model.w(f"{attn}.k_proj.weight").contiguous()
+        v_weight = model.w(f"{attn}.v_proj.weight").contiguous()
 
         for lane in range(op.num_lanes):
             lane_start = lane * lane_span
             q_packet_index = layer_idx * op.phase_packets_per_layer
             q_packet_start = lane_start + q_packet_index * op.packet_elements
+            k_packet_index = layer_idx * op.phase_packets_per_layer + K_PHASE
+            k_packet_start = lane_start + k_packet_index * op.packet_elements
+            v_packet_index = layer_idx * op.phase_packets_per_layer + V_PHASE
+            v_packet_start = lane_start + v_packet_index * op.packet_elements
             row_base = lane * op.q_rows_per_packet
             for row in range(op.q_rows_per_packet):
                 q_row = row_base + row
@@ -400,6 +449,24 @@ def build_phase_owned_case(
                     hidden,
                     input_norm_weight,
                     q_weight[q_row],
+                    cfg.rms_norm_eps,
+                )
+                k_dst = k_packet_start + row * op.hidden_size
+                lane_packets[k_dst : k_dst + op.hidden_size] = k_weight[q_row]
+                k_out = out + q_stride
+                qwen3_reference[k_out] = _kernel_normed_row_dot(
+                    hidden,
+                    input_norm_weight,
+                    k_weight[q_row],
+                    cfg.rms_norm_eps,
+                )
+                v_dst = v_packet_start + row * op.hidden_size
+                lane_packets[v_dst : v_dst + op.hidden_size] = v_weight[q_row]
+                v_out = out + q_stride + k_stride
+                qwen3_reference[v_out] = _kernel_normed_row_dot(
+                    hidden,
+                    input_norm_weight,
+                    v_weight[q_row],
                     cfg.rms_norm_eps,
                 )
 
@@ -438,7 +505,13 @@ def build_phase_owned_case(
             row_base = lane * op.q_rows_per_packet
             residual_base = o_packet_start + op.attention_size
             o_weight_base = residual_base + op.q_rows_per_packet
-            out_base = layer_idx * out_layer_span + lane * out_lane_stride + q_stride
+            out_base = (
+                layer_idx * out_layer_span
+                + lane * out_lane_stride
+                + q_stride
+                + k_stride
+                + v_stride
+            )
             for row in range(op.q_rows_per_packet):
                 proj_row = row_base + row
                 lane_packets[residual_base + row] = hidden[proj_row]
@@ -471,6 +544,8 @@ def build_phase_owned_case(
                 layer_idx * out_layer_span
                 + lane * out_lane_stride
                 + q_stride
+                + k_stride
+                + v_stride
                 + attention_stride
             )
             for row in range(op.q_rows_per_packet):
@@ -510,6 +585,8 @@ def build_phase_owned_case(
                 layer_idx * out_layer_span
                 + lane * out_lane_stride
                 + q_stride
+                + k_stride
+                + v_stride
                 + attention_stride
                 + gate_up_stride
             )
@@ -681,6 +758,8 @@ def print_phase_owned_run(result: PhaseOwnedRunResult) -> None:
     print(f"shared_input_elements: {op.shared_input_elements}")
     print(f"tile_local_hidden_elements: {op.hidden_size}")
     print(f"q_output_values_per_lane: {op.q_output_values_per_lane}")
+    print(f"k_output_values_per_lane: {op.k_output_values_per_lane}")
+    print(f"v_output_values_per_lane: {op.v_output_values_per_lane}")
     print(f"attention_output_values_per_lane: {op.attention_output_values_per_lane}")
     print(f"gate_up_output_values_per_lane: {op.gate_up_output_values_per_lane}")
     print(f"residual_output_values_per_lane: {op.residual_output_values_per_lane}")

@@ -1842,12 +1842,85 @@ q_proj/o_proj operate across the 2048-wide attention space, while residual,
 RMSNorm, and MLP down outputs are 1024-wide hidden space.
 ```
 
+#### D1.5j. Real K/V Projection Shards In Attention Chunk Phases
+
+Status: accepted in production.
+
+Question:
+
+```text
+Can attention_chunk_0 and attention_chunk_1 stop being checksum placeholders
+and instead compute real Qwen3 K/V projection row shards while preserving the
+same phase-owned Worker/FIFO topology?
+```
+
+Implementation:
+
+```text
+attention_chunk_0 packet = k_proj weight shard [q_rows_per_packet, 1024]
+attention_chunk_1 packet = v_proj weight shard [q_rows_per_packet, 1024]
+
+The Worker keeps the shared hidden/input_norm packet acquired through Q/K/V.
+The new projection kernel reuses tile-local hidden_state and the shared
+input_layernorm weight, then writes K and V row shards into the same per-lane
+joined output object.
+```
+
+Result:
+
+```text
+num_lanes=8
+num_layers=28
+hidden_size=1024
+attention_size=2048
+intermediate_size=3072
+q_rows_per_packet=4
+packet_elements=15368
+q/k/v/attention/gate_up/residual output values per lane = 8 each
+output_values_per_lane=48
+output_values_per_layer=384
+preflight_compute_cores=8
+preflight_max_fifo_buffered_bytes=30736
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=1
+npu_time_us=531640.018
+phase_owned_max_abs=0.003906
+phase_owned_errors=0
+qwen3_phase_output_max_abs=0.003906
+qwen3_phase_output_errors=0
+
+large packet compile/preflight:
+  packet_elements=16896
+  packet_bytes=33792
+  preflight_compute_cores=8
+  preflight_max_fifo_buffered_bytes=33792
+```
+
+Debug note:
+
+```text
+The first compile failed in resolve_program:
+  q_shard expected 9 args but 10 were provided.
+
+Root cause was again a stale Kernel(...) ABI declaration, this time caused by
+editing q_shard while adding the generic projection kernel declaration.
+```
+
+Lesson:
+
+```text
+The shared broadcast object can be held across Q/K/V phases without increasing
+worker or endpoint count. This is the right local pattern for replacing more
+attention placeholder phases, but every external kernel declaration must be
+checked at the Python ABI, C++ signature, and Worker call together.
+```
+
 Remaining D1 work:
 
 ```text
-D1.5j expand Q/K/V shard coverage so attention can consume NPU-produced vectors
-D1.5k replace attention packet group with real chunked online attention
-D1.5l feed downstream phases from full NPU-produced activation vectors instead of host reference packets
+D1.5k expand Q/K/V shard coverage beyond the first 32 rows
+D1.5l replace remaining attention packet group with real q/k norm, RoPE, and chunked online attention
+D1.5m feed downstream phases from full NPU-produced activation vectors instead of host reference packets
 D2 run repeated layers in the same phase-owned topology
 ```
 

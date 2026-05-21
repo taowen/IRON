@@ -130,6 +130,7 @@ def main() -> None:
             "Workers consume shared broadcast packets plus lane-local phase "
             "streams loaded from real Qwen3 weights, phase 0 computes real "
             "row-sharded Q outputs, o_proj computes real attention residual "
+            "shards, attention chunk phases 0/1 compute real K/V projection "
             "shards, gate_up computes real post-norm gate/up shards, down_proj "
             "computes real layer residual shards, next_layer_token updates "
             "tile-local hidden state, and resource use is bounded by lanes "

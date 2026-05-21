@@ -932,6 +932,30 @@ The key shape rule after D1.5i is that `attention_size` is not always
 `num_attention_heads * head_dim = 2048`, so o_proj packet fields and ABI checks
 must use the explicit attention width.
 
+D1.5j accepted:
+
+```text
+attention_chunk_0 and attention_chunk_1 now use real Qwen3 data:
+  real k_proj row shards
+  real v_proj row shards
+  same tile-local hidden_state and shared input_layernorm weight as Q
+
+The Worker keeps the shared broadcast packet acquired across Q/K/V phases and
+then releases it before the remaining attention placeholder phases.
+
+num_lanes=8, num_layers=28, hidden_size=1024, attention_size=2048,
+intermediate_size=3072, fabric_group_size=4, q_rows_per_packet=4,
+packet_elements=15368, output_values_per_lane=48, compute_cores=8,
+max tile inputs=2, max tile outputs=1
+phase_owned_errors=0 against local BF16 boundary reference
+qwen3_phase_output_max_abs=0.003906, qwen3_phase_output_errors=0 at abs_tol=0.5
+large packet compile/preflight still passes at packet_elements=16896
+```
+
+The useful topology rule after D1.5j is that a shared broadcast token may be
+held across multiple adjacent phases if all consumers advance in the same
+order. That let Q/K/V share input RMSNorm data without adding another FIFO.
+
 Production entry:
 
 ```bash
@@ -966,9 +990,9 @@ resource stats are recorded
 Remaining D1 sequence:
 
 ```text
-D1.5j expand Q/K/V shard coverage so attention consumes NPU-produced vectors
-D1.5k replace attention packet group with real chunked online attention
-D1.5l feed downstream phases from full NPU-produced activation vectors instead of host reference packets
+D1.5k expand Q/K/V shard coverage beyond the first 32 rows
+D1.5l replace remaining attention packet group with real q/k norm, RoPE, and chunked online attention
+D1.5m feed downstream phases from full NPU-produced activation vectors instead of host reference packets
 D2 run repeated layers in the same phase-owned topology
 ```
 

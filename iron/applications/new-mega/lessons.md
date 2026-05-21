@@ -828,6 +828,24 @@ residual/norm/down output space; `attention_size = num_attention_heads *
 head_dim` owns Q/O attention space. Treat these as separate dimensions in
 packet manifests and external-kernel ABI declarations.
 
+D1.5j replaced two attention chunk placeholders with real K/V projection rows:
+
+```text
+attention_chunk_0 packet = k_proj row shard
+attention_chunk_1 packet = v_proj row shard
+projection kernel = input RMSNorm(hidden_state) dot row shard
+output object = Q shard + K shard + V shard + attention residual shard + gate/up shard + layer residual shard
+phase_owned_errors=0
+qwen3_phase_output_max_abs=0.003906
+qwen3_phase_output_errors=0
+```
+
+The topology lesson is that the shared broadcast packet does not have to be
+released immediately after Q. It can be held through adjacent Q/K/V phases so
+all three projections reuse the same input RMSNorm weight without adding FIFO
+endpoints. The tradeoff is temporal: every lane in the broadcast group must
+advance through those phases in the same order.
+
 ## What To Do Next
 
 The next useful `new-mega` work should continue the proof ladder, not jump to a
@@ -836,7 +854,7 @@ full rewrite.
 Recommended order:
 
 ```text
-1. Expand Q/K/V shard coverage so attention can consume NPU-produced vectors.
+1. Expand Q/K/V shard coverage beyond the first 32 rows.
 2. Keep broadcast/join fabric grouped at four lanes unless a measured placement
    experiment proves wider groups are legal.
 3. Run preflight and full aiecc before executing on NPU.

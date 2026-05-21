@@ -904,6 +904,9 @@ resolve_program fails before aiecc:
 
 ValueError: Kernel 'new_mega_phase0_q_shard_bf16' expects 11 argument(s),
 but 10 were provided.
+
+ValueError: Kernel 'new_mega_phase0_q_shard_bf16' expects 9 argument(s),
+but 10 were provided.
 ```
 
 Diagnostic:
@@ -920,6 +923,10 @@ Evidence found:
 After adding attention_size to the new o_proj kernel, one stale np.int32 was
 left in the q_shard Kernel(...) declaration. The q_shard C++ signature still
 took 10 arguments, and the worker call passed 10 arguments.
+
+After adding a generic K/V projection kernel, the opposite version of the same
+bug happened: q_shard lost one np.int32 in the Python Kernel(...) declaration,
+while the C++ signature and Worker call still used 10 arguments.
 ```
 
 Root cause:
@@ -933,7 +940,8 @@ lowering.
 Fix:
 
 ```text
-Remove the extra np.int32 from the q_shard Kernel(...) declaration.
+Add or remove the np.int32 in the q_shard Kernel(...) declaration so the count
+matches the C++ signature and Worker call.
 When adding a dimension parameter, update only the affected Kernel(...)
 declaration, C++ signature, and worker call together.
 ```
