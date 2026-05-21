@@ -701,3 +701,75 @@ Actual conclusion:
 The attention boundary was already corrupted. Restore the last token-correct
 attention path before optimizing MLP or adding more metadata FIFOs.
 ```
+
+## Real Phase Shards Match Local BF16 But Differ From PyTorch
+
+Symptom:
+
+```text
+Production phase-owned real Q/gate/up shards:
+  phase_owned_errors: 0
+  qwen3_phase_output_max_abs: 0.250000
+  qwen3_phase_output_mean_abs: 0.003669
+
+Production phase-owned real down/residual shard, before fixing the reference:
+  phase_owned_errors: 0
+  qwen3_phase_output_max_abs: 1.000000
+  qwen3_phase_output_errors: 2
+```
+
+Diagnostic:
+
+```text
+Compare the NPU output to two references:
+  1. a local reference that mirrors the AIE kernel boundary and loop order
+  2. the PyTorch Qwen3 q_proj reference
+```
+
+Evidence found:
+
+```text
+The NPU output matches the local BF16 loop reference exactly.
+The PyTorch q_proj and gate/up projection references differ by up to 0.25 but
+stay under the operator tolerance used for these real-shape shards.
+
+For down/residual, the only two failing elements were:
+  layer 26 lane 0 residual row 2: local BF16=243.0, PyTorch=242.0
+  layer 27 lane 3 residual row 1: local BF16=-33.25, PyTorch=-34.0
+
+Reproducing without NPU by comparing phase_owned_reference against the Qwen3
+reference produced the same two mismatches. That ruled out ObjectFIFO, DMA,
+placement, and external-kernel ABI.
+```
+
+Root cause:
+
+```text
+This is an accumulation-boundary difference, not a dataflow or weight-layout
+bug. The AIE kernels explicitly cast BF16 operands to float in scalar loops
+and store BF16 output. PyTorch's BF16 linear path can use a different
+accumulation/reduction implementation; the 3072-wide down projection made this
+large enough to exceed the old 0.5 threshold on two residual elements.
+```
+
+Fix:
+
+```text
+Use the local BF16 boundary reference as the hard gate for the kernel.
+For independent row-shard checks, generate the Qwen3 shard reference with the
+same explicit contract:
+
+  BF16 inputs -> scalar float32 accumulation -> BF16 output
+
+Keep PyTorch Qwen3 references as model-semantic tolerance checks, not as the
+strict acceptance gate for a specific AIE row-shard kernel.
+```
+
+Accepted recheck:
+
+```text
+phase_owned_max_abs: 0.000488
+phase_owned_errors: 0
+qwen3_phase_output_max_abs: 0.000488
+qwen3_phase_output_errors: 0
+```

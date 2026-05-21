@@ -437,22 +437,410 @@ iron/applications/new-mega/production
   fixed_attention.cc
 ```
 
-The next D1 boundary is no longer "does fixed-cache attention work on real
-data"; it is "can QKV/RoPE produce the present K/V fixed outputs and feed this
-attention path without adding unsafe endpoints."
+D1.1a adds a second production boundary:
+
+```text
+stage: qkv-rope-present
+input object:  q_raw + k_raw + v_raw + q_norm_weight + k_norm_weight + rope_lut
+output object: q_rope + present_k + present_v
+```
+
+It passed two real prompts:
+
+```text
+position=26 max_abs=0.031250 errors=0
+position=22 max_abs=0.062500 errors=0
+```
+
+The resource lesson matches D0:
+
+```text
+Packing the six logical inputs into one FIFO object kept the compute tile at
+one input FIFO and one output FIFO. Do not split these into six separate
+runtime fills unless a later topology proves the endpoint cost is safe.
+```
+
+D1.1b showed that qkv-rope-present can feed fixed-attention through host-owned
+K/V writeback, but that was still two dispatches with a host step in the
+middle.
+
+D1.1b production result:
+
+```text
+stage: qkv-rope-attention
+position=26 qkv_errors=0 context_max_abs=0.015625 context_errors=0
+position=22 qkv_errors=0 context_max_abs=0.019531 context_errors=0
+```
+
+D1.1c fixes that structural gap:
+
+```text
+stage: qkv-rope-attention-present
+single NPU dispatch for q_norm/k_norm/RoPE -> attention
+attention combines past cache chunks with current present K/V
+host writes present K/V after dispatch, not between qkv and attention
+position=26 current_errors=0 context_errors=0 npu_time_us=4403.635
+position=22 current_errors=0 context_errors=0 npu_time_us=4096.564
+```
+
+The important design lesson is that host-owned KV update is still viable for a
+one-token single-dispatch decode path, as long as current present K/V is also
+fed directly to the in-dispatch attention worker. The cache update belongs
+after the token/layer dispatch, not between QKV and attention.
+
+This changes the production rule:
+
+```text
+qkv-rope-attention-present is the base graph.
+Append O projection, residual, RMSNorm, and MLP to that graph.
+Use older independent-op stages only to isolate numerical boundaries.
+```
+
+The remaining boundary question is whether QKV GEMV projection can move into
+the same production path without adding unsafe endpoints, then whether MLP can
+be added while preserving the same staged checks.
+
+D1.2 production result:
+
+```text
+stage: qkv-rope-attention-o
+O projection: existing GEMV operator, M=1024, K=2048, columns=4
+position=26 attn_out_errors=0 attn_residual_errors=0
+position=22 attn_out_errors=0 attn_residual_errors=0
+```
+
+The lesson is practical: use the accepted standalone GEMV topology to prove
+the O projection boundary before trying to fuse it into the phase-owned graph.
+Do not create an L1-sized O-projection weight object.
+
+D1.2c fused that boundary into the main graph:
+
+```text
+stage: qkv-rope-attention-o-fused
+single NPU dispatch: qkv/rope -> attention -> O projection -> residual
+position=26 current_errors=0 attn_out_errors=0 attn_residual_errors=0
+position=22 current_errors=0 attn_out_errors=0 attn_residual_errors=0
+preflight_compute_cores=4
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=2
+```
+
+The useful pattern was to pack the large O-projection weight and residual into
+one runtime buffer, and to pack current K/V, attn_out, and residual output into
+one output buffer. That kept the runtime ABI at four memrefs instead of
+reintroducing the BO-metadata mismatch class of failures.
+
+D1.3c extended the same main graph through the MLP:
+
+```text
+stage: qkv-rope-attention-o-mlp-fused
+single NPU dispatch:
+  qkv/rope -> attention -> O projection -> post-attention RMSNorm ->
+  gate/up -> SiLU*up -> down projection -> layer residual
+position=26 current_errors=0 attn_out_errors=0 ffn_hidden_errors=0
+            ffn_out_errors=0 layer_residual_errors=0
+position=19 current_errors=0 attn_out_errors=0 ffn_hidden_errors=0
+            ffn_out_errors=0 layer_residual_errors=0
+preflight_compute_cores=14
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=2
+```
+
+D1.3c later pulled the standalone GEMV row-shard pattern into the single graph
+for O projection, gate/up, and down projection:
+
+```text
+context/xnorm broadcast through ObjectFifo
+per-column row-sharded weights
+per-column output shards
+join back to a full vector for the next phase
+```
+
+The useful lesson was not "always add columns". O-only sharding compiled and
+matched numerically, but slowed the graph because the join/copy overhead was
+larger than the saved O-projection work. O plus gate/up sharding was large
+enough to pay for the overhead:
+
+```text
+D1.3c baseline:        about 10.8-11.2ms on the default prompt
+O-only row sharding:   11.886ms, rejected as a standalone speed change
+O + gate/up sharding:   9.581ms, accepted with zero verification errors
+O + gate/up + down:      8.586ms, accepted with zero verification errors
+```
+
+Two resource lessons mattered more than MLP math:
+
+```text
+1. Debug drains count as output DMA endpoints. A worker producing
+   attn_residual_debug, final_residual, ffn_hidden, and ffn_hidden_debug
+   exhausted output channels.
+2. Gate and up weights must be one paired stream when xnorm is also an input.
+   Separate gate_weight and up_weight FIFOs made a three-input tile and failed
+   preflight.
+```
+
+D1.4 input projection pulled the same row-sharded GEMV pattern into the front
+of the layer:
+
+```text
+diagnostic stage: input-qkv-rope-present
+input RMSNorm -> Q/K/V projection -> Q/K norm+RoPE -> current Q/K/V
+Q projection: 2 row shards
+K projection: 2 row shards
+V projection: 2 row shards
+position=26 current_errors=0 q_raw_errors=0 k_raw_errors=0 v_raw_errors=0
+position=19 current_errors=0 q_raw_errors=0 k_raw_errors=0 v_raw_errors=0
+preflight_compute_cores=7
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=2
+```
+
+The important design change was to fuse Q/K norm+RoPE into the Q/K projection
+shard workers. The first attempt projected Q/K/V into full raw tensors and fed
+q_raw, k_raw, v_raw, and metadata to one final rope worker; aiecc rejected that
+with an input DMA channel failure. Shard-local RoPE keeps every projection tile
+at two inputs: `xnorm+metadata` and one weight stream.
+
+The runtime lesson was separate: when a stage drains many independent output
+shards, waiting on one unrelated drain is not enough. The Q/K drains returned
+zeros until every independent drain used `wait=True`. A later performance graph
+should join outputs into dependent streams or keep explicit waits for every
+host-visible shard.
+
+D1.4b removed the standalone input projection op and fused the same work into
+the `qkv-rope-attention-o-mlp-fused` graph:
+
+```text
+stage: qkv-rope-attention-o-mlp-fused
+hidden input -> input RMSNorm -> Q/K/V projection -> Q/K norm+RoPE ->
+  attention -> O projection -> post-attention RMSNorm -> MLP -> layer residual
+position=26 current_errors=0 attn_out_errors=0 ffn_hidden_errors=0
+            ffn_out_errors=0 layer_residual_errors=0
+position=19 current_errors=0 attn_out_errors=0 ffn_hidden_errors=0
+            ffn_out_errors=0 layer_residual_errors=0
+preflight_runtime_memrefs=5
+preflight_compute_cores=25
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=2
+```
+
+The useful packing rule was learned again: do not add a sixth host memref for
+Q/K/V weights. The runtime metadata exposes five HOST BO slots, so the first
+buffer now packs input metadata and Q/K/V weights together and TAP offsets
+select the subregions.
+
+But this was still the wrong production shape. The graph used 25 compute cores
+for one layer. That proves stage math can be wired together, but it does not
+solve the megakernel problem because adding more layers would again consume
+resources statically. Production has now been reset to a single phase-owned
+path:
+
+```text
+stage: phase-owned
+fixed lane Workers
+packed layer/phase packet stream
+Worker loop: for layer, for phase
+one input FIFO and one output FIFO per lane
+```
+
+The first production recheck uses the full 28-layer phase count, not a
+one-layer toy:
+
+```text
+num_lanes=8
+num_layers=28
+phase_packets_per_layer=11
+hidden_size=1024
+packet_elements=2048
+preflight_compute_cores=8
+preflight_max_compute_tile_inputs=1
+preflight_max_compute_tile_outputs=1
+phase_owned_errors=0
+
+packet_elements=16896 compile/preflight also passed with
+max_fifo_buffered_bytes=33792 and compute_cores=8.
+```
+
+The rule going forward is stricter:
+
+```text
+No production standalone op path.
+No production static single-layer fusion path.
+Real kernels must be inserted into the phase-owned lane topology.
+```
+
+D1.5a made the first real math insertion without changing the topology:
+
+```text
+phase 0 packet = hidden[1024] || norm_weight[1024]
+phase 0 kernel = input RMSNorm checksum
+num_lanes=8
+num_layers=28
+compute_cores=8
+max_tile_inputs=1
+max_tile_outputs=1
+phase_owned_errors=0
+```
+
+The practical kernel lesson was to use `aie::invsqrt`, not `sqrtf`, for AIE
+RMSNorm code.
+
+D1.5b extended the same phase without adding FIFOs:
+
+```text
+phase 0 packet = hidden[1024] || norm_weight[1024] || q_weight_row[1024]
+phase 0 kernel = input RMSNorm checksum + one Q row dot
+num_lanes=8
+num_layers=28
+packet_elements=3072
+compute_cores=8
+max_tile_inputs=1
+max_tile_outputs=1
+phase_owned_errors=0
+```
+
+D1.5c increased phase-0 compute density again without changing the topology:
+
+```text
+phase 0 packet = hidden[1024] || norm_weight[1024] || q_weight_block[4, 1024]
+phase 0 kernel = input RMSNorm checksum + four Q row dot accumulations
+num_lanes=8
+num_layers=28
+q_rows_per_packet=4
+packet_elements=6144
+compute_cores=8
+max_tile_inputs=1
+max_tile_outputs=1
+phase_owned_errors=0
+```
+
+The practical architecture lesson is that the next true-fusion steps should
+keep adding real work inside the phase-owned loop and only widen the topology
+after a measured phase proves that one packet stream per lane is the bottleneck.
+
+D1.5d corrected the missing lane-communication structure:
+
+```text
+shared packet = hidden[1024] || norm_weight[1024]
+lane packet = q_weight_block[4, 1024]
+fabric = two groups of four lanes
+group input = shared stream duplicated once per group
+group output = local join of lane Q shards
+num_lanes=8
+fabric_group_size=4
+compute_cores=8
+max_tile_inputs=2
+max_tile_outputs=1
+phase_owned_errors=0
+```
+
+The failed intermediate attempt was useful: one 8-way broadcast/join fabric
+failed during `resolve_program()` placement, while a 4-lane version compiled.
+That established a concrete rule for this production path: use 4-lane local
+communication groups unless a new placement experiment proves a wider group.
+
+D1.5e fixed another structural gap: scalar state was not activation state.
+
+```text
+hidden_state[1024] BF16 Buffer per lane Worker
+layer 0 initializes hidden_state from the shared stream
+phase 0 reads hidden_state
+next_layer_token writes hidden_state for the next layer
+state[0] remains a checksum only
+num_lanes=8
+fabric_group_size=4
+compute_cores=8
+max_tile_inputs=2
+max_tile_outputs=1
+phase_owned_errors=0
+```
+
+The rule is now explicit: debug checksums are allowed, but they do not count as
+phase/layer activation transfer. Every real phase must either pass data through
+ObjectFifo fabric or write an activation-sized tile-local buffer that the next
+phase actually reads.
+
+D1.5f replaced patterned packets with real Qwen3 data for the proven Q shard:
+
+```text
+real hidden initializer from Qwen3 decode
+real input_layernorm.weight for each layer
+real q_proj row shards for each lane
+real next-layer hidden written through next_layer_token packets
+phase_owned_errors=0
+qwen3_q_shard_max_abs=0.250000
+qwen3_q_shard_errors=0 at abs_tol=0.5
+```
+
+The local BF16 boundary reference is now the strict gate for the AIE kernel and
+the PyTorch Qwen3 q_proj reference is the semantic tolerance gate. Do not
+interpret a bounded PyTorch BF16 linear difference as a dataflow bug unless the
+local boundary reference also fails.
+
+D1.5g replaced another synthetic phase with real Qwen3 gate/up computation:
+
+```text
+gate_up packet = attn_residual + post_norm_weight + gate/up row shards
+gate_up kernel = post RMSNorm + gate_proj/up_proj dot rows
+output object = Q shard + gate/up shard
+phase_owned_errors=0
+qwen3_phase_output_max_abs=0.250000
+qwen3_phase_output_errors=0 at abs_tol=0.5
+```
+
+The important fabric lesson is that one lane output object can stay acquired
+across multiple phases. That lets the graph add real phase outputs without
+adding another lane output FIFO and another join fabric immediately.
+
+D1.5h replaced the down/residual synthetic phase with real Qwen3 computation:
+
+```text
+down_proj packet = ffn_hidden + attention residual shard + down_proj row shard
+down kernel = dot(ffn_hidden, down_proj row) + residual shard
+output object = Q shard + gate/up shard + residual shard
+phase_owned_errors=0
+qwen3_phase_output_max_abs=0.000488
+qwen3_phase_output_errors=0 at abs_tol=0.5
+```
+
+The debug lesson was sharper than the implementation: a PyTorch `F.linear`
+reference produced two residual-shard mismatches greater than 0.5 even while
+the NPU matched the packet-level BF16 reference. The cause was BF16 reduction
+semantics for the 3072-wide down dot, not dataflow. For row-shard kernels, the
+strict reference must state the contract exactly: BF16 inputs, scalar float32
+accumulation, and BF16 output. Use the full PyTorch model path as a semantic
+tolerance check, not as the first-line kernel gate.
+
+D1.5i replaced the O projection placeholder with real Qwen3 computation:
+
+```text
+o_proj packet = attention_context[2048] + input residual shard + o_proj row shard
+o kernel = dot(attention_context, o_proj row) + residual shard
+output object = Q shard + attention residual shard + gate/up shard + layer residual shard
+phase_owned_errors=0
+qwen3_phase_output_max_abs=0.000488
+qwen3_phase_output_errors=0
+```
+
+The useful debug finding was a shape-modeling bug caught before NPU execution:
+the attention context is 2048 wide in Qwen3-0.6B, not 1024. `hidden_size` owns
+residual/norm/down output space; `attention_size = num_attention_heads *
+head_dim` owns Q/O attention space. Treat these as separate dimensions in
+packet manifests and external-kernel ABI declarations.
 
 ## What To Do Next
 
-The next useful `new-mega` work should be a proof ladder, not a full rewrite.
+The next useful `new-mega` work should continue the proof ladder, not jump to a
+full rewrite.
 
 Recommended order:
 
 ```text
-1. Add D1.1: NPU-side QKV/RoPE with fixed present K/V outputs feeding the
-   accepted D1.0 attention path.
-2. Keep each compute tile to one or two input FIFOs and one output FIFO.
+1. Expand Q/K/V shard coverage so attention can consume NPU-produced vectors.
+2. Keep broadcast/join fabric grouped at four lanes unless a measured placement
+   experiment proves wider groups are legal.
 3. Run preflight and full aiecc before executing on NPU.
-4. Verify every layer boundary against PyTorch/reference buffers.
+4. Verify every inserted phase against PyTorch/reference buffers.
 5. Measure whether lane Workers are compute-bound or DMA-bound before adding
    more columns.
 6. Only then decide whether a GEMM-style L2 topology is worth pulling into the

@@ -19,62 +19,181 @@ from iron.common import (
 )
 from iron.common.context import AIEContext
 
+PHASE_LABELS = (
+    "input_qkv",
+    "attention_chunk_0",
+    "attention_chunk_1",
+    "attention_chunk_2",
+    "attention_chunk_3",
+    "o_proj",
+    "post_norm",
+    "gate_up",
+    "down_proj",
+    "layer_residual",
+    "next_layer_token",
+)
+
 
 @dataclass
-class NewMegaFixedCacheAttentionContext(MLIROperator):
-    """Production fixed-cache Qwen3 decode-attention context stage.
+class NewMegaPhaseOwnedDecode(MLIROperator):
+    """Production direction: fixed lane workers consume packed phase streams.
 
-    This is the first production new-mega stage. Inputs are real Qwen3
-    q_norm+RoPE queries and a host-updated full K/V cache stream. The graph
-    shape is fixed for max_seq_len; live position is represented by mask data
-    inside the packed cache stream.
+    This class models the reusable phase-owned topology rather than a
+    statically expanded single layer. Real Qwen3 kernels are added inside this
+    topology, not as separate static stage workers.
     """
 
-    max_seq_len: int = 256
-    q_heads: int = 16
-    kv_heads: int = 8
-    head_dim: int = 128
-    chunk_size: int = 64
+    num_lanes: int = 8
+    num_layers: int = 28
+    phase_packets_per_layer: int = len(PHASE_LABELS)
+    hidden_size: int = 1024
+    attention_size: int = 2048
+    intermediate_size: int = 3072
+    q_rows_per_packet: int = 4
+    fabric_group_size: int = 4
+    packet_elements: int = 15368
     context: AIEContext | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        if self.max_seq_len % self.chunk_size != 0:
-            raise ValueError("max_seq_len must be divisible by chunk_size")
-        if self.q_heads % self.kv_heads != 0:
-            raise ValueError("q_heads must be divisible by kv_heads")
-        if self.head_dim % 32 != 0:
-            raise ValueError("head_dim must be a multiple of 32")
+        if self.num_lanes <= 0:
+            raise ValueError("num_lanes must be positive")
+        if self.num_layers <= 0:
+            raise ValueError("num_layers must be positive")
+        if self.phase_packets_per_layer <= 0:
+            raise ValueError("phase_packets_per_layer must be positive")
+        if self.phase_packets_per_layer < 2:
+            raise ValueError(
+                "phase_packets_per_layer must include a next_layer_token phase"
+            )
+        if self.phase_packets_per_layer < 9:
+            raise ValueError("phase_packets_per_layer must include a gate_up phase")
+        if self.phase_packets_per_layer < 10:
+            raise ValueError("phase_packets_per_layer must include a down_proj phase")
+        if self.packet_elements <= 0:
+            raise ValueError("packet_elements must be positive")
+        if self.packet_elements % 8 != 0:
+            raise ValueError("packet_elements must be a multiple of 8 BF16 values")
+        if self.hidden_size <= 0:
+            raise ValueError("hidden_size must be positive")
+        if self.attention_size <= 0:
+            raise ValueError("attention_size must be positive")
+        if self.intermediate_size <= 0:
+            raise ValueError("intermediate_size must be positive")
+        if self.q_rows_per_packet <= 0:
+            raise ValueError("q_rows_per_packet must be positive")
+        if self.fabric_group_size <= 0:
+            raise ValueError("fabric_group_size must be positive")
+        if self.num_lanes % self.fabric_group_size != 0:
+            raise ValueError("num_lanes must be divisible by fabric_group_size")
+        gate_up_elements = (2 + 2 * self.q_rows_per_packet) * self.hidden_size
+        o_elements = (
+            self.attention_size
+            + self.q_rows_per_packet
+            + self.q_rows_per_packet * self.attention_size
+        )
+        down_elements = (
+            self.intermediate_size
+            + self.q_rows_per_packet
+            + self.q_rows_per_packet * self.intermediate_size
+        )
+        minimum_packet_elements = max(o_elements, gate_up_elements, down_elements)
+        if self.packet_elements < minimum_packet_elements:
+            raise ValueError(
+                "packet_elements must hold o_proj, gate/up, and down phase payloads"
+            )
         super().__init__(context=self.context)
 
     @property
-    def q_size(self) -> int:
-        return self.q_heads * self.head_dim
+    def name(self) -> str:
+        dev = aie_utils.get_current_device().resolve().name
+        return (
+            "NewMegaPhaseOwnedDecode"
+            f"_l{self.num_lanes}"
+            f"_d{self.num_layers}"
+            f"_p{self.phase_packets_per_layer}"
+            f"_e{self.packet_elements}"
+            f"_h{self.hidden_size}"
+            f"_a{self.attention_size}"
+            f"_i{self.intermediate_size}"
+            f"_q{self.q_rows_per_packet}"
+            f"_g{self.fabric_group_size}"
+            f"_{dev}"
+        )
 
     @property
-    def num_chunks(self) -> int:
-        return self.max_seq_len // self.chunk_size
+    def total_phase_packets(self) -> int:
+        return self.num_layers * self.phase_packets_per_layer
 
     @property
-    def packed_chunk_elements(self) -> int:
-        return 2 * self.chunk_size * self.head_dim + self.chunk_size
+    def input_elements(self) -> int:
+        return self.num_lanes * self.total_phase_packets * self.packet_elements
 
     @property
-    def packed_stream_elements(self) -> int:
-        return self.q_heads * self.num_chunks * self.packed_chunk_elements
+    def shared_packet_elements(self) -> int:
+        return 2 * self.hidden_size
+
+    @property
+    def shared_input_elements(self) -> int:
+        return self.num_layers * self.shared_packet_elements
+
+    @property
+    def output_elements(self) -> int:
+        return self.num_layers * self.output_values_per_layer
+
+    @property
+    def q_output_values_per_lane(self) -> int:
+        return ((self.q_rows_per_packet + 7) // 8) * 8
+
+    @property
+    def gate_up_output_values_per_lane(self) -> int:
+        return ((2 * self.q_rows_per_packet + 7) // 8) * 8
+
+    @property
+    def attention_output_values_per_lane(self) -> int:
+        return ((self.q_rows_per_packet + 7) // 8) * 8
+
+    @property
+    def residual_output_values_per_lane(self) -> int:
+        return ((self.q_rows_per_packet + 7) // 8) * 8
+
+    @property
+    def output_values_per_lane(self) -> int:
+        return (
+            self.q_output_values_per_lane
+            + self.attention_output_values_per_lane
+            + self.gate_up_output_values_per_lane
+            + self.residual_output_values_per_lane
+        )
+
+    @property
+    def output_values_per_layer(self) -> int:
+        return self.num_lanes * self.output_values_per_lane
+
+    @property
+    def packet_bytes(self) -> int:
+        return self.packet_elements * 2
+
+    @property
+    def lane_stream_bytes(self) -> int:
+        return self.total_phase_packets * self.packet_bytes
 
     def get_mlir_artifact(self) -> PythonGeneratedMLIRArtifact:
         return PythonGeneratedMLIRArtifact(
             f"{self.name}.mlir",
             DesignGenerator(
                 self.operator_dir / "design.py",
-                "fixed_cache_attention_context",
+                "phase_owned_decode",
                 (
                     aie_utils.get_current_device(),
-                    self.max_seq_len,
-                    self.q_heads,
-                    self.kv_heads,
-                    self.head_dim,
-                    self.chunk_size,
+                    self.num_lanes,
+                    self.num_layers,
+                    self.phase_packets_per_layer,
+                    self.packet_elements,
+                    self.hidden_size,
+                    self.attention_size,
+                    self.intermediate_size,
+                    self.q_rows_per_packet,
+                    self.fabric_group_size,
                 ),
             ),
         )
@@ -82,19 +201,16 @@ class NewMegaFixedCacheAttentionContext(MLIROperator):
     def get_kernel_artifacts(self) -> list[KernelObjectArtifact]:
         return [
             KernelObjectArtifact(
-                "fixed_attention.o",
-                dependencies=[SourceArtifact(self.operator_dir / "fixed_attention.cc")],
-                extra_flags=[
-                    f"-DNEW_MEGA_HEAD_DIM={self.head_dim}",
-                    f"-DNEW_MEGA_CHUNK_SIZE={self.chunk_size}",
-                    f"-DNEW_MEGA_ATTN_SCALE={self.head_dim ** -0.5}f",
+                "phase_owned_kernels.o",
+                dependencies=[
+                    SourceArtifact(self.operator_dir / "phase_owned_kernels.cc")
                 ],
             )
         ]
 
     def get_arg_spec(self) -> list[AIERuntimeArgSpec]:
         return [
-            AIERuntimeArgSpec("in", (self.q_size,)),
-            AIERuntimeArgSpec("in", (self.packed_stream_elements,)),
-            AIERuntimeArgSpec("out", (self.q_size,)),
+            AIERuntimeArgSpec("in", (self.shared_input_elements,)),
+            AIERuntimeArgSpec("in", (self.input_elements,)),
+            AIERuntimeArgSpec("out", (self.output_elements,)),
         ]

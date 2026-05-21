@@ -29,9 +29,11 @@ methods are split by diagnostic boundary.
 | Composed checkpoint fails but standalone producer may pass | 30 |
 | Decode is correct but much slower than NPU time suggests | 32 |
 | Decode is correct and NPU time dominates | 35, 41, 42 |
+| Column-sharded graph is correct but slower | 35, 41, 42 |
 | Decode is correct but compile still happens per position | 6, 46 |
 | Packed weight artifact, offset, or XRT sub-buffer risk | 33, 34 |
 | Sweep script fails after loading many xclbins | 49 |
+| New CLI stage fails before MLIR or NPU work | 50 |
 
 ### Runtime
 
@@ -70,6 +72,7 @@ methods are split by diagnostic boundary.
 - [45. Use ObjectFifo Split To Reduce Runtime Endpoints](methods-static.md#45-use-objectfifo-split-to-reduce-runtime-endpoints)
 - [46. Diff Position Artifacts Before Choosing Patch Or Buckets](methods-static.md#46-diff-position-artifacts-before-choosing-patch-or-buckets)
 - [47. Check ObjectFIFO Object Alignment After Metadata Tails](methods-static.md#47-check-objectfifo-object-alignment-after-metadata-tails)
+- [50. Run Compileall Before NPU Debugging](methods-static.md#50-run-compileall-before-npu-debugging)
 
 ### Numeric
 

@@ -142,11 +142,184 @@ Run:
 
 ## Next Substeps
 
-After D1.0:
+D1.1a accepted in production:
 
 ```text
-D1.1: add NPU-side QKV/RoPE and fixed present K/V outputs
-D1.2: add O projection + residual
-D1.3: add post-attention RMSNorm + MLP
-D1.4: run full single-layer output check
+stage: qkv-rope-present
+input:  q_raw, k_raw, v_raw, q_norm_weight, k_norm_weight, rope_lut
+output: q_rope, present_k, present_v
+
+default prompt position=26:
+  npu_time_us=760.438
+  max_abs=0.031250
+  errors=0
+
+second prompt position=22:
+  npu_time_us=750.058
+  max_abs=0.062500
+  errors=0
+```
+
+D1.1b accepted in production:
+
+```text
+stage: qkv-rope-attention
+boundary: qkv-rope-present -> host K/V writeback -> fixed-attention
+
+default prompt position=26:
+  qkv_npu_time_us=871.263
+  attention_npu_time_us=4386.955
+  qkv_errors=0
+  context_max_abs=0.015625
+  context_errors=0
+
+second prompt position=22:
+  qkv_npu_time_us=852.138
+  attention_npu_time_us=3342.268
+  qkv_errors=0
+  context_max_abs=0.019531
+  context_errors=0
+```
+
+D1.1c accepted in production:
+
+```text
+stage: qkv-rope-attention-present
+boundary: qkv-rope-present -> in-dispatch attention with present K/V
+host cache writeback: after dispatch only
+
+default prompt position=26:
+  npu_time_us=4403.635
+  current_errors=0
+  context_max_abs=0.015625
+  context_errors=0
+
+second prompt position=22:
+  npu_time_us=4096.564
+  current_errors=0
+  context_max_abs=0.019531
+  context_errors=0
+```
+
+D1.2 accepted in production:
+
+```text
+stage: qkv-rope-attention-o
+boundary: accepted attention context -> O projection GEMV -> host residual add
+O projection: GEMV M=1024 K=2048 columns=4
+
+default prompt position=26:
+  o_proj_npu_time_us=1098.267
+  attn_out_max_abs=0.005859
+  attn_out_errors=0
+  attn_residual_max_abs=0.005859
+  attn_residual_errors=0
+
+second prompt position=22:
+  o_proj_npu_time_us=970.969
+  attn_out_max_abs=0.007812
+  attn_out_errors=0
+  attn_residual_max_abs=0.007812
+  attn_residual_errors=0
+```
+
+D1.2c accepted in production:
+
+```text
+stage: qkv-rope-attention-o-fused
+boundary: qkv/rope -> attention with present K/V -> O projection -> residual
+dispatches: 1
+
+default prompt position=26:
+  npu_time_us=5664.255
+  current_errors=0
+  attn_out_max_abs=0.005859
+  attn_out_errors=0
+  attn_residual_max_abs=0.005859
+  attn_residual_errors=0
+
+second prompt position=22:
+  npu_time_us=5329.210
+  current_errors=0
+  attn_out_max_abs=0.007812
+  attn_out_errors=0
+  attn_residual_max_abs=0.007812
+  attn_residual_errors=0
+```
+
+D1.3c accepted in production:
+
+```text
+stage: qkv-rope-attention-o-mlp-fused
+boundary: qkv/rope -> attention with present K/V -> O projection ->
+          post-attention RMSNorm -> MLP -> layer residual
+dispatches: 1
+
+default prompt position=26:
+  npu_time_us=10821.846
+  current_errors=0
+  attn_out_errors=0
+  ffn_hidden_errors=0
+  ffn_out_errors=0
+  layer_residual_errors=0
+
+second prompt position=19:
+  prompt="What is the capital of France?"
+  npu_time_us=10284.365
+  current_errors=0
+  attn_out_errors=0
+  ffn_hidden_errors=0
+  ffn_out_errors=0
+  layer_residual_errors=0
+```
+
+D1.4b accepted in production:
+
+```text
+stage: qkv-rope-attention-o-mlp-fused
+boundary: hidden input -> input RMSNorm -> Q/K/V projection -> Q/K norm+RoPE ->
+          attention with present K/V -> O projection -> post-attention RMSNorm ->
+          MLP -> layer residual
+dispatches: 1
+runtime_memrefs=5
+preflight_compute_cores=25
+preflight_total_dma_tasks=21
+
+default prompt position=26:
+  npu_time_us=10313.281
+  current_errors=0
+  attn_out_errors=0
+  ffn_hidden_errors=0
+  ffn_out_errors=0
+  layer_residual_errors=0
+
+second prompt position=19:
+  prompt="What is the capital of France?"
+  npu_time_us=9547.494
+  current_errors=0
+  attn_out_errors=0
+  ffn_hidden_errors=0
+  ffn_out_errors=0
+  layer_residual_errors=0
+```
+
+Implementation note:
+
+```text
+The first D1.3c shape exceeded output DMA channels by producing too many debug
+and production FIFOs from one MLP Worker. The accepted graph splits post-norm
+from gate/up and packs gate/up row groups into one input FIFO so every compute
+tile stays within two input and two output ObjectFIFOs.
+
+D1.4b removed the standalone input-qkv-rope-present diagnostic op. Adding a
+separate Q/K/V-weight memref would have produced six runtime memrefs, exceeding
+the five HOST BO slots exposed by metadata, so input metadata and Q/K/V weights
+are packed into one first buffer.
+```
+
+Remaining substeps:
+
+```text
+D1.4c: add final RMSNorm/logit boundary check for a complete single layer
+D2: extend the accepted layer graph toward repeated layers
 ```

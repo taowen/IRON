@@ -58,6 +58,88 @@ k_rope and v ObjectFIFOs each had one shim consumer.
 cache current-position errors were zero.
 ```
 
+## Worker Loop Index Does Not Match External Kernel ABI
+
+Symptom:
+
+```text
+MLIRError: Verification failed:
+'func.call' op operand type mismatch:
+expected operand type 'i32', but provided 'index'
+```
+
+Diagnostic used:
+
+```text
+Read the failing `func.call` signature. In Worker code, `range_()` loop
+variables are MLIR `index` values; external kernels declared with `np.int32`
+expect i32.
+```
+
+Root cause:
+
+```text
+The phase-owned production skeleton passed `layer` and `phase` loop variables
+directly to `new_mega_phase_packet_accum_bf16`, whose Kernel declaration used
+np.int32 for both arguments.
+```
+
+Fix used:
+
+```python
+layer_i32 = index.casts(T.i32(), layer)
+phase_i32 = index.casts(T.i32(), phase)
+packet_kernel(packet, state, packet_elements, layer_i32, phase_i32)
+```
+
+Recheck:
+
+```text
+MLIR generation proceeds past verification; subsequent failures, if any, are
+not this ABI type mismatch.
+```
+
+## AIE Kernel Cannot Use Host Math sqrtf
+
+Symptom:
+
+```text
+phase_owned_kernels.cc: error: use of undeclared identifier 'sqrtf'
+```
+
+Diagnostic used:
+
+```text
+Search existing AIE kernels before changing graph code. The repo's RMSNorm
+kernels use AIE API math, not libc math.
+```
+
+Evidence found:
+
+```text
+aie_kernels/aie2p/rms_norm.cc uses:
+  float inv_rms = aie::invsqrt(rms);
+```
+
+Root cause:
+
+```text
+The first phase-owned RMSNorm phase used `sqrtf` in an AIE cross-compiled
+kernel. The target environment did not expose that host math symbol.
+```
+
+Fix used:
+
+```cpp
+const float inv_rms = aie::invsqrt(mean_square + 0.000001f);
+```
+
+Recheck:
+
+```text
+The kernel compiles past the undeclared sqrtf failure.
+```
+
 ## Runtime Start Does Not Create A Phase Barrier
 
 Symptom:
@@ -145,6 +227,54 @@ Use static phase ownership or separate artifacts for phase sets that need
 different FIFO dependencies. Do not rely on dummy tokens as a scalable
 megakernel mechanism, and do not assume a Worker-side conditional can remove
 Runtime.fill tasks from the same artifact.
+```
+
+## External Kernel Symbol Is Declared With Two Memref Shapes
+
+Symptom:
+
+```text
+MLIRError: Verification failed:
+error: redefinition of symbol named 'new_mega_copy_bf16'
+see current operation:
+  func.func ... @new_mega_copy_bf16(memref<3072xbf16>, memref<3072xbf16>, i32)
+see existing symbol definition here
+```
+
+Trigger:
+
+```text
+D1.3c used the same external C symbol for both hidden-sized copies
+memref<1024xbf16> and FFN-sized copies memref<3072xbf16>.
+```
+
+Diagnostic:
+
+```text
+This is an MLIR symbol/ABI failure during Program verification. The NPU
+compiler has not reached placement, resource allocation, or external-kernel
+math.
+```
+
+Root cause:
+
+```text
+IRON emits one private func declaration per Kernel object. Reusing the same C
+symbol name with different memref shapes creates duplicate symbol definitions
+in one MLIR module. The down-projection row-shard experiment also showed that
+declaring the same symbol twice with the same memref shape can still produce a
+redefinition error before placement.
+```
+
+Fix used:
+
+```text
+Give each distinct memref signature a distinct external symbol name:
+  new_mega_copy_bf16      for memref<1024xbf16>
+  new_mega_copy_ffn_bf16  for memref<3072xbf16>
+
+When the signature is identical, reuse the same Kernel object instead of
+creating a second Kernel declaration with the same symbol name.
 ```
 
 ## DMA BD Transfer Length Is Not 4-Byte Aligned
@@ -644,4 +774,175 @@ Recheck:
 layer_iterations=8:
   no runtime timeout
   chunk_hidden_errors=0
+```
+
+## Scalar State Mistaken For Activation Transfer
+
+Symptom:
+
+```text
+The phase-owned graph appears to have persistent state, but the only state is a
+single float checksum. Phase 0 computes from packet inputs, and later phases do
+not carry a hidden[1024] activation into the next layer.
+```
+
+Diagnostic:
+
+```text
+List every value that must cross a phase or layer boundary. For each one,
+identify whether it is carried by ObjectFifo or by an activation-sized
+tile-local Buffer. A scalar checksum does not count.
+```
+
+Evidence found:
+
+```text
+state[0] was only updated for debugging.
+No tile-local hidden vector existed.
+Layer N+1 phase 0 could not depend on layer N residual output except through
+host-provided packet data.
+```
+
+Root cause:
+
+```text
+The skeleton proved Worker/FIFO resource shape but not activation lifetime.
+Real Qwen3 decode needs hidden[1024] BF16 to survive across phases/layers.
+```
+
+Fix:
+
+```text
+Add a tile-local hidden_state[1024] BF16 Buffer per lane Worker.
+Initialize it from the shared stream for layer 0.
+Make phase 0 read hidden_state for RMSNorm/Q shard.
+Make the next_layer_token phase write hidden_state for the next layer.
+Keep state[0] only as a checksum.
+```
+
+Recheck:
+
+```text
+num_lanes=8, fabric_group_size=4:
+  preflight_compute_cores=8
+  preflight_max_compute_tile_inputs=2
+  preflight_max_compute_tile_outputs=1
+  phase_owned_errors=0
+```
+
+## O Projection Packet Width Uses Hidden Size Instead Of Attention Size
+
+Symptom:
+
+```text
+RuntimeError: The expanded size of the tensor (1024) must match the existing
+size (2048) at non-singleton dimension 0.
+```
+
+Diagnostic:
+
+```text
+Do not assume every phase packet vector is hidden_size wide. Check the actual
+weight shape and the tensor being packed:
+
+  attention_context.shape
+  o_proj.weight.shape
+  hidden_size
+  num_attention_heads * head_dim
+```
+
+Evidence found:
+
+```text
+Qwen3-0.6B:
+  hidden_size = 1024
+  num_attention_heads = 16
+  head_dim = 128
+  attention_size = 2048
+  o_proj.weight shape = [1024, 2048]
+  attention_context length = 2048
+```
+
+Root cause:
+
+```text
+The o_proj packet layout reused hidden_size for the attention context and O
+weight row width. That was correct for residual/RMSNorm/down output space, but
+wrong for Q/O attention space in Qwen3-0.6B.
+```
+
+Fix:
+
+```text
+Add attention_size as an explicit operator/design/ABI parameter.
+Use attention_size for:
+  attention_context packet field
+  o_proj weight row packet field
+  o_proj kernel dot loop bound
+
+Keep hidden_size for:
+  residual shards
+  RMSNorm vectors
+  MLP down output rows
+  tile-local hidden_state
+```
+
+Recheck:
+
+```text
+attention_size=2048
+phase_owned_errors=0
+qwen3_phase_output_errors=0
+```
+
+## Kernel Declaration Has One More Argument Than The C++ ABI
+
+Symptom:
+
+```text
+resolve_program fails before aiecc:
+
+ValueError: Kernel 'new_mega_phase0_q_shard_bf16' expects 11 argument(s),
+but 10 were provided.
+```
+
+Diagnostic:
+
+```text
+Count the Python Kernel(...) declaration and the C++ function signature side by
+side. This is a static ABI declaration error, not an ObjectFifo or placement
+bug.
+```
+
+Evidence found:
+
+```text
+After adding attention_size to the new o_proj kernel, one stale np.int32 was
+left in the q_shard Kernel(...) declaration. The q_shard C++ signature still
+took 10 arguments, and the worker call passed 10 arguments.
+```
+
+Root cause:
+
+```text
+The wrong Kernel(...) declaration was edited. IRON validates the declared
+argument count when resolving the Worker body, so it failed before MLIR/AIECC
+lowering.
+```
+
+Fix:
+
+```text
+Remove the extra np.int32 from the q_shard Kernel(...) declaration.
+When adding a dimension parameter, update only the affected Kernel(...)
+declaration, C++ signature, and worker call together.
+```
+
+Recheck:
+
+```text
+compile-only:
+  preflight_compute_cores=8
+  preflight_max_compute_tile_inputs=2
+  preflight_max_compute_tile_outputs=1
 ```

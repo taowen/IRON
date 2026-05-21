@@ -177,6 +177,239 @@ The accepted A0 experiment ran one xclbin/runtime .bin for positions
 reference with max_abs <= 0.000244.
 ```
 
+## Production Input QKV Rope Worker Exceeds Input DMA Channels
+
+Symptom:
+
+```text
+error: 'aie.tile' op number of input DMA channel exceeded!
+%tile_2_4 = aie.tile(2, 4)
+```
+
+Trigger:
+
+```text
+The first production input-qkv-rope-present graph used row-sharded Q/K/V
+projection workers, then joined q_raw, k_raw, v_raw, and metadata into one
+final qkv_rope Worker.
+```
+
+Diagnostic used:
+
+```bash
+rg -n "tile_2_4|objectfifo|new_mega_input" \
+  build_new_mega_production_input_qkv_probe/NewMegaInputQKVRopePresent*_npu2.mlir
+```
+
+Evidence found:
+
+```text
+The failing tile consumed four independent FIFOs:
+  new_mega_input_q_raw
+  new_mega_input_k_raw
+  new_mega_input_v_raw
+  new_mega_input_qkv_meta
+
+It also produced current Q/K/V. The failure happened in
+AIEObjectFifoStatefulTransform before any external kernel ran.
+```
+
+Root cause:
+
+```text
+The graph concentrated a 4-input merge on one compute tile. This exceeded the
+tile input DMA channel budget. It was not a Q/K/V matvec or RoPE math bug.
+```
+
+Fix used:
+
+```text
+Move Q/K norm+RoPE into the row-sharded projection workers:
+  input_norm worker -> one broadcast xnorm+metadata FIFO
+  Q shard worker -> Q matvec + q_norm+RoPE + raw debug
+  K shard worker -> K matvec + k_norm+RoPE + raw debug
+  V shard worker -> V matvec + raw debug
+
+Drain the current/debug shards directly into fixed L3 offsets instead of
+creating a final 4-input join Worker.
+```
+
+Accepted evidence:
+
+```text
+input-qkv-rope-present compile preflight:
+  preflight_compute_cores=7
+  preflight_max_compute_tile_inputs=2
+  preflight_max_compute_tile_outputs=2
+```
+
+## Static Single-Layer Fusion Passes But Cannot Scale
+
+Symptom:
+
+```text
+qkv-rope-attention-o-mlp-fused runs correctly for one layer, but preflight shows:
+
+preflight_compute_cores=25
+preflight_total_dma_tasks=21
+preflight_max_compute_tile_inputs=2
+preflight_max_compute_tile_outputs=2
+```
+
+Diagnostic used:
+
+```text
+Do not treat zero numerical errors as proof that the megakernel shape is
+correct. Compare the compute-core count with NPU2's 32 compute tiles and ask
+whether the topology can be repeated for 28 layers without static duplication.
+```
+
+Evidence found:
+
+```text
+One layer already consumed most available compute tiles. The graph was still a
+static list of stage-specific Workers:
+input projection workers, join workers, attention, O projection, MLP, joins,
+and residual workers.
+```
+
+Root cause:
+
+```text
+The fusion was correct for one-layer math but wrong for megakernel structure.
+It fused by appending stage Workers, not by reusing fixed lane Workers over a
+layer/phase stream.
+```
+
+Fix used:
+
+```text
+Remove the static single-layer path from production and expose only the
+phase-owned topology:
+
+fixed lane Workers
+packed layer/phase stream
+for layer:
+  for phase:
+    acquire packet -> execute phase -> release packet
+```
+
+Recheck:
+
+```text
+The production stage is now `phase-owned`.
+
+default skeleton:
+  num_lanes=8
+  num_layers=28
+  phase_packets_per_layer=11
+  hidden_size=1024
+  packet_elements=3072
+  compute_cores=8
+  phase_owned_errors=0
+
+large packet compile/preflight:
+  packet_elements=16896
+  max_fifo_buffered_bytes=33792
+  compute_cores=8
+  max_tile_inputs=1
+  max_tile_outputs=1
+```
+
+## Production MLP Worker Exceeds Output DMA Channels
+
+Symptom:
+
+```text
+error: 'aie.tile' op number of output DMA channel exceeded!
+%tile_1_2 = aie.tile(1, 2)
+```
+
+Trigger:
+
+```text
+D1.3c first qkv-rope-attention-o-mlp-fused graph put post-norm, residual
+copy, gate/up matvec, and SiLU*up in one Worker.
+```
+
+Diagnostic used:
+
+```bash
+rg -n "tile_1_2|objectfifo|new_mega_mlp" \
+  build_new_mega_production_probe/NewMegaQKVRopeAttentionOMLPFused*_npu2.mlir
+```
+
+Evidence found:
+
+```text
+tile_1_2 produced four independent FIFOs:
+  new_mega_mlp_attn_residual_debug
+  new_mega_mlp_final_residual
+  new_mega_mlp_ffn_hidden
+  new_mega_mlp_ffn_hidden_debug
+```
+
+Root cause:
+
+```text
+The failure was producer fan-out on the compute tile, not MLP math. Debug
+drains are real ObjectFIFO endpoints and compete with production dataflow.
+```
+
+Fix used:
+
+```text
+Split the large Worker into a post_norm Worker and a gate/up Worker.
+Keep each producer at two output FIFOs or fewer.
+Drop attn_residual debug from this production graph; D1.2c remains the boundary
+diagnostic for that tensor.
+```
+
+## Production Gate/Up Worker Exceeds Input DMA Channels
+
+Symptom:
+
+```text
+decision: rejected
+root_cause: preflight failed: Compute tile %tile_1_3 has 3 input ObjectFIFOs;
+limit=2.
+```
+
+Trigger:
+
+```text
+After splitting post-norm from gate/up, the gate/up Worker consumed three
+inputs:
+  mlp_xnorm
+  gate_weight
+  up_weight
+```
+
+Diagnostic used:
+
+```text
+The persistent artifact preflight caught the over-fan-in before aiecc resource
+allocation. The generated MLIR confirmed the tile had those three consumer
+ObjectFIFOs.
+```
+
+Root cause:
+
+```text
+Gate and up weights are two logical matrices, but treating them as two runtime
+streams exceeds the tile input channel budget when xnorm is also a stream.
+```
+
+Fix used:
+
+```text
+Pack gate/up weights per row group:
+  [gate rows 0..3][up rows 0..3][gate rows 4..7][up rows 4..7]...
+
+Use one ObjectFIFO carrying the paired object and one external kernel that
+computes both gate and up rows from the same xnorm token.
+```
+
 ## K Cache Matrix Does Not Fit In L1
 
 Symptom:
@@ -1113,6 +1346,70 @@ Recheck:
 
 ```text
 preflight: ok ... max_tile_inputs=2 max_tile_outputs=2
+```
+
+## Ungrouped Broadcast/Join Fabric Fails Placement
+
+Symptom:
+
+```text
+ValueError: Failed to find a tile matching column 0: tried until column 8.
+Try using a device with more columns.
+```
+
+Context:
+
+```text
+The production phase-owned graph was changed from independent lanes to an
+8-lane broadcast/join fabric:
+  shared hidden/norm stream -> broadcast to all lane Workers
+  lane-local Q row shards -> join into a Q shard output
+```
+
+Diagnostic:
+
+```text
+Run the same graph with fewer lanes before changing kernels.
+```
+
+Evidence:
+
+```text
+num_lanes=8, one 8-way fabric:
+  resolve_program failed in SequentialPlacer endpoint placement.
+
+num_lanes=4, one 4-way fabric:
+  compile/preflight passed with compute_cores=4,
+  max_compute_tile_inputs=2, max_compute_tile_outputs=1.
+```
+
+Root cause:
+
+```text
+The failure was ObjectFifo fabric placement pressure from an 8-way
+broadcast/join endpoint group. It was not a kernel ABI issue, TAP issue, or
+Worker phase-loop issue.
+```
+
+Fix:
+
+```text
+Split the fabric into groups of 4 lanes.
+Duplicate the shared-input fill once per group.
+Use one local broadcast and one local join per group.
+Drain each joined group with a TAP that writes into its per-layer output
+offsets.
+```
+
+Recheck:
+
+```text
+num_lanes=8, fabric_group_size=4:
+  preflight_compute_cores=8
+  preflight_total_dma_tasks=12
+  preflight_max_compute_tile_inputs=2
+  preflight_max_compute_tile_outputs=1
+  phase_owned_errors=0
 ```
 
 ## Direct Input-RMSNorm Fusion Exceeds Tile Input Limit

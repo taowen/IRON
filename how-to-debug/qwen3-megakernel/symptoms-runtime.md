@@ -206,6 +206,117 @@ layer_iterations=12/16/18/19/20 all compile and preflight with
 max_dma_tasks_per_fifo=1.
 ```
 
+## Independent Drains Return Zero Until Each Drain Waits
+
+Symptom:
+
+```text
+input-qkv-rope-present returns quickly and one output family is correct, but
+other independently drained output regions are all zero:
+
+new_mega_input_q_raw_errors: 1423
+new_mega_input_k_raw_errors: 755
+new_mega_input_v_raw_errors: 0
+
+diagnostic slice:
+  qcur nz 0 len 2048
+  kcur nz 0 len 1024
+  vcur nz 1024 len 1024
+```
+
+Diagnostic used:
+
+```text
+Do not start by changing matvec math. Slice the packed output by logical drain
+region and count nonzero values per region.
+```
+
+Evidence found:
+
+```text
+The graph had 12 independent drains: current/debug shards for Q, K, and V.
+Only the last V debug drain had wait=True. Q and K drains had no dependency on
+that final V debug drain, so the host could read the output buffer before those
+drain tasks had completed.
+```
+
+Root cause:
+
+```text
+Runtime task_group issue order is not a correctness dependency between
+independent drains. Waiting on one unrelated drain does not prove the other
+drains are visible in the host buffer.
+```
+
+Fix used:
+
+```text
+Set wait=True on each independent drain in the diagnostic boundary graph.
+For a performance graph, either join outputs into a single dependent drain or
+keep explicit waits on every independently host-visible region.
+```
+
+Recheck:
+
+```text
+input-qkv-rope-present:
+  q_raw_errors=0
+  k_raw_errors=0
+  v_raw_errors=0
+  current_errors=0
+```
+
+## CLI Stage Fails Before Any NPU Work
+
+Symptom:
+
+```text
+python -m compileall iron/applications/new-mega/production
+...
+File "iron/applications/new-mega/production/main.py", line 182
+    else:
+    ^^^^
+SyntaxError: invalid syntax
+```
+
+Diagnostic:
+
+```bash
+. .venv/bin/activate
+python -m compileall iron/applications/new-mega/production
+```
+
+Evidence found:
+
+```text
+The new qkv-rope-attention CLI path added a third accepted-stage branch, but
+the success message used if/else/else instead of if/elif/else. The failure was
+pure Python control flow, before MLIR generation, XRT, ObjectFIFO, or kernel
+execution.
+```
+
+Root cause:
+
+```text
+The entry script had an invalid branch structure after adding a new production
+stage. Running the NPU command directly would have hidden this as a generic
+"stage fails" symptom.
+```
+
+Fix:
+
+```text
+Change the success message dispatch to if fixed-attention / elif
+qkv-rope-present / else qkv-rope-attention.
+```
+
+Recheck:
+
+```text
+compileall passed, then qkv-rope-attention ran two prompts with
+qkv_errors=0 and context_errors=0.
+```
+
 ## Runtime Segfaults In XRT BO Validation
 
 Symptom:
@@ -351,6 +462,81 @@ Accepted recheck:
 stage: two-layer-full-layer
 preflight: ok runtime_memrefs=5 arg_specs=5 metadata_host_bos=5
 compute_cores=21 max_dma_tasks_per_fifo=2 non_advancing_acquires=0
+```
+
+Third occurrence diagnosed during production input-QKV fusion:
+
+```text
+Qwen3PreflightError: Runtime BO metadata mismatch:
+MLIR runtime_sequence has 6 memref arguments
+main_kernels.json exposes only 5 HOST bo* arguments
+```
+
+Root cause:
+
+```text
+The first fused qkv-rope-attention-o-mlp graph added Q/K/V projection weights
+as a separate runtime memref. That changed the runtime ABI from five BOs to
+six BOs even though the xclbin metadata still exposed five HOST BO slots.
+```
+
+Fix:
+
+```text
+Pack input metadata and Q/K/V weights into one first runtime buffer:
+
+qkv_packed_input =
+  hidden || input_norm_weight || q_norm_weight || k_norm_weight || rope_lut ||
+  q_proj_weight || k_proj_weight || v_proj_weight
+
+Use fixed TAP offsets to feed metadata and weights to the appropriate Workers.
+```
+
+Accepted recheck:
+
+```text
+stage: qkv-rope-attention-o-mlp-fused
+preflight: ok runtime_memrefs=5 arg_specs=5 metadata_host_bos=5
+current_errors=0 attn_out_errors=0 ffn_hidden_errors=0
+ffn_out_errors=0 layer_residual_errors=0
+```
+
+## AIECC Fails With File Name Too Long
+
+Symptom:
+
+```text
+aiecc.py: error: Error creating temporary directory: File name too long
+```
+
+Diagnostic:
+
+```text
+Inspect the generated artifact path, not the graph math. If the filename
+contains every dataclass parameter, the failure can happen before meaningful
+MLIR/AIE resource allocation.
+```
+
+Root cause:
+
+```text
+After adding input-projection tile parameters to the fused production operator,
+the inherited artifact name grew past the filesystem/tool temporary-directory
+limit.
+```
+
+Fix:
+
+```text
+Override the production operator name with a short stable artifact prefix:
+
+NewMegaFusedLayerInputQKV_s{max_seq_len}_c{chunk_size}_h{hidden}_i{intermediate}_{dev}
+```
+
+Recheck:
+
+```text
+The same graph compiles and runs after shortening only the artifact name.
 ```
 
 ## First Iteration Is Zero, Later Iterations Improve
@@ -780,6 +966,68 @@ Fix:
 ```text
 Use repeated warm measurements or a latency histogram before accepting or
 rejecting a column-scaling change.
+```
+
+## Column-Sharded Projection Verifies But Slows Down
+
+Symptom:
+
+```text
+A graph-internal row-sharded GEMV compiles and every debug buffer has
+errors=0, but npu_time_us is worse than the single-worker version.
+```
+
+Diagnostic:
+
+```text
+Do not stop at correctness. Inspect generated MLIR to prove whether the new
+workers are really parallel, then compare the amount of work moved to columns
+against the extra broadcast, join, copy, and DMA tasks.
+```
+
+Commands used:
+
+```bash
+rg -n "new_mega_mlp_o_weight_|new_mega_mlp_attn_out_shard|tile\\(" \
+  build_new_mega_production_column_o_run/*.mlir
+
+source /opt/xilinx/xrt/setup.sh
+. .venv/bin/activate
+python iron/applications/new-mega/production/main.py \
+  --stage qkv-rope-attention-o-mlp-fused \
+  --build-dir build_new_mega_production_column_o_run
+```
+
+Evidence found:
+
+```text
+O-only row sharding:
+  MLIR placed O shard workers on tile_0_4 and tile_0_5
+  join worker was on tile_1_2
+  context FIFO broadcast to both O shard workers
+  verification errors=0
+  npu_time_us=11886.655
+
+previous D1.3c baseline:
+  npu_time_us was about 10.8-11.2ms
+```
+
+Root cause:
+
+```text
+The O projection is not large enough in this graph for row sharding to pay for
+the added ObjectFifo broadcast, shard join, copy, and additional weight DMA.
+The graph was parallel, but the chosen phase was too small.
+```
+
+Fix:
+
+```text
+Move the same row-sharded pattern to a larger phase before accepting it as a
+performance change. In production, adding two-column gate/up sharding together
+with O sharding kept correctness and reduced the default prompt to 9581.209us.
+Adding two-column down-projection sharding reduced the same stage further to
+8585.632us.
 ```
 
 ## HuggingFace Snapshot Download Fails During Local Verification

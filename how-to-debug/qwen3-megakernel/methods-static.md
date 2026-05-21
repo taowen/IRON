@@ -63,6 +63,26 @@ aie.runtime_sequence(%arg0 hidden, %arg1 weight_pair, %arg2 angles,
 preflight: ok runtime_memrefs=5 arg_specs=5 metadata_host_bos=5
 ```
 
+The same method caught the first production input-QKV fusion attempt:
+
+```text
+MLIR: 6 runtime memrefs
+operator arg spec: 6
+main_kernels.json: bo0..bo4 only
+```
+
+The correct fix was again to reduce the runtime ABI, not to add another host
+BO:
+
+```text
+qkv_packed_input = input_metadata || q_proj || k_proj || v_proj
+past_stream
+o_pack
+mlp_pack
+packed_output
+preflight: ok runtime_memrefs=5 arg_specs=5 metadata_host_bos=5
+```
+
 ## 9. Read aiecc Resource Errors As Graph Errors
 
 Use when a persistent Program fails during placement or allocation.
@@ -116,6 +136,26 @@ mask chunk
 The accepted graph packed `K/V/mask` into one chunk stream and kept `Q` as the
 second input. This let the same fixed-TAP attention artifact run multiple
 positions using mask data only.
+
+The D1.3c production MLP graph used the same method twice:
+
+```text
+1. aiecc named tile_1_2 as output-DMA exhausted. Generated MLIR showed that
+   one Worker produced four FIFOs: attn_residual_debug, final_residual,
+   ffn_hidden, and ffn_hidden_debug. The fix was to split post-norm and
+   gate/up into separate Workers and keep production debug drains bounded.
+
+2. Preflight rejected tile_1_3 with three input ObjectFIFOs: xnorm,
+   gate_weight, and up_weight. The fix was to pack gate/up row groups into
+   one FIFO and use a pair kernel, not to change TAP strides or placement.
+```
+
+Rule:
+
+```text
+For production single-graph growth, count endpoint fan-in/fan-out from the
+generated MLIR after every new phase. Debug drains count as real endpoints.
+```
 
 ## 14. Read L1 MemoryMap Literally
 
@@ -845,6 +885,35 @@ full generate compile/run with --mlp-gate-up-direct-silu
 token_match=True before any performance claim
 ```
 
+The D1.3c production bring-up hit a smaller version of the same class while
+adding helper kernels to `fixed_attention.cc`:
+
+```text
+clang++:
+  no matching function for call to 'add'
+  no member named 'to_vector' in 'aie::vector<__bf16, 16>'
+```
+
+Evidence:
+
+```text
+The existing qkv-rope-attention-o-fused stage failed at external-kernel compile
+even though the new MLP graph was not yet connected. The whole source file is
+compiled into fixed_attention.o, so unused helper functions can break older
+stages.
+```
+
+Fix used:
+
+```text
+Mirror the already-working repo kernels:
+  rms_norm.cc uses 16-lane mul_square into vector<float>
+  silu.cc keeps tanh input as an expression that supports to_vector<float>()
+
+Then re-run an older accepted stage as a compile gate before wiring the new
+graph.
+```
+
 ## 44. Full AIECC After ObjectFIFO Shape Changes
 
 Use when a graph changes ObjectFIFO object type, depth, or acquire count.
@@ -1179,4 +1248,41 @@ Rule:
 Pad metadata tails to an aligned object size, then still run attention-probe or
 single-layer generate. Passing alignment only proves the FIFO shape is less
 suspicious; it does not prove numeric correctness.
+```
+
+## 50. Run Compileall Before NPU Debugging
+
+Use this when a new CLI stage or production runner path fails before there is
+clear MLIR, XRT, ObjectFIFO, or numeric evidence.
+
+Command used:
+
+```bash
+. .venv/bin/activate
+python -m compileall iron/applications/new-mega/production
+```
+
+This diagnosed the first `qkv-rope-attention` production integration failure:
+
+```text
+File "iron/applications/new-mega/production/main.py", line 182
+    else:
+    ^^^^
+SyntaxError: invalid syntax
+```
+
+Root cause:
+
+```text
+The stage success-message dispatch was edited from two branches to three
+branches but left as if/else/else. The failure boundary was the Python entry
+script, not the NPU graph.
+```
+
+Fix proven by this method:
+
+```text
+Change the branch to if fixed-attention / elif qkv-rope-present / else
+qkv-rope-attention. Re-run compileall before sourcing XRT and launching the
+stage.
 ```
