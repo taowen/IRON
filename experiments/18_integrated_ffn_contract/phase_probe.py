@@ -3,7 +3,7 @@
 
 These probes keep the same shim, memtile fanout, core DMA, output packet path,
 and Q4NX kernel, but stop at a small phase boundary.  They are the regression
-tests for the two hard ownership rules learned from exp16/17:
+tests for the two hard ownership rules retained from the older FFN prototypes:
 - each ping/pong slot needs a distinct empty/full lock pair
 - queued shim BD descriptors must not be overwritten before synchronization
 """

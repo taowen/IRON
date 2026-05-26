@@ -2,9 +2,9 @@
 """
 Experiment 19: current-token write + four-plane KV attention scan.
 
-This verifies the decode KV boundary that exp10 did not cover:
-current K/V is streamed through workers into the cache BO, synchronized, then
-the rounded history scan reads the same cache BO and masks the tail by L.
+This verifies the retained decode KV boundary: current K/V is streamed through
+workers into the cache BO, synchronized, then the rounded history scan reads the
+same cache BO and masks the tail by L.
 """
 
 import os

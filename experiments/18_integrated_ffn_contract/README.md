@@ -1,7 +1,7 @@
 # Experiment 18: Integrated Fused FFN Contract
 
-This experiment consolidates the FFN lessons from experiments 16 and 17 into a
-single clean contract test.
+This experiment is the retained FFN contract test. It consolidates the useful
+lessons from earlier FFN prototypes into a single clean dataflow check.
 
 ## What This Proves
 

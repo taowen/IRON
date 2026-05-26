@@ -254,15 +254,15 @@ def preflight_check(mlir_text: str) -> list[str]:
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python preflight.py <design.mlir>")
-        print("       python preflight.py --test-exp15")
+        print("       python preflight.py --self-test")
         sys.exit(1)
 
-    if sys.argv[1] == "--test-exp15":
-        exp15_dir = Path(__file__).parent.parent / "15_complete_ffn"
-        sys.path.insert(0, str(exp15_dir))
-        from generate import generate_mlir as gen15
-        mlir = gen15()
-        print("Testing preflight against Exp 15 MLIR...")
+    if sys.argv[1] == "--self-test":
+        experiment_dir = Path(__file__).parent
+        sys.path.insert(0, str(experiment_dir))
+        from generate import generate_mlir
+        mlir = generate_mlir()
+        print("Testing preflight against Experiment 18 MLIR...")
     else:
         mlir_path = Path(sys.argv[1])
         if not mlir_path.exists():

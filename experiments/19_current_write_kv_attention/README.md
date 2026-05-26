@@ -1,7 +1,8 @@
 # Experiment 19: Current Write + Four-Plane KV Attention Scan
 
-This experiment consolidates the KV-cache lessons from experiments 08, 09, and
-10.  It is the attention/KV counterpart to experiment 18.
+This experiment is the retained attention/KV contract test. It consolidates the
+useful lessons from earlier KV-cache prototypes and is the attention/KV
+counterpart to experiment 18.
 
 ## What This Proves
 

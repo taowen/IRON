@@ -3,8 +3,9 @@
 Experiment 18: integrated fused FFN contract.
 
 The full smoke uses bounded values so the run checks dataflow correctness
-instead of stressing SwiGLU saturation.  Phase probes in phase_probe.py cover
-the descriptor-lifetime and phase-reuse bug that made exp16 fail.
+instead of stressing SwiGLU saturation. Phase probes in phase_probe.py cover
+the descriptor-lifetime and phase-reuse ownership rules retained from the older
+FFN prototypes.
 """
 
 import os

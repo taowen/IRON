@@ -1,9 +1,8 @@
 """
 Experiment 19: current-token write + four-plane KV attention scan.
 
-This is the KV/attention counterpart to exp18's FFN contract.  It keeps the
-small int32 attention kernel from exp10, but adds the missing FastFlowLM-style
-decode boundary:
+This is the KV/attention counterpart to exp18's FFN contract. It keeps a small
+int32 attention kernel, but adds the missing FastFlowLM-style decode boundary:
 - current K/V arrives as a separate BO
 - workers write current K/V into the single KV cache BO at token L-1
 - runtime syncs the current writes
