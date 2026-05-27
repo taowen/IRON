@@ -61,6 +61,24 @@ reproduction path are kept here.
   one-head online attention per column on real NPU for L=17/31/32/79. It still
   duplicates K/V DDR reads per column, so it is not the MyLM one-read
   edge/fanout path yet.
+- `35_one_read_kv_fanout_attention`: one-read KV fanout contract. It moves
+  K/V history scan to a single central row1 memtile, reshapes token-major
+  history with static BD dimensions, fans the reshaped K/V streams to four
+  attention workers, and verifies the same four-head output as exp34 on real
+  NPU for L=17/31/32/79. Runtime K/V patches drop from
+  `4 * 2 * num_tiles` to `2 * num_tiles`.
+- `36_current_write_one_read_fanout_attention`: current-write plus one-read
+  fanout contract. It writes current K/V into the cache BO on NPU, syncs that
+  writeback, then scans the updated cache once through the exp35 fanout path.
+  Real-NPU runs verify bit-exact current cache writeback and four-head
+  attention output for L=17/31/32/79.
+- `37_projected_one_read_fanout_attention`: projected one-read fanout attention
+  contract. It computes Q heads and shared current K/V from hidden + Q4NX
+  weights on NPU, writes current K/V into the cache BO, then scans the updated
+  cache once through a central row1 fanout. It also records the key negative
+  result: two static producers cannot both target one worker DMA port even if
+  they are phase-separated; the phase handoff must be represented by one row1
+  source feeding hidden first and K/V history later.
 
 Earlier syntax probes, one-off diagnostics, and superseded failure
 reproductions were removed so the directory stays focused on the implementation
