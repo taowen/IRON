@@ -147,6 +147,10 @@ def experiment_checks(plan: FusedLayerPlan) -> tuple[CheckResult, ...]:
     exp26_gen = ROOT / "experiments/26_kv_edge_aux_reshape/generate.py"
     exp27_gen = ROOT / "experiments/27_shape_ab_attention_contract/generate.py"
     exp28_gen = ROOT / "experiments/28_multitile_shape_ab_attention/generate.py"
+    exp50_gen = ROOT / "experiments/50_edge_slice_replay_q4nx_o_phase/generate.py"
+    exp52_gen = ROOT / "experiments/52_fullk_edge_slice_replay_q4nx_o_phase/generate.py"
+    exp53_gen = ROOT / "experiments/53_full_layer_phase_chain_contract/generate.py"
+    exp53_kernel = ROOT / "experiments/53_full_layer_phase_chain_contract/phase_chain.cc"
 
     exp23_hidden = literal_constant(exp23_ref, "HIDDEN_DIM")
     exp25_plane = literal_constant(exp25_gen, "PLANE_TILE_DWORDS")
@@ -164,6 +168,23 @@ def experiment_checks(plan: FusedLayerPlan) -> tuple[CheckResult, ...]:
     exp28_history = literal_constant(exp28_gen, "HISTORY_DWORDS")
     exp28_sideband = literal_constant(exp28_gen, "SIDEBAND_DWORDS")
     exp28_output = literal_constant(exp28_gen, "ATTENTION_OUT_DWORDS")
+    exp50_record = literal_constant(exp50_gen, "RECORD_DWORDS")
+    exp50_o_input = literal_constant(exp50_gen, "O_INPUT_DIM")
+    exp50_act_slice = literal_constant(exp50_gen, "ACT_SLICE_BF16")
+    exp50_k_chunk = literal_constant(exp50_gen, "K_CHUNK")
+    exp50_num_chunks = None if exp50_o_input is None or exp50_k_chunk is None else exp50_o_input // exp50_k_chunk
+    exp52_record = literal_constant(exp52_gen, "RECORD_DWORDS")
+    exp52_o_input = literal_constant(exp52_gen, "O_INPUT_DIM")
+    exp52_edge_shard = literal_constant(exp52_gen, "EDGE_SHARD_BF16")
+    exp52_act_slice = literal_constant(exp52_gen, "ACT_SLICE_BF16")
+    exp52_k_chunk = literal_constant(exp52_gen, "K_CHUNK")
+    exp52_num_edge_shards = None if exp52_o_input is None or exp52_edge_shard is None else exp52_o_input // exp52_edge_shard
+    exp52_slices_per_shard = None if exp52_edge_shard is None or exp52_act_slice is None else exp52_edge_shard // exp52_act_slice
+    exp52_num_chunks = None if exp52_o_input is None or exp52_k_chunk is None else exp52_o_input // exp52_k_chunk
+    exp53_record = literal_constant(exp53_gen, "RECORD_DWORDS")
+    exp53_hidden = literal_constant(exp53_gen, "HIDDEN_DIM")
+    exp53_act_slice = literal_constant(exp53_gen, "ACT_SLICE_BF16")
+    exp53_k_chunk = literal_constant(exp53_gen, "K_CHUNK")
 
     exp25_static_ring = (
         exp25_plane == plan.kv_plane_tile_dwords
@@ -205,6 +226,55 @@ def experiment_checks(plan: FusedLayerPlan) -> tuple[CheckResult, ...]:
         and source_contains(exp28_gen, r"func.call @shape_b_accumulate_tile")
         and source_contains(exp28_gen, r"history_total = num_tiles \* HISTORY_SOURCE_DWORDS")
     )
+    exp50_slice_replay = (
+        exp50_record == 17
+        and exp50_o_input == 2 * plan.current_packet_dwords
+        and exp50_act_slice == Q4_K_CHUNK
+        and exp50_k_chunk == Q4_K_CHUNK
+        and exp50_num_chunks == (2 * plan.current_packet_dwords // Q4_K_CHUNK)
+        and source_contains(exp50_gen, r"NUM_CHUNKS\s*=\s*O_INPUT_DIM\s*//\s*K_CHUNK")
+        and source_contains(exp50_gen, r"memref<\{ACT_SLICE_BF16\}xbf16>")
+        and source_contains(exp50_gen, r"%edge\{group\}_\{row\}, DMA : 0, %m\{group\}_\{row\}, DMA : 1")
+        and source_contains(exp50_gen, r"func.call @edge_make_attention_slice")
+        and source_contains(exp50_gen, r"func.call @q4nx_chunk_accum_slice")
+        and not source_contains(exp50_gen, r"edge_make_attention_shard")
+        and not source_contains(exp50_gen, r"q4nx_chunk_accum_offset")
+        and not source_contains(exp50_gen, r"memref<\{O_INPUT_DIM\}xbf16>")
+    )
+    exp52_fullk_slice_replay = (
+        exp52_record == 17
+        and exp52_o_input == plan.hidden_dim
+        and exp52_edge_shard == 2 * plan.current_packet_dwords
+        and exp52_act_slice == Q4_K_CHUNK
+        and exp52_k_chunk == Q4_K_CHUNK
+        and exp52_num_edge_shards == plan.hidden_dim // (2 * plan.current_packet_dwords)
+        and exp52_slices_per_shard == (2 * plan.current_packet_dwords) // Q4_K_CHUNK
+        and exp52_num_chunks == plan.hidden_dim // Q4_K_CHUNK
+        and source_contains(exp52_gen, r"NUM_EDGE_SHARDS\s*=\s*O_INPUT_DIM\s*//\s*EDGE_SHARD_BF16")
+        and source_contains(exp52_gen, r"SLICES_PER_SHARD\s*=\s*EDGE_SHARD_BF16\s*//\s*ACT_SLICE_BF16")
+        and source_contains(exp52_gen, r"func.call @edge_make_attention_slice")
+        and source_contains(exp52_gen, r"func.call @q4nx_chunk_accum_slice")
+        and not source_contains(exp52_gen, r"edge_make_attention_shard")
+        and not source_contains(exp52_gen, r"q4nx_chunk_accum_offset")
+        and not source_contains(exp52_gen, r"memref<\{O_INPUT_DIM\}xbf16>")
+        and not source_contains(exp52_gen, r"memref<\{EDGE_SHARD_BF16\}xbf16>")
+    )
+    exp53_full_phase_chain = (
+        exp53_record == 17
+        and exp53_hidden == plan.hidden_dim
+        and exp53_act_slice == Q4_K_CHUNK
+        and exp53_k_chunk == Q4_K_CHUNK
+        and source_contains(exp53_gen, r'PHASE_NAMES\s*=\s*\("Q", "K", "V", "O", "GATE", "UP", "DOWN"\)')
+        and source_contains(exp53_gen, r"NUM_PHASES\s*=\s*len\(PHASE_NAMES\)")
+        and source_contains(exp53_gen, r"COLUMN_WEIGHT_BF16\s*=\s*NUM_PHASES \* PHASE_WEIGHT_BF16")
+        and source_contains(exp53_gen, r"_npu_writebd\(column, 0, COLUMN_WEIGHT_BF16 // 2, weight_offset\)")
+        and not source_contains(exp53_gen, r"_npu_writebd\(column, phase, PHASE_WEIGHT_BF16")
+        and source_contains(exp53_gen, r"func.call @edge_make_phase_slice")
+        and source_contains(exp53_gen, r"func.call @main_emit_phase_record")
+        and source_contains(exp53_kernel, r"record\[1 \+ lane\] = group \* 37 \+ row \* 11 \+ \(phase \+ 1\) \* 101")
+        and source_contains(exp53_kernel, r"swiglu\[idx\] = static_cast<bfloat16>\(sigmoidish \* up_f\)")
+        and not source_contains(exp53_gen, r"memref<\{HIDDEN_DIM\}xbf16>")
+    )
 
     return (
         CheckResult(
@@ -239,6 +309,33 @@ def experiment_checks(plan: FusedLayerPlan) -> tuple[CheckResult, ...]:
             (
                 f"current={exp28_current}, history_source={exp28_history_source}, "
                 f"history={exp28_history}, sideband={exp28_sideband}, output={exp28_output}"
+            ),
+        ),
+        CheckResult(
+            "exp50 edge slice replay to Q4NX O",
+            status(exp50_slice_replay),
+            (
+                f"sideband={exp50_record}, edge_shard_dwords="
+                f"{None if exp50_o_input is None else exp50_o_input // 2}, "
+                f"slice_bf16={exp50_act_slice}, q4_chunks={exp50_num_chunks}"
+            ),
+        ),
+        CheckResult(
+            "exp52 full-K edge slice replay to Q4NX O",
+            status(exp52_fullk_slice_replay),
+            (
+                f"sideband={exp52_record}, full_o_input={exp52_o_input}, "
+                f"edge_shards={exp52_num_edge_shards}, slices_per_shard={exp52_slices_per_shard}, "
+                f"slice_bf16={exp52_act_slice}, q4_chunks={exp52_num_chunks}"
+            ),
+        ),
+        CheckResult(
+            "exp53 full layer phase-chain contract",
+            status(exp53_full_phase_chain),
+            (
+                f"sideband={exp53_record}, hidden={exp53_hidden}, "
+                f"slice_bf16={exp53_act_slice}, k_chunk={exp53_k_chunk}; "
+                "uses one continuous per-column weight stream"
             ),
         ),
     )

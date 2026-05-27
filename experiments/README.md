@@ -3,6 +3,40 @@
 Only the experiments that still describe the current MyLM/FastFlowLM
 reproduction path are kept here.
 
+## Stage Summary: Toward Our Fused Layer Engine
+
+The current goal is not to clone MyLM/FastFlowLM instruction-for-instruction.
+MyLM is used as a hardware-mapping reference. The implementation target is our
+own Qwen3 fused layer engine.
+
+The retained experiments now answer the main physical-resource question: a
+full decode layer can be shaped around the same `main16 + edge16` fabric instead
+of allocating separate compute tiles for Q/K/V/O/FFN. The main projection fabric
+is `c2..c5/r2..r5`; it time-reuses the same 16 compute tiles across projection
+phases. The edge/aux fabric on `c0/c1/c6/c7` handles attention-side replay and
+phase handoff. Runtime should be layer-level: it patches coarse BO descriptors
+and starts the engine, while phase sequencing is enforced inside the static
+BD/lock/worker dataflow.
+
+The strongest current milestone is `53_full_layer_phase_chain_contract`. It
+runs on real NPU and connects seven layer-shaped phases
+`Q,K,V,O,gate,up,down` through one continuous per-column Q4NX weight stream,
+edge replay, compact `17 dword` phase records, main16 full-K Q4NX phases,
+core-local SwiGLU, and final debug drain. This proves the long-lifetime
+phase-chain skeleton can fit and advance without deadlock.
+
+The remaining work is no longer a broad resource feasibility question. It is
+implementation work:
+
+- Replace deterministic edge replay with real attention: Q/current K/V,
+  KV-cache scan, online softmax, and weighted V.
+- Replace the simplified `K=4096` phase set with the real Qwen3 patch schedule:
+  `Q,K,V,O,up,gate,down = 64,16,16,64,192,192,64` patches.
+- Replace contract kernels with high-throughput online Q4NX microkernels and
+  keep DMA/compute overlapped through static row1 rings.
+- Keep MyLM's exact packet/sideband details as useful diagnostics, not as a
+  blocking compatibility target.
+
 - `resource_plan_audit.py`: computes the first-principles Qwen3 fused-layer
   resource plan and compares it against retained experiments plus MyLM
   reverse-engineering notes/BD CSVs.
@@ -132,6 +166,27 @@ reproduction path are kept here.
   contract. It replaces exp47's toy phase weights with four full-K Q4NX
   streams, using phase-sized runtime descriptors feeding a static row1
   fat-chunk ring and the same main16 physical compute fabric.
+- `50_edge_slice_replay_q4nx_o_phase`: edge-slice replay contract. It tightens
+  the discarded exp49 idea by making the 512-dword edge return a stream of four 128-dword slices,
+  each paired with one `32 x 256` Q4NX O-weight chunk. This avoids modeling the
+  edge path as a full activation tensor producer and matches the MyLM-style
+  phase handoff shape we need before extending O into the layer tail.
+- `52_fullk_edge_slice_replay_q4nx_o_phase`: full-K O contract over the
+  corrected edge-slice ABI. It streams four 512-dword edge shards as sixteen
+  128-dword slices and pairs those slices with sixteen Q4NX `32 x 256` chunks
+  on the same main16 physical projection fabric, proving `K=4096` O projection
+  without a host-visible attention vector. The final host drain is a debug
+  record stream with `(group,row)` headers because MyLM's real layer handoff is
+  not a row1 packet-gather ordering contract.
+- `53_full_layer_phase_chain_contract`: full layer-shaped phase-chain contract.
+  It connects Q/K/V/O/gate/up/down as seven sequential full-K Q4NX phases on
+  the same main16/edge16 physical fabric. Each phase consumes sixteen
+  256-bf16 activation slices from edge and sixteen Q4NX chunks from a continuous
+  per-column weight stream; compact 17-dword records gate phase replay. Real
+  NPU runs pass, proving the long-lifetime phase chain fits and advances. It
+  deliberately uses deterministic sideband records and `K=4096` for every phase,
+  so it does not yet prove MyLM's exact sideband semantics or Qwen3's expanded
+  FFN dimensions.
 
 Earlier syntax probes, one-off diagnostics, and superseded failure
 reproductions were removed so the directory stays focused on the implementation
