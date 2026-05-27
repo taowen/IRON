@@ -40,6 +40,27 @@ reproduction path are kept here.
   consume Q, then K, then V full-K Q4NX weight streams. This proves the
   descriptor-count fix for `K=4096`: one phase-sized runtime BD feeds a static
   row1 chunking ring.
+- `30_fullk_qkv_attention`: full-K Q/K/V projection-to-attention contract. It
+  combines phase-sized Q/K/V weight streams with current K/V cache writeback,
+  then scans rounded KV history tiles and verifies online attention on real NPU
+  for non-16-aligned and multi-tile context lengths.
+- `31_gqa_full_attention`: full GQA attention-group contract. It verifies a
+  full `512 x 4096` Q phase, `128 x 4096` K/V phases, current K/V writeback,
+  rounded KV scan, and online GQA attention for one 4Q:1KV group on real NPU.
+- `32_parallel_gqa_attention`: parallel GQA attention-head contract. It splits
+  the four Q heads of one GQA group across four columns, lets column 0 produce
+  the shared current K/V cache entry, and verifies that all columns can scan the
+  updated cache and assemble the same 512-dim output faster than exp31.
+- `33_row1_kv_reshape_attention`: row1 KV-cache reshape contract. It loads
+  token-major rounded K/V history planes into row1 memtile storage, uses static
+  BD dimensions to emit dim-group-major streams, and verifies tail-masked
+  `4Q:1KV` online attention on real NPU for L=17/31/32/79.
+- `34_parallel_row1_reshape_attention`: parallel row1 KV-cache reshape
+  contract. It combines exp33's row1 dim-group-major K/V reshape with
+  exp32-style four-column GQA head parallelism and verifies tail-masked
+  one-head online attention per column on real NPU for L=17/31/32/79. It still
+  duplicates K/V DDR reads per column, so it is not the MyLM one-read
+  edge/fanout path yet.
 
 Earlier syntax probes, one-off diagnostics, and superseded failure
 reproductions were removed so the directory stays focused on the implementation
