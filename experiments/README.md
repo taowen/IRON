@@ -79,6 +79,12 @@ reproduction path are kept here.
   result: two static producers cannot both target one worker DMA port even if
   they are phase-separated; the phase handoff must be represented by one row1
   source feeding hidden first and K/V history later.
+- `38_full_attention_fabric`: full attention-fabric contract. It scales the
+  exp37 attention side to `32Q/8KV`: eight columns for eight KV groups, four
+  compute rows per column for the four Q heads sharing each KV group, one row1
+  K/V read per group, row1 reshape/fanout, packet gather, and per-group drain.
+  Real-NPU runs pass for L=17/31/32/79, proving the full attention resource map
+  fits and routes before reattaching projection/current-write.
 
 Earlier syntax probes, one-off diagnostics, and superseded failure
 reproductions were removed so the directory stays focused on the implementation
