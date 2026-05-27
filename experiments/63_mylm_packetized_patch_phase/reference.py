@@ -1,4 +1,4 @@
-"""CPU reference for exp59 exact MyLM N-block projection."""
+"""CPU reference for exp63 packetized patch-phase projection."""
 
 from __future__ import annotations
 
@@ -25,7 +25,9 @@ from generate import (
 )
 
 
-def pack_q4nx_chunk(scales: np.ndarray, zeros: np.ndarray, int4_data: np.ndarray) -> np.ndarray:
+def pack_q4nx_chunk(
+    scales: np.ndarray, zeros: np.ndarray, int4_data: np.ndarray
+) -> np.ndarray:
     packed = bytearray()
     packed += scales.astype(bfloat16).view(np.uint8).tobytes()
     packed += zeros.astype(bfloat16).view(np.uint8).tobytes()
@@ -48,16 +50,24 @@ def make_packed_weights(seed: int = 59) -> np.ndarray:
             for chunk in range(K_CHUNKS):
                 for row_in_patch in range(2):
                     global_row = patch * 2 + row_in_patch
-                    scales = rng.uniform(0.001, 0.012, (M_PER_TILE, GROUPS_PER_CHUNK)).astype(bfloat16)
-                    zeros = rng.uniform(6.0, 9.0, (M_PER_TILE, GROUPS_PER_CHUNK)).astype(bfloat16)
+                    scales = rng.uniform(
+                        0.001, 0.012, (M_PER_TILE, GROUPS_PER_CHUNK)
+                    ).astype(bfloat16)
+                    zeros = rng.uniform(
+                        6.0, 9.0, (M_PER_TILE, GROUPS_PER_CHUNK)
+                    ).astype(bfloat16)
                     int4 = rng.integers(0, 16, (M_PER_TILE, K_CHUNK), dtype=np.uint8)
                     # Fold coordinates into the RNG stream deterministically through data.
-                    int4[:, 0] = (int4[:, 0].astype(np.uint16) + group + global_row + chunk) & 0x0F
+                    int4[:, 0] = (
+                        int4[:, 0].astype(np.uint16) + group + global_row + chunk
+                    ) & 0x0F
                     parts.append(pack_q4nx_chunk(scales, zeros, int4))
     packed = np.concatenate(parts)
     expected_bytes = TOTAL_WEIGHT_I32 * 4
     if packed.shape[0] != expected_bytes:
-        raise RuntimeError(f"packed size mismatch: {packed.shape[0]} != {expected_bytes}")
+        raise RuntimeError(
+            f"packed size mismatch: {packed.shape[0]} != {expected_bytes}"
+        )
     return packed
 
 
@@ -73,8 +83,12 @@ def q4nx_chunk_matvec(packed_chunk: np.ndarray, act: np.ndarray) -> np.ndarray:
     scale_bytes = M_PER_TILE * GROUPS_PER_CHUNK * 2
     zero_bytes = M_PER_TILE * GROUPS_PER_CHUNK * 2
     data_offset = scale_bytes + zero_bytes
-    scales = np.frombuffer(packed_chunk[:scale_bytes], dtype=bfloat16).reshape(M_PER_TILE, GROUPS_PER_CHUNK)
-    zeros = np.frombuffer(packed_chunk[scale_bytes:data_offset], dtype=bfloat16).reshape(M_PER_TILE, GROUPS_PER_CHUNK)
+    scales = np.frombuffer(packed_chunk[:scale_bytes], dtype=bfloat16).reshape(
+        M_PER_TILE, GROUPS_PER_CHUNK
+    )
+    zeros = np.frombuffer(
+        packed_chunk[scale_bytes:data_offset], dtype=bfloat16
+    ).reshape(M_PER_TILE, GROUPS_PER_CHUNK)
     raw = packed_chunk[data_offset:]
 
     weights_u4 = np.zeros((M_PER_TILE, K_CHUNK), dtype=np.float32)
@@ -105,13 +119,16 @@ def chunk_for_tile(packed: np.ndarray, group: int, row: int, chunk: int) -> np.n
         + chunk * 2 * CHUNK_BF16 * 2
         + row_in_patch * CHUNK_BF16 * 2
     )
-    return packed[byte_offset:byte_offset + CHUNK_BF16 * 2]
+    return packed[byte_offset : byte_offset + CHUNK_BF16 * 2]
 
 
 def expected_tile_record(packed: np.ndarray, group: int, row: int) -> np.ndarray:
     accum = np.zeros(M_PER_TILE, dtype=np.float32)
     for chunk in range(K_CHUNKS):
-        accum += q4nx_chunk_matvec(chunk_for_tile(packed, group, row, chunk), activation_slice(group, row, chunk))
+        accum += q4nx_chunk_matvec(
+            chunk_for_tile(packed, group, row, chunk),
+            activation_slice(group, row, chunk),
+        )
 
     record = np.empty(OUT_RECORD_BF16, dtype=bfloat16)
     record[0] = bfloat16(group)
@@ -125,7 +142,9 @@ def expected_output(packed: np.ndarray) -> np.ndarray:
     for group in range(len(MAIN_COLUMNS)):
         for row in range(ROWS_PER_COLUMN):
             start = group * COLUMN_OUTPUT_BF16 + row * OUT_RECORD_BF16
-            output[start:start + OUT_RECORD_BF16] = expected_tile_record(packed, group, row)
+            output[start : start + OUT_RECORD_BF16] = expected_tile_record(
+                packed, group, row
+            )
     return output
 
 
@@ -137,6 +156,8 @@ if __name__ == "__main__":
     packed_weights = make_packed_weights()
     expected = expected_output(packed_weights)
     print(f"K={K}, K_chunks={K_CHUNKS}")
-    print(f"chunk_bf16={CHUNK_BF16}, patch_bf16={PATCH_BF16}, patch_bytes=0x{PATCH_BF16 * 2:x}")
+    print(
+        f"chunk_bf16={CHUNK_BF16}, patch_bf16={PATCH_BF16}, patch_bytes=0x{PATCH_BF16 * 2:x}"
+    )
     print(f"weight_i32={packed_as_i32(packed_weights).shape[0]}")
     print(f"expected[0:10]={expected[:10].tolist()}")

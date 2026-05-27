@@ -18,11 +18,14 @@ Start here before reading individual experiments:
 
 1. Read "Hardware Model" and "Runtime Model" below.
 2. Read `experiments/README.md` for the retained experiment chain.
-3. Read `experiments/resource_plan_audit.py` to see the computed resource plan.
-4. Read the latest frontier experiments:
+3. Read the latest frontier experiments:
    - `59_mylm_exact_nblock_projection`
-   - `60_mylm_chunk_ring_projection`
-5. Only then read earlier retained experiments for the specific subproblem they
+   - `61_mylm_chunk_ring_slot_locks`
+   - `62_mylm_full_nblock_chunk_ring`
+   - `63_mylm_packetized_patch_phase`
+   - `64_mylm_attention_to_o_direct_handoff`
+   - `65_mylm_fused_layer_engine_v0`
+4. Only then read earlier retained experiments for the specific subproblem they
    isolate.
 
 ## Hardware Model
@@ -130,6 +133,24 @@ come from one of these mistakes:
 - a channel uses a BD slot that belongs to a different channel bank,
 - two producers try to feed the same worker input without one physical phase
   schedule.
+
+For row1 memtiles on this NPU generation, BD slots are banked by channel parity:
+
+```text
+even DMA channels: BD 0..23
+odd DMA channels:  BD 24..47
+```
+
+This is not just a compiler preference. Exp62 showed that a same-channel
+`S2MM ch0` chain can compile when later `next_bd_id` entries cross into
+`24..47`, but the hardware does not make runtime progress there. When the same
+logical patch phases are split across channel 0 and channel 1 with legal BD
+banks, the design passes.
+
+Exp63 adds the practical workaround: the host can still push one linked
+`MM2S ch0` descriptor chain if each shim BD carries a packet ID. Packet routing
+then sends patch0 to memtile `S2MM ch0` and patch1 to `S2MM ch1`, preserving a
+single logical input queue while using legal row1 BD banks.
 
 ## Runtime Model
 
@@ -313,9 +334,11 @@ down 64 patches
 total 608 patches
 ```
 
-The latest experiments prove the manifest and exact patch ordering. The next
-hard part is consuming each large patch through small row1 chunk rings instead
-of storing a full patch in row1.
+The latest experiments prove the manifest, exact patch ordering, small row1
+chunk rings, packetized patch routing, deterministic attention-result handoff
+into O, and a v0 fused-layer engine over the full seven-phase schedule. The
+next hard part is replacing deterministic attention replay with the production
+rounded-KV/online-softmax attention producer.
 
 ## Row1 Memtile Responsibilities
 
@@ -329,8 +352,18 @@ Row1 is not just a passive buffer. In the MyLM-style design it should:
 - avoid full-patch residency when possible.
 
 Experiment `59_mylm_exact_nblock_projection` proves exact full-patch ABI with
-full-patch row1 residency. Experiment `60_mylm_chunk_ring_projection` is the
-frontier because it tries to replace that with a small chunk ring.
+full-patch row1 residency. Experiment `61_mylm_chunk_ring_slot_locks` proves
+one full `0x28000` patch can stream through a small row1 Q4NX chunk ring.
+Experiment `62_mylm_full_nblock_chunk_ring` scales that to full main16 with two
+patches per column when patch phases use legal memtile channel/BD ownership.
+Experiment `63_mylm_packetized_patch_phase` keeps the host-side patch queue
+single and uses packetized shim descriptors to select those legal row1 channels.
+Experiment `64_mylm_attention_to_o_direct_handoff` then composes that patch ABI
+with a direct edge-to-main O stream, proving there is no required host-visible
+attention drain between attention-result production and O projection.
+Experiment `65_mylm_fused_layer_engine_v0` scales the same exact patch ABI to
+the full 608-patch Qwen3 schedule and keeps O's deterministic attention-result
+handoff in the same static layer-shaped engine.
 
 ## KV Cache Shape
 
@@ -373,6 +406,11 @@ host-visible buffers. It is not yet the proven exact MyLM attention state. The
 remaining production question is what this compact state should contain for
 real attention: max/sum, score fragments, value accumulator metadata, phase
 control, or some combination.
+
+Experiment `64_mylm_attention_to_o_direct_handoff` separately proves that the
+large attention result itself can stream directly from edge tiles into the O
+projection input channel. Its producer is still deterministic replay; the
+production attention math is the next boundary to replace.
 
 ## Phase Reuse
 
@@ -432,7 +470,10 @@ causes:
 
 - A producer and consumer disagree on ping-pong parity.
 - A BD has `next_bd_id` pointing to a descriptor that is never valid.
+- A memtile channel follows a `next_bd_id` into the wrong parity BD bank.
 - A DMA queue is pushed on the wrong channel.
+- A packet route targets one DMA channel, but the receiving tile starts a
+  different `S2MM` channel.
 - A lock is initialized with the wrong count.
 - Multiple cores consume a shared lock but the producer releases too few tokens.
 - Packet IDs collide.
@@ -448,8 +489,6 @@ Use these debugging techniques:
 - Check generated MLIR for `address_patch`, `writebd`, `push_queue`, and
   `aie.dma_bd` counts.
 - Prefer one new hardware idea per experiment.
-- Run `experiments/resource_plan_audit.py` after pruning or changing retained
-  milestones.
 
 ## Resource Limits In Plain Language
 
@@ -480,22 +519,30 @@ The current retained chain establishes:
 - linked descriptors can reduce runtime task count,
 - exact MyLM patch units and patch order are known,
 - full 512-row projection can consume exact MyLM-sized patches,
-- chunk-sized row1 residency is the current unsolved frontier.
+- one full hidden-dim patch can stream through chunk-sized row1 residency,
+- full main16 can stream two exact hidden-dim patches per column through
+  chunk-sized row1 residency when the two patch phases use legal BD banks,
+- one linked host input queue can packet-route those two patch phases into the
+  legal row1 BD banks,
+- deterministic attention-result slices can stream directly into the full
+  main16 O phase without a host-visible attention drain,
+- the real seven-phase 608-patch schedule can run as a v0 fused-layer engine
+  using packetized exact MyLM patch descriptors and row1 small chunk rings.
 
 ## What Is Still Not Proven
 
 The remaining full-layer work is:
 
-1. Make the small row1 Q4NX chunk ring run reliably for a full `0x28000` patch.
-2. Replace deterministic phase records with real attention state.
-3. Implement real Q/K/V current write, KV scan, online softmax, and weighted V
+1. Replace deterministic phase records with real attention state.
+2. Implement real Q/K/V current write, KV scan, online softmax, and weighted V
    in the edge/aux fabric.
-4. Return attention output to main16 O phase without debug drains.
-5. Implement real RMSNorm, Q/K norm, RoPE, residual, SwiGLU, and down flow.
-6. Replace contract kernels with high-performance online Q4NX kernels.
-7. Decide where direct CDO generation is necessary instead of relying on
-   high-level routing/pathfinding.
-8. Wrap the final layer engine in layer-to-layer runtime submission and lm_head.
+3. Connect the real attention producer to the exp65 O handoff ABI without debug
+   drains.
+4. Implement real RMSNorm, Q/K norm, RoPE, residual, SwiGLU, and down flow.
+5. Replace contract kernels with high-performance online Q4NX kernels.
+6. Decide where direct CDO generation is necessary for production ownership or
+   descriptor-program size instead of relying on high-level routing/pathfinding.
+7. Wrap the final layer engine in layer-to-layer runtime submission and lm_head.
 
 ## Practical Rule For New Experiments
 

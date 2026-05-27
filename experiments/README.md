@@ -82,47 +82,69 @@ Total: `608` MyLM-sized patches. A hidden-dim patch is `64 output rows x
 - `59_mylm_exact_nblock_projection`: proves exact MyLM-sized patches can feed
   the full 512-row main16 projection block. It still keeps full patches resident
   in row1, so it is not the final memory shape.
-- `60_mylm_chunk_ring_projection`: current frontier. It changes row1 residency
-  from full patches to a small Q4NX chunk ring. It compiles, but the hardware
-  run times out, pointing at unresolved same-channel BD/lock phase ordering.
-- `resource_plan_audit.py`: computes the first-principles resource plan and
-  checks that retained experiments still cover the intended milestones.
+- `61_mylm_chunk_ring_slot_locks`: fixes the output route/collector mismatch,
+  gives ping and pong independent slot locks, and proves that a full `0x28000`
+  patch descriptor can stream through a small row1 Q4NX chunk ring on real NPU.
+- `62_mylm_full_nblock_chunk_ring`: current strongest row1/main16 evidence.
+  It scales the small-ring schedule to four main columns and four rows per
+  column with two exact `0x28000` patches per column. The split-channel variant
+  passes on real NPU; the same-channel variant times out because memtile even
+  DMA channels can only use BD `0..23`, while the 32-phase input chain crosses
+  into odd-channel BD slots `24..47`.
+- `63_mylm_packetized_patch_phase`: current strongest patch-handoff evidence.
+  It keeps one linked host `MM2S ch0` patch queue, packetizes each shim BD, and
+  lets packet routing send patch0/patch1 to legal memtile `S2MM ch0/ch1` BD
+  banks. It passes at full main16 scale, so this patch phase does not require
+  direct CDO/transaction generation.
+- `64_mylm_attention_to_o_direct_handoff`: current strongest attention-to-O
+  handoff evidence. Edge tiles replay deterministic attention-result slices
+  directly into the full main16 O phase while O weights arrive through exp63's
+  packetized patch queue and row1 small chunk rings. It passes on real NPU with
+  no host-visible attention drain.
+- `65_mylm_fused_layer_engine_v0`: current fused-engine baseline. It combines
+  the real Qwen3 seven-phase schedule, exact 608-patch MyLM manifest,
+  packetized patch descriptors, row1 small chunk rings, and direct
+  deterministic attention-result-to-O handoff. It passes on real NPU using
+  high-level MLIR-AIE generated descriptors.
 
 ## Deleted Experiments
 
-The older experiments `11`, `13`, `18..24`, `27..37`, `40..47`, and `50` were
-removed. They were valuable while exploring, but keeping them made the evidence
-chain harder to read. The retained chain preserves the current useful results:
-KV ring shape, current/cache writeback, full attention resource map, main16
-phase replay, edge-to-main O replay, real patch schedule, and exact-patch row1
-split.
+The older experiments `11`, `13`, `18..24`, `27..37`, `40..47`, `50`, and
+`60` were removed. They were valuable while exploring, but keeping them made the
+evidence chain harder to read. The retained chain preserves the current useful
+results: KV ring shape, current/cache writeback, full attention resource map,
+main16 phase replay, edge-to-main O replay, real patch schedule, and exact-patch
+row1 split.
 
 ## Remaining Questions
 
 1. How do we express MyLM-style direct CDO ownership in our codebase?
-   High-level MLIR-AIE/IRON routing can prove contracts, but exp60 shows that
-   the exact same-channel descriptor and chunk-ring schedule may require us to
-   own stream-switch, BD, and lock programming more directly.
-2. What is the exact row1 small chunk-ring schedule for a full `0x28000` patch?
-   Exp59 proves the exact patch ABI with full-patch residency. Exp60 proves the
-   intended smaller residency compiles but not yet that the lock/DMA phase order
-   is correct.
-3. What is the production attention ABI?
+   Exp62 shows why a literal same-channel row1 BD chain fails; exp63 shows that
+   packetized linked descriptors can keep one host logical queue while routing
+   phases to legal row1 BD banks. Exp65 shows the v0 fused layer descriptor
+   program is still expressible through high-level MLIR-AIE. Direct
+   CDO/transaction work should now be reserved for phase ownership that
+   packetized descriptors cannot express or for reducing descriptor-program
+   overhead.
+2. What is the production attention ABI?
    We still need to replace deterministic 17-dword records with real Q/current
-   K/V, rounded KV scan, online softmax state, weighted V, and the return stream
-   to O projection.
-4. Where should attention state live?
+   K/V, rounded KV scan, online softmax state, and weighted V. Exp64 proves the
+   return-to-O stream shape for deterministic attention results, but not the
+   production attention producer.
+3. Where should attention state live?
    The exact placement of running max/sum/output accumulators and the exact
    shape-A/shape-B or packet14/15 consumer relationship remain inferred rather
    than implemented as final code.
-5. How do Q/K/V outputs hand off to edge attention and return to main16 O
+4. How do Q/K/V outputs hand off to edge attention and return to main16 O
    without debug drains?
-   The contracts have proven pieces of this, but the full production ABI still
-   needs one continuous schedule.
-6. How do we replace contract kernels with fast kernels?
+   Exp64 proves the return-to-O half without an attention debug drain, and
+   exp65 proves that return path composes with the full seven-phase schedule.
+   The remaining gap is connecting exp39-style real Q/K/V attention output to
+   that same O handoff ABI in one continuous schedule.
+5. How do we replace contract kernels with fast kernels?
    The retained experiments mostly use deterministic or scalar kernels to prove
    dataflow. The final engine needs high-throughput online Q4NX kernels with
    sustained DMA/compute overlap.
-7. How do layer-level runlist and lm_head integrate?
+6. How do layer-level runlist and lm_head integrate?
    Once one fused layer is correct, the final runtime still needs layer-to-layer
    submission, per-layer weights/cache/state, and an lm_head path.

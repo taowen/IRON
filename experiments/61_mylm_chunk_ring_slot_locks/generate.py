@@ -1,4 +1,4 @@
-"""Generate raw MLIR-AIE for exp60 MyLM chunk-ring projection."""
+"""Generate raw MLIR-AIE for exp61 MyLM chunk-ring slot-lock projection."""
 
 from pathlib import Path
 
@@ -57,14 +57,18 @@ def _npu_writebd(
     )
 
 
-def _npu_address_patch(column: int, bd_id: int, arg_idx: int, arg_plus_bytes: int) -> str:
+def _npu_address_patch(
+    column: int, bd_id: int, arg_idx: int, arg_plus_bytes: int
+) -> str:
     return (
         f"      aiex.npu.address_patch {{addr = {_shim_bd_address(column, bd_id)} : ui32, "
         f"arg_idx = {arg_idx} : i32, arg_plus = {arg_plus_bytes} : i32}}"
     )
 
 
-def _npu_push_queue(column: int, direction: str, channel: int, bd_id: int, issue_token: bool = False) -> str:
+def _npu_push_queue(
+    column: int, direction: str, channel: int, bd_id: int, issue_token: bool = False
+) -> str:
     token = "true" if issue_token else "false"
     return (
         f"      aiex.npu.push_queue({column}, 0, {direction} : {channel}) "
@@ -223,21 +227,25 @@ def _main_tile(group: int, row: int) -> str:
 """
 
 
-def _row_stream(group: int, row: int, patch: int, row_in_patch: int, ping_bd: int, pong_bd: int) -> str:
+def _row_stream(
+    group: int, row: int, patch: int, row_in_patch: int, ping_bd: int, pong_bd: int
+) -> str:
     prefix = f"mt{group}"
     offset = row_in_patch * CHUNK_BF16
-    next_label = f"^row{row + 1}_start" if row + 1 < ROWS_PER_COLUMN else "^output_start"
+    next_label = (
+        f"^row{row + 1}_start" if row + 1 < ROWS_PER_COLUMN else "^output_start"
+    )
     return f"""    ^row{row}_start:
       %row{row}_dma = aie.dma_start(MM2S, {row}, ^row{row}_ping, {next_label})
     ^row{row}_ping:
-      aie.use_lock(%{prefix}_patch{patch}_full, AcquireGreaterEqual, 1)
+      aie.use_lock(%{prefix}_patch{patch}_ping_full, AcquireGreaterEqual, 1)
       aie.dma_bd(%{prefix}_patch{patch}_ping : memref<{2 * CHUNK_BF16}xbf16>, {offset}, {CHUNK_BF16}) {{bd_id = {ping_bd} : i32, next_bd_id = {pong_bd} : i32}}
-      aie.use_lock(%{prefix}_patch{patch}_empty, Release, 1)
+      aie.use_lock(%{prefix}_patch{patch}_ping_empty, Release, 1)
       aie.next_bd ^row{row}_pong
     ^row{row}_pong:
-      aie.use_lock(%{prefix}_patch{patch}_full, AcquireGreaterEqual, 1)
+      aie.use_lock(%{prefix}_patch{patch}_pong_full, AcquireGreaterEqual, 1)
       aie.dma_bd(%{prefix}_patch{patch}_pong : memref<{2 * CHUNK_BF16}xbf16>, {offset}, {CHUNK_BF16}) {{bd_id = {pong_bd} : i32, next_bd_id = {ping_bd} : i32}}
-      aie.use_lock(%{prefix}_patch{patch}_empty, Release, 1)
+      aie.use_lock(%{prefix}_patch{patch}_pong_empty, Release, 1)
       aie.next_bd ^row{row}_ping"""
 
 
@@ -246,13 +254,11 @@ def _memtile_column(group: int) -> str:
     output_bds = []
     for row in range(ROWS_PER_COLUMN):
         next_row = (row + 1) % ROWS_PER_COLUMN
-        output_bds.append(
-            f"""    ^out{row}:
+        output_bds.append(f"""    ^out{row}:
       aie.use_lock(%{prefix}_output_empty, AcquireGreaterEqual, 1)
       aie.dma_bd(%{prefix}_output : memref<{COLUMN_OUTPUT_BF16}xbf16>, {row * OUT_RECORD_BF16}, {OUT_RECORD_BF16}) {{bd_id = {7 + row} : i32, next_bd_id = {7 + next_row} : i32}}
       aie.use_lock(%{prefix}_output_full, Release, 1)
-      aie.next_bd ^out{next_row}"""
-        )
+      aie.next_bd ^out{next_row}""")
 
     row_bds = (
         _row_stream(group, 0, 0, 0, 2, 3),
@@ -263,28 +269,30 @@ def _memtile_column(group: int) -> str:
     %{prefix}_patch0_ping = aie.buffer(%mt{group}) {{sym_name = "mt{group}_patch0_ping"}} : memref<{2 * CHUNK_BF16}xbf16>
     %{prefix}_patch0_pong = aie.buffer(%mt{group}) {{sym_name = "mt{group}_patch0_pong"}} : memref<{2 * CHUNK_BF16}xbf16>
     %{prefix}_output = aie.buffer(%mt{group}) {{sym_name = "mt{group}_output"}} : memref<{COLUMN_OUTPUT_BF16}xbf16>
-    %{prefix}_patch0_empty = aie.lock(%mt{group}, 0) {{init = 2 : i32, sym_name = "mt{group}_patch0_empty"}}
-    %{prefix}_patch0_full = aie.lock(%mt{group}, 1) {{init = 0 : i32, sym_name = "mt{group}_patch0_full"}}
+    %{prefix}_patch0_ping_empty = aie.lock(%mt{group}, 0) {{init = 2 : i32, sym_name = "mt{group}_patch0_ping_empty"}}
+    %{prefix}_patch0_ping_full = aie.lock(%mt{group}, 1) {{init = 0 : i32, sym_name = "mt{group}_patch0_ping_full"}}
+    %{prefix}_patch0_pong_empty = aie.lock(%mt{group}, 2) {{init = 2 : i32, sym_name = "mt{group}_patch0_pong_empty"}}
+    %{prefix}_patch0_pong_full = aie.lock(%mt{group}, 3) {{init = 0 : i32, sym_name = "mt{group}_patch0_pong_full"}}
     %{prefix}_output_empty = aie.lock(%mt{group}, 4) {{init = {ROWS_PER_COLUMN} : i32, sym_name = "mt{group}_output_empty"}}
     %{prefix}_output_full = aie.lock(%mt{group}, 5) {{init = 0 : i32, sym_name = "mt{group}_output_full"}}
 
     %mt{group}_dma = aie.memtile_dma(%mt{group}) {{
       %0 = aie.dma_start(S2MM, 0, ^patch0_ping, ^row0_start)
     ^patch0_ping:
-      aie.use_lock(%{prefix}_patch0_empty, AcquireGreaterEqual, 2)
+      aie.use_lock(%{prefix}_patch0_ping_empty, AcquireGreaterEqual, 2)
       aie.dma_bd(%{prefix}_patch0_ping : memref<{2 * CHUNK_BF16}xbf16>, 0, {2 * CHUNK_BF16}) {{bd_id = 0 : i32, next_bd_id = 1 : i32}}
-      aie.use_lock(%{prefix}_patch0_full, Release, 2)
+      aie.use_lock(%{prefix}_patch0_ping_full, Release, 2)
       aie.next_bd ^patch0_pong
     ^patch0_pong:
-      aie.use_lock(%{prefix}_patch0_empty, AcquireGreaterEqual, 2)
+      aie.use_lock(%{prefix}_patch0_pong_empty, AcquireGreaterEqual, 2)
       aie.dma_bd(%{prefix}_patch0_pong : memref<{2 * CHUNK_BF16}xbf16>, 0, {2 * CHUNK_BF16}) {{bd_id = 1 : i32, next_bd_id = 0 : i32}}
-      aie.use_lock(%{prefix}_patch0_full, Release, 2)
+      aie.use_lock(%{prefix}_patch0_pong_full, Release, 2)
       aie.next_bd ^patch0_ping
 
 {chr(10).join(row_bds)}
 
     ^output_start:
-      %output_collect = aie.dma_start(S2MM, 4, ^out0, ^drain_start)
+      %output_collect = aie.dma_start(S2MM, 2, ^out0, ^drain_start)
 {chr(10).join(output_bds)}
 
     ^drain_start:
@@ -341,10 +349,16 @@ def generate_mlir() -> str:
         flows.append(f"    aie.flow(%mt{group}, DMA : 5, %shim{group}, DMA : 0)")
         blocks.append(_memtile_column(group))
         for row in range(ROWS_PER_COLUMN):
-            tile_defs.append(f"    %edge{group}_{row} = aie.tile({EDGE_COLUMNS[group]}, {row + 2})")
+            tile_defs.append(
+                f"    %edge{group}_{row} = aie.tile({EDGE_COLUMNS[group]}, {row + 2})"
+            )
             tile_defs.append(f"    %m{group}_{row} = aie.tile({main_col}, {row + 2})")
-            flows.append(f"    aie.flow(%edge{group}_{row}, DMA : 0, %m{group}_{row}, DMA : 0)")
-            flows.append(f"    aie.flow(%mt{group}, DMA : {row}, %m{group}_{row}, DMA : 1)")
+            flows.append(
+                f"    aie.flow(%edge{group}_{row}, DMA : 0, %m{group}_{row}, DMA : 0)"
+            )
+            flows.append(
+                f"    aie.flow(%mt{group}, DMA : {row}, %m{group}_{row}, DMA : 1)"
+            )
             flows.append(f"    aie.packet_flow({_packet_id(group, row)}) {{")
             flows.append(f"      aie.packet_source<%m{group}_{row}, DMA : 1>")
             flows.append(f"      aie.packet_dest<%mt{group}, DMA : 2>")
