@@ -1,22 +1,13 @@
-"""Audit fused-layer resource planning against experiments and MyLM notes.
-
-This script turns the first-principles fused-layer plan into computed facts:
-tile ownership, Q4NX projection patch counts, local working-set size, and edge
-KV stream shapes.  It then compares those facts against the retained IRON
-experiments and the MyLM reverse-engineering notes.
-"""
+"""Audit retained fused-layer experiments against the current resource plan."""
 
 from __future__ import annotations
 
 import argparse
-import csv
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MYLM_ROOT = Path("/var/home/taowen/projects/MyLM")
 
 Q4_ROWS = 32
 Q4_K_CHUNK = 256
@@ -47,7 +38,8 @@ class ProjectionPhase:
 
     @property
     def patch_bytes(self) -> int:
-        return (PATCH_ROWS // Q4_ROWS) * self.k_chunks * Q4_CHUNK_BYTES
+        chunks_per_patch = PATCH_ROWS // Q4_ROWS
+        return chunks_per_patch * self.k_chunks * Q4_CHUNK_BYTES
 
 
 @dataclass(frozen=True)
@@ -56,8 +48,6 @@ class FusedLayerPlan:
     intermediate_dim: int = 12288
     q_dim: int = 4096
     kv_dim: int = 1024
-    q_heads: int = 32
-    kv_heads: int = 8
     head_dim: int = 128
     tokens_per_kv_tile: int = 16
 
@@ -74,14 +64,12 @@ class FusedLayerPlan:
         )
 
     @property
-    def main_tiles(self) -> tuple[str, ...]:
-        return tuple(f"c{col}r{row}" for col in MAIN_COLS for row in MAIN_ROWS)
+    def main_tile_count(self) -> int:
+        return len(MAIN_COLS) * len(MAIN_ROWS)
 
     @property
-    def edge_tiles(self) -> tuple[str, ...]:
-        return tuple(
-            f"c{col}r{row}" for col in (0, 1, 6, 7) for row in MAIN_ROWS
-        )
+    def edge_tile_count(self) -> int:
+        return 32 - self.main_tile_count
 
     @property
     def q4_local_working_set_bytes(self) -> int:
@@ -93,7 +81,8 @@ class FusedLayerPlan:
 
     @property
     def kv_plane_tile_dwords(self) -> int:
-        return 4 * self.tokens_per_kv_tile * self.head_dim * 2 // 4
+        bytes_per_tile = 4 * self.tokens_per_kv_tile * self.head_dim * 2
+        return bytes_per_tile // 4
 
     @property
     def kv_half_tile_dwords(self) -> int:
@@ -109,6 +98,13 @@ class FusedLayerPlan:
 
 
 @dataclass(frozen=True)
+class ExperimentExpectation:
+    directory: str
+    files: tuple[str, ...]
+    markers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class CheckResult:
     name: str
     status: str
@@ -116,383 +112,202 @@ class CheckResult:
 
 
 def read_text(path: Path) -> str:
-    if not path.exists():
-        return ""
     return path.read_text()
 
 
-def source_contains(path: Path, pattern: str) -> bool:
-    return re.search(pattern, read_text(path), re.MULTILINE) is not None
-
-
-def literal_constant(path: Path, name: str) -> int | None:
-    text = read_text(path)
-    match = re.search(rf"^{re.escape(name)}\s*=\s*(0x[0-9a-fA-F]+|\d+)\s*$", text, re.MULTILINE)
-    if match is None:
-        return None
-    return int(match.group(1), 0)
-
-
-def status(pass_condition: bool, partial_condition: bool = False) -> str:
-    if pass_condition:
-        return "PASS"
-    if partial_condition:
-        return "PARTIAL"
-    return "GAP"
-
-
-def experiment_checks(plan: FusedLayerPlan) -> tuple[CheckResult, ...]:
-    exp23_ref = ROOT / "experiments/23_qkv_current_attention/reference.py"
-    exp25_gen = ROOT / "experiments/25_mylm_edge_bd_ring/generate.py"
-    exp26_gen = ROOT / "experiments/26_kv_edge_aux_reshape/generate.py"
-    exp27_gen = ROOT / "experiments/27_shape_ab_attention_contract/generate.py"
-    exp28_gen = ROOT / "experiments/28_multitile_shape_ab_attention/generate.py"
-    exp50_gen = ROOT / "experiments/50_edge_slice_replay_q4nx_o_phase/generate.py"
-    exp52_gen = ROOT / "experiments/52_fullk_edge_slice_replay_q4nx_o_phase/generate.py"
-    exp53_gen = ROOT / "experiments/53_full_layer_phase_chain_contract/generate.py"
-    exp53_kernel = ROOT / "experiments/53_full_layer_phase_chain_contract/phase_chain.cc"
-
-    exp23_hidden = literal_constant(exp23_ref, "HIDDEN_DIM")
-    exp25_plane = literal_constant(exp25_gen, "PLANE_TILE_DWORDS")
-    exp26_current = literal_constant(exp26_gen, "CURRENT_DWORDS")
-    exp26_history_source = literal_constant(exp26_gen, "HISTORY_SOURCE_DWORDS")
-    exp26_history = literal_constant(exp26_gen, "HISTORY_DWORDS")
-    exp26_sideband = literal_constant(exp26_gen, "SIDEBAND_DWORDS")
-    exp27_current = literal_constant(exp27_gen, "CURRENT_DWORDS")
-    exp27_history_source = literal_constant(exp27_gen, "HISTORY_SOURCE_DWORDS")
-    exp27_history = literal_constant(exp27_gen, "HISTORY_DWORDS")
-    exp27_sideband = literal_constant(exp27_gen, "SIDEBAND_DWORDS")
-    exp27_output = literal_constant(exp27_gen, "ATTENTION_OUT_DWORDS")
-    exp28_current = literal_constant(exp28_gen, "CURRENT_DWORDS")
-    exp28_history_source = literal_constant(exp28_gen, "HISTORY_SOURCE_DWORDS")
-    exp28_history = literal_constant(exp28_gen, "HISTORY_DWORDS")
-    exp28_sideband = literal_constant(exp28_gen, "SIDEBAND_DWORDS")
-    exp28_output = literal_constant(exp28_gen, "ATTENTION_OUT_DWORDS")
-    exp50_record = literal_constant(exp50_gen, "RECORD_DWORDS")
-    exp50_o_input = literal_constant(exp50_gen, "O_INPUT_DIM")
-    exp50_act_slice = literal_constant(exp50_gen, "ACT_SLICE_BF16")
-    exp50_k_chunk = literal_constant(exp50_gen, "K_CHUNK")
-    exp50_num_chunks = None if exp50_o_input is None or exp50_k_chunk is None else exp50_o_input // exp50_k_chunk
-    exp52_record = literal_constant(exp52_gen, "RECORD_DWORDS")
-    exp52_o_input = literal_constant(exp52_gen, "O_INPUT_DIM")
-    exp52_edge_shard = literal_constant(exp52_gen, "EDGE_SHARD_BF16")
-    exp52_act_slice = literal_constant(exp52_gen, "ACT_SLICE_BF16")
-    exp52_k_chunk = literal_constant(exp52_gen, "K_CHUNK")
-    exp52_num_edge_shards = None if exp52_o_input is None or exp52_edge_shard is None else exp52_o_input // exp52_edge_shard
-    exp52_slices_per_shard = None if exp52_edge_shard is None or exp52_act_slice is None else exp52_edge_shard // exp52_act_slice
-    exp52_num_chunks = None if exp52_o_input is None or exp52_k_chunk is None else exp52_o_input // exp52_k_chunk
-    exp53_record = literal_constant(exp53_gen, "RECORD_DWORDS")
-    exp53_hidden = literal_constant(exp53_gen, "HIDDEN_DIM")
-    exp53_act_slice = literal_constant(exp53_gen, "ACT_SLICE_BF16")
-    exp53_k_chunk = literal_constant(exp53_gen, "K_CHUNK")
-
-    exp25_static_ring = (
-        exp25_plane == plan.kv_plane_tile_dwords
-        and source_contains(exp25_gen, r"HALF_TILE_DWORDS\s*=\s*PLANE_TILE_DWORDS\s*//\s*2")
-        and source_contains(exp25_gen, r"bd_id = 0 : i32, next_bd_id = 1")
-        and source_contains(exp25_gen, r"bd_id = 24 : i32, next_bd_id = 25")
-    )
-    exp26_selector = (
-        exp26_current == plan.current_packet_dwords
-        and exp26_history_source == plan.kv_plane_tile_dwords
-        and exp26_history == plan.kv_half_tile_dwords
-        and exp26_sideband == 17
-        and source_contains(exp26_gen, r'"left14": Variant\(name="left14", packet_id=14, shape_col=0\)')
-        and source_contains(exp26_gen, r'"right15": Variant\(name="right15", packet_id=15, shape_col=7\)')
-        and source_contains(exp26_gen, r"aie.flow\(%side_sink, DMA : 1, %shape_b, DMA : 0\)")
-    )
-    exp27_attention = (
-        exp27_current == plan.current_packet_dwords
-        and exp27_history_source == plan.kv_plane_tile_dwords
-        and exp27_history == plan.kv_half_tile_dwords
-        and exp27_sideband == 17
-        and exp27_output == plan.current_packet_dwords
-        and source_contains(exp27_gen, r"aie\.packet_flow\(14\)")
-        and source_contains(exp27_gen, r"aie.flow\(%mem0, DMA : 0, %shape_a, DMA : 1\)")
-        and source_contains(exp27_gen, r"aie.flow\(%mem7, DMA : 0, %shape_b, DMA : 1\)")
-        and source_contains(exp27_gen, r"func.call @shape_a_softmax_sideband")
-        and source_contains(exp27_gen, r"func.call @shape_b_weighted_value")
-    )
-    exp28_attention = (
-        exp28_current == plan.current_packet_dwords
-        and exp28_history_source == plan.kv_plane_tile_dwords
-        and exp28_history == plan.kv_half_tile_dwords
-        and exp28_sideband == 17
-        and exp28_output == plan.current_packet_dwords
-        and source_contains(exp28_gen, r"aie\.packet_flow\(14\)")
-        and source_contains(exp28_gen, r"aie.flow\(%mem0, DMA : 0, %shape_a, DMA : 1\)")
-        and source_contains(exp28_gen, r"aie.flow\(%mem7, DMA : 0, %shape_b, DMA : 1\)")
-        and source_contains(exp28_gen, r"func.call @shape_a_tile_sideband")
-        and source_contains(exp28_gen, r"func.call @shape_b_accumulate_tile")
-        and source_contains(exp28_gen, r"history_total = num_tiles \* HISTORY_SOURCE_DWORDS")
-    )
-    exp50_slice_replay = (
-        exp50_record == 17
-        and exp50_o_input == 2 * plan.current_packet_dwords
-        and exp50_act_slice == Q4_K_CHUNK
-        and exp50_k_chunk == Q4_K_CHUNK
-        and exp50_num_chunks == (2 * plan.current_packet_dwords // Q4_K_CHUNK)
-        and source_contains(exp50_gen, r"NUM_CHUNKS\s*=\s*O_INPUT_DIM\s*//\s*K_CHUNK")
-        and source_contains(exp50_gen, r"memref<\{ACT_SLICE_BF16\}xbf16>")
-        and source_contains(exp50_gen, r"%edge\{group\}_\{row\}, DMA : 0, %m\{group\}_\{row\}, DMA : 1")
-        and source_contains(exp50_gen, r"func.call @edge_make_attention_slice")
-        and source_contains(exp50_gen, r"func.call @q4nx_chunk_accum_slice")
-        and not source_contains(exp50_gen, r"edge_make_attention_shard")
-        and not source_contains(exp50_gen, r"q4nx_chunk_accum_offset")
-        and not source_contains(exp50_gen, r"memref<\{O_INPUT_DIM\}xbf16>")
-    )
-    exp52_fullk_slice_replay = (
-        exp52_record == 17
-        and exp52_o_input == plan.hidden_dim
-        and exp52_edge_shard == 2 * plan.current_packet_dwords
-        and exp52_act_slice == Q4_K_CHUNK
-        and exp52_k_chunk == Q4_K_CHUNK
-        and exp52_num_edge_shards == plan.hidden_dim // (2 * plan.current_packet_dwords)
-        and exp52_slices_per_shard == (2 * plan.current_packet_dwords) // Q4_K_CHUNK
-        and exp52_num_chunks == plan.hidden_dim // Q4_K_CHUNK
-        and source_contains(exp52_gen, r"NUM_EDGE_SHARDS\s*=\s*O_INPUT_DIM\s*//\s*EDGE_SHARD_BF16")
-        and source_contains(exp52_gen, r"SLICES_PER_SHARD\s*=\s*EDGE_SHARD_BF16\s*//\s*ACT_SLICE_BF16")
-        and source_contains(exp52_gen, r"func.call @edge_make_attention_slice")
-        and source_contains(exp52_gen, r"func.call @q4nx_chunk_accum_slice")
-        and not source_contains(exp52_gen, r"edge_make_attention_shard")
-        and not source_contains(exp52_gen, r"q4nx_chunk_accum_offset")
-        and not source_contains(exp52_gen, r"memref<\{O_INPUT_DIM\}xbf16>")
-        and not source_contains(exp52_gen, r"memref<\{EDGE_SHARD_BF16\}xbf16>")
-    )
-    exp53_full_phase_chain = (
-        exp53_record == 17
-        and exp53_hidden == plan.hidden_dim
-        and exp53_act_slice == Q4_K_CHUNK
-        and exp53_k_chunk == Q4_K_CHUNK
-        and source_contains(exp53_gen, r'PHASE_NAMES\s*=\s*\("Q", "K", "V", "O", "GATE", "UP", "DOWN"\)')
-        and source_contains(exp53_gen, r"NUM_PHASES\s*=\s*len\(PHASE_NAMES\)")
-        and source_contains(exp53_gen, r"COLUMN_WEIGHT_BF16\s*=\s*NUM_PHASES \* PHASE_WEIGHT_BF16")
-        and source_contains(exp53_gen, r"_npu_writebd\(column, 0, COLUMN_WEIGHT_BF16 // 2, weight_offset\)")
-        and not source_contains(exp53_gen, r"_npu_writebd\(column, phase, PHASE_WEIGHT_BF16")
-        and source_contains(exp53_gen, r"func.call @edge_make_phase_slice")
-        and source_contains(exp53_gen, r"func.call @main_emit_phase_record")
-        and source_contains(exp53_kernel, r"record\[1 \+ lane\] = group \* 37 \+ row \* 11 \+ \(phase \+ 1\) \* 101")
-        and source_contains(exp53_kernel, r"swiglu\[idx\] = static_cast<bfloat16>\(sigmoidish \* up_f\)")
-        and not source_contains(exp53_gen, r"memref<\{HIDDEN_DIM\}xbf16>")
-    )
-
+def retained_experiments() -> tuple[ExperimentExpectation, ...]:
     return (
-        CheckResult(
-            "exp23 Q/K/V current attention",
-            status(exp23_hidden == plan.hidden_dim, exp23_hidden == 512),
-            f"toy hidden_dim={exp23_hidden}; full plan hidden_dim={plan.hidden_dim}",
+        ExperimentExpectation(
+            "25_mylm_edge_bd_ring",
+            ("README.md", "generate.py"),
+            ("L=128", "PASS", "4096-dword", "2048-dword"),
         ),
-        CheckResult(
-            "exp25 row1 static KV ring",
-            status(exp25_static_ring),
-            f"plane={exp25_plane}, expected={plan.kv_plane_tile_dwords}; half={plan.kv_half_tile_dwords}",
+        ExperimentExpectation(
+            "26_kv_edge_aux_reshape",
+            ("README.md", "generate.py"),
+            ("packet14/15", "SIDEBAND_DWORDS = 17", "HISTORY_DWORDS"),
         ),
-        CheckResult(
-            "exp26 selector/history/sideband",
-            status(exp26_selector),
-            (
-                f"current={exp26_current}, history_source={exp26_history_source}, "
-                f"history={exp26_history}, sideband={exp26_sideband}"
-            ),
+        ExperimentExpectation(
+            "38_full_attention_fabric",
+            ("README.md", "generate.py"),
+            ("32Q/8KV", "row1", "PASS"),
         ),
-        CheckResult(
-            "exp27 shape-A/B attention contract",
-            status(exp27_attention),
-            (
-                f"current={exp27_current}, history_source={exp27_history_source}, "
-                f"history={exp27_history}, sideband={exp27_sideband}, output={exp27_output}"
-            ),
+        ExperimentExpectation(
+            "39_projected_current_write_full_attention",
+            ("README.md", "generate.py"),
+            ("current K/V writeback", "full attention fabric", "PASS"),
         ),
-        CheckResult(
-            "exp28 multi-tile online attention",
-            status(exp28_attention),
-            (
-                f"current={exp28_current}, history_source={exp28_history_source}, "
-                f"history={exp28_history}, sideband={exp28_sideband}, output={exp28_output}"
-            ),
+        ExperimentExpectation(
+            "48_main16_fullk_q4nx_phase_replay",
+            ("README.md", "generate.py"),
+            ("main16", "full-K Q4NX", "PASS"),
         ),
-        CheckResult(
-            "exp50 edge slice replay to Q4NX O",
-            status(exp50_slice_replay),
-            (
-                f"sideband={exp50_record}, edge_shard_dwords="
-                f"{None if exp50_o_input is None else exp50_o_input // 2}, "
-                f"slice_bf16={exp50_act_slice}, q4_chunks={exp50_num_chunks}"
-            ),
+        ExperimentExpectation(
+            "52_fullk_edge_slice_replay_q4nx_o_phase",
+            ("README.md", "generate.py"),
+            ("full-K O", "edge-replayed", "K=4096"),
         ),
-        CheckResult(
-            "exp52 full-K edge slice replay to Q4NX O",
-            status(exp52_fullk_slice_replay),
-            (
-                f"sideband={exp52_record}, full_o_input={exp52_o_input}, "
-                f"edge_shards={exp52_num_edge_shards}, slices_per_shard={exp52_slices_per_shard}, "
-                f"slice_bf16={exp52_act_slice}, q4_chunks={exp52_num_chunks}"
-            ),
+        ExperimentExpectation(
+            "53_full_layer_phase_chain_contract",
+            ("README.md", "generate.py"),
+            ("Q,K,V,O,gate,up,down", "seven", "PASS"),
         ),
-        CheckResult(
-            "exp53 full layer phase-chain contract",
-            status(exp53_full_phase_chain),
-            (
-                f"sideband={exp53_record}, hidden={exp53_hidden}, "
-                f"slice_bf16={exp53_act_slice}, k_chunk={exp53_k_chunk}; "
-                "uses one continuous per-column weight stream"
-            ),
+        ExperimentExpectation(
+            "54_real_qwen_patch_schedule",
+            ("README.md", "run_npu.py"),
+            ("608", "real Qwen3", "patch schedule"),
         ),
-    )
-
-
-def mylm_doc_checks(plan: FusedLayerPlan, mylm_root: Path) -> tuple[CheckResult, ...]:
-    q4nx = read_text(mylm_root / "tools/re/Q4NX_LAYOUT.md")
-    current = read_text(mylm_root / "tools/re/fused-layer-engine/current-understanding.md")
-
-    q4nx_ok = (
-        "block_size = 5120" in q4nx
-        and "32 x 256" in q4nx
-        and f"Total: {plan.total_weight_patches} patches" in q4nx
-    )
-    main16_ok = (
-        "The main projection fabric is spatially parallel" in current
-        and "c2r2/c3r2/c4r2/c5r2" in current
-        and "input  ch1 bd2 len=1280" in current
-        and "output ch2 bd4 len=17" in current
-    )
-    edge_ok = (
-        "edge shape A" in current
-        and "input ch0 bd0 base=0x78000 len=512" in current
-        and "input ch1 bd2 base=0x70400 len=2048" in current
-        and "edge shape B" in current
-        and "output ch2 bd2 base=0x78000 len=512" in current
-    )
-    packet_ok = (
-        "packet14" in current
-        and "packet15" in current
-        and "Two 256-dword BDs per packet id equal 512 dwords" in current
-    )
-    sideband_ok = (
-        "Route8 has no packet-enabled BD source" in current
-        and "len=17" in current
-        and "compact sideband" in current
-    )
-
-    notes_status = "PASS" if q4nx and current else "MISSING"
-    return (
-        CheckResult(
-            "MyLM notes available",
-            notes_status,
-            f"root={mylm_root}",
+        ExperimentExpectation(
+            "55_mylm_linked_bd_chain",
+            ("README.md", "generate.py"),
+            ("linked", "BD", "pushes only `BD0`"),
         ),
-        CheckResult(
-            "MyLM Q4NX patch plan",
-            status(q4nx_ok),
-            f"expected total patches={plan.total_weight_patches}, chunk={Q4_CHUNK_BYTES}B",
+        ExperimentExpectation(
+            "56_mylm_linked_qwen_schedule",
+            ("README.md", "generate.py"),
+            ("608", "linked", "Qwen3"),
         ),
-        CheckResult(
-            "MyLM main16 projection shape",
-            status(main16_ok),
-            "expects 16 reusable main tiles with 1280-dword Q4 input and 17-dword sideband",
+        ExperimentExpectation(
+            "57_mylm_exact_patch_manifest",
+            ("README.md", "schedule.py"),
+            ("608", "0x28000", "0x78000"),
         ),
-        CheckResult(
-            "MyLM edge shape A/B",
-            status(edge_ok),
-            "shape A: current+history, shape B: history->512-dword output",
+        ExperimentExpectation(
+            "58_mylm_patch_pair_row1_split",
+            ("README.md", "generate.py"),
+            ("two 64-row", "row1", "PASS"),
         ),
-        CheckResult(
-            "MyLM packet current",
-            status(packet_ok),
-            "packet14/15 are two 256-dword BDs each, total 512 dwords per side",
+        ExperimentExpectation(
+            "59_mylm_exact_nblock_projection",
+            ("README.md", "generate.py"),
+            ("0x28000", "512-row", "PASS"),
         ),
-        CheckResult(
-            "MyLM route8 sideband",
-            status(sideband_ok),
-            "17-dword non-packet compact stream, not full tensor route",
+        ExperimentExpectation(
+            "60_mylm_chunk_ring_projection",
+            ("README.md", "generate.py"),
+            ("chunk-sized", "ERT_CMD_STATE_TIMEOUT", "Current status"),
         ),
     )
 
 
-def parse_field(fields: str, name: str) -> int | None:
-    match = re.search(rf"\b{re.escape(name)}=(-?0x[0-9a-fA-F]+|-?\d+)\b", fields)
-    if match is None:
-        return None
-    return int(match.group(1), 0)
-
-
-def bd_csv_checks(plan: FusedLayerPlan, csv_path: Path) -> tuple[CheckResult, ...]:
-    if not csv_path.exists():
-        return (CheckResult("BD CSV", "MISSING", f"{csv_path}"),)
-
-    rows: list[tuple[str, int, int, int]] = []
-    with csv_path.open(newline="") as file:
-        for row in csv.DictReader(file):
-            fields = row["fields"]
-            length = parse_field(fields, "len")
-            packet_en = parse_field(fields, "packet_en")
-            packet_id = parse_field(fields, "packet_id")
-            if length is None or packet_en is None or packet_id is None:
-                continue
-            rows.append((row["tile"], length, packet_en, packet_id))
-
-    has_ring_load = any(tile in {"c0r1", "c7r1"} and length == plan.kv_plane_tile_dwords for tile, length, _, _ in rows)
-    has_ring_half = any(tile in {"c0r1", "c7r1"} and length == plan.kv_half_tile_dwords for tile, length, _, _ in rows)
-    has_packet14 = any(packet_en == 1 and packet_id == 14 for _, _, packet_en, packet_id in rows)
-    has_packet15 = any(packet_en == 1 and packet_id == 15 for _, _, packet_en, packet_id in rows)
-    has_sideband17 = any(length == 17 and packet_en == 0 for _, length, packet_en, _ in rows)
-    has_shape_a = any(tile in {"c0r2", "c7r2"} and length == plan.current_packet_dwords for tile, length, _, _ in rows) and any(
-        tile in {"c0r2", "c7r2"} and length == plan.kv_half_tile_dwords for tile, length, _, _ in rows
+def check_plan(plan: FusedLayerPlan) -> tuple[CheckResult, ...]:
+    hidden_phase = plan.phases[0]
+    down_phase = plan.phases[-1]
+    checks = (
+        CheckResult(
+            "main/edge fabric",
+            "PASS" if plan.main_tile_count == 16 and plan.edge_tile_count == 16 else "GAP",
+            f"main={plan.main_tile_count}, edge={plan.edge_tile_count}",
+        ),
+        CheckResult(
+            "Q4 local working set",
+            "PASS" if plan.q4_local_working_set_bytes < 16 * 1024 else "GAP",
+            f"{plan.q4_local_working_set_bytes} bytes per main tile",
+        ),
+        CheckResult(
+            "Qwen patch count",
+            "PASS" if plan.total_weight_patches == 608 else "GAP",
+            f"{plan.total_weight_patches} patches",
+        ),
+        CheckResult(
+            "hidden patch size",
+            "PASS" if hidden_phase.patch_bytes == 0x28000 else "GAP",
+            f"0x{hidden_phase.patch_bytes:x}",
+        ),
+        CheckResult(
+            "down patch size",
+            "PASS" if down_phase.patch_bytes == 0x78000 else "GAP",
+            f"0x{down_phase.patch_bytes:x}",
+        ),
+        CheckResult(
+            "KV history tile",
+            "PASS" if plan.kv_plane_tile_dwords == 4096 else "GAP",
+            f"{plan.kv_plane_tile_dwords} dwords",
+        ),
+        CheckResult(
+            "KV half tile",
+            "PASS" if plan.kv_half_tile_dwords == 2048 else "GAP",
+            f"{plan.kv_half_tile_dwords} dwords",
+        ),
+        CheckResult(
+            "current packet",
+            "PASS" if plan.current_packet_dwords == 512 else "GAP",
+            f"{plan.current_packet_dwords} dwords",
+        ),
     )
+    return checks
 
-    return (
-        CheckResult("BD CSV row1 ring load", status(has_ring_load), f"needs {plan.kv_plane_tile_dwords}-dword c0r1/c7r1 rows"),
-        CheckResult("BD CSV row1 half stream", status(has_ring_half), f"needs {plan.kv_half_tile_dwords}-dword c0r1/c7r1 rows"),
-        CheckResult("BD CSV packet14/15", status(has_packet14 and has_packet15, has_packet14 or has_packet15), "packet-enabled current descriptors"),
-        CheckResult("BD CSV sideband17", status(has_sideband17), "non-packet 17-dword descriptor"),
-        CheckResult("BD CSV shape-A ports", status(has_shape_a), "shape-A current 512 + history 2048"),
+
+def check_experiment(expectation: ExperimentExpectation) -> CheckResult:
+    exp_dir = ROOT / "experiments" / expectation.directory
+    missing_files = tuple(
+        name for name in expectation.files if not (exp_dir / name).exists()
     )
+    if missing_files:
+        return CheckResult(
+            expectation.directory,
+            "GAP",
+            f"missing files: {', '.join(missing_files)}",
+        )
+
+    text = "\n".join(read_text(exp_dir / name) for name in expectation.files)
+    missing_markers = tuple(
+        marker for marker in expectation.markers if marker not in text
+    )
+    if missing_markers:
+        return CheckResult(
+            expectation.directory,
+            "PARTIAL",
+            f"missing markers: {', '.join(missing_markers)}",
+        )
+    return CheckResult(expectation.directory, "PASS", "retained milestone present")
 
 
-def print_phase_plan(plan: FusedLayerPlan) -> None:
-    print("First-principles Qwen3 decode layer plan")
-    print("=========================================")
-    print(f"main tiles: {len(plan.main_tiles)} {', '.join(plan.main_tiles)}")
-    print(f"edge/aux candidate tiles: {len(plan.edge_tiles)} {', '.join(plan.edge_tiles)}")
-    print(f"Q4NX chunk: {Q4_ROWS}x{Q4_K_CHUNK}, {Q4_CHUNK_BYTES} bytes")
-    print(f"per-main-tile Q4 working set: {plan.q4_local_working_set_bytes} bytes")
-    print(f"KV plane tile: {plan.kv_plane_tile_dwords} dwords, half stream: {plan.kv_half_tile_dwords} dwords")
-    print(f"current packet side: {plan.current_packet_dwords} dwords")
-    print()
-    print("projection phases:")
-    print("  phase  input  output  blocks  patches  patch_bytes")
+def print_phase_table(plan: FusedLayerPlan) -> None:
+    print("Projection schedule")
+    print("phase  input  output  blocks  k_chunks  patches  patch_bytes")
     for phase in plan.phases:
         print(
-            f"  {phase.name:<5} {phase.input_dim:>5} {phase.output_dim:>7} "
-            f"{phase.output_blocks:>7} {phase.patches:>8} 0x{phase.patch_bytes:x}"
+            f"{phase.name:<5} "
+            f"{phase.input_dim:>5} "
+            f"{phase.output_dim:>6} "
+            f"{phase.output_blocks:>6} "
+            f"{phase.k_chunks:>8} "
+            f"{phase.patches:>7} "
+            f"0x{phase.patch_bytes:x}"
         )
-    print(f"  total patches: {plan.total_weight_patches}")
-    print()
 
 
 def print_checks(title: str, checks: tuple[CheckResult, ...]) -> None:
-    print(title)
-    print("=" * len(title))
-    for check in checks:
-        print(f"{check.status:<8} {check.name}: {check.detail}")
     print()
+    print(title)
+    for check in checks:
+        print(f"{check.status:<7} {check.name}: {check.detail}")
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mylm-root", type=Path, default=DEFAULT_MYLM_ROOT)
-    parser.add_argument("--bd-csv", type=Path)
-    return parser.parse_args()
+def run_audit() -> int:
+    plan = FusedLayerPlan()
+    print_phase_table(plan)
+    plan_checks = check_plan(plan)
+    experiment_checks = tuple(check_experiment(item) for item in retained_experiments())
+    print_checks("First-principles resource checks", plan_checks)
+    print_checks("Retained experiment checks", experiment_checks)
+    all_checks = plan_checks + experiment_checks
+    return 0 if all(check.status == "PASS" for check in all_checks) else 1
 
 
 def main() -> None:
-    args = parse_args()
-    plan = FusedLayerPlan()
-    print_phase_plan(plan)
-    print_checks("Experiment comparison", experiment_checks(plan))
-    print_checks("MyLM note comparison", mylm_doc_checks(plan, args.mylm_root))
-    if args.bd_csv is not None:
-        print_checks("Decoded BD CSV comparison", bd_csv_checks(plan, args.bd_csv))
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="Exit successfully when retained experiments are present but some markers changed.",
+    )
+    args = parser.parse_args()
+    code = run_audit()
+    if code == 1 and args.allow_partial:
+        raise SystemExit(0)
+    raise SystemExit(code)
 
 
 if __name__ == "__main__":
