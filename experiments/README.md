@@ -187,6 +187,36 @@ implementation work:
   deliberately uses deterministic sideband records and `K=4096` for every phase,
   so it does not yet prove MyLM's exact sideband semantics or Qwen3's expanded
   FFN dimensions.
+- `54_real_qwen_patch_schedule`: real Qwen3 patch schedule probe. It maps the
+  Q/K/V/O/up/gate/down projection dimensions to the full MyLM-style patch
+  stream and verifies the schedule accounting before adding linked runtime BD
+  submission.
+- `55_mylm_linked_bd_chain`: linked shim-BD runtime probe. It patches a chain
+  of shim descriptors, pushes only the head descriptor, and proves the static
+  compute-side ping-pong ring can consume the stream without host involvement
+  at every chunk boundary.
+- `56_mylm_linked_qwen_schedule`: linked Qwen3 schedule probe. It combines the
+  real Qwen3 608-patch phase/block schedule with linked BD batches, preserving
+  the main tile ABI of activation slice plus Q4NX weight chunk.
+- `57_mylm_exact_patch_manifest`: exact patch manifest check. It fixes the
+  MyLM patch unit as `64 output rows x full K`, producing the Q/K/V/O/up/gate/
+  down patch counts and order used by the later row1 experiments.
+- `58_mylm_patch_pair_row1_split`: patch-pair row1 split. It proves one main
+  column can receive two 64-row patches and split them into four 32-row compute
+  streams without coalescing into a fake 128-row descriptor.
+- `59_mylm_exact_nblock_projection`: exact MyLM N-block projection contract. It
+  combines the single-column/full-column steps into one real-NPU experiment:
+  four main columns consume eight exact `64-row x 4096` patches (`0x28000`
+  bytes each), row1 splits each full patch into per-row K-chunk streams, edge
+  tiles replay activation slices, and the 16 main tiles produce a full 512-row
+  projection block. This proves the exact patch ABI can feed the full main16
+  projection fabric, while also exposing the next optimization target: replace
+  full-patch row1 residency with smaller MyLM-style streaming rings.
+- `60_mylm_chunk_ring_projection`: chunk-ring row1 residency probe. It narrows
+  exp59 to one 64-row patch and changes row1 from full-patch residency to a
+  small `2 x Q4NX chunk` ping-pong ring. The design compiles, but the real NPU
+  run currently times out, so it documents the remaining lock/DMA phase-order
+  issue before moving toward hand-written CDO.
 
 Earlier syntax probes, one-off diagnostics, and superseded failure
 reproductions were removed so the directory stays focused on the implementation
