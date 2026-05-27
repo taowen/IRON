@@ -111,6 +111,11 @@ reproduction path are kept here.
   connects edge attention, O projection, and FFN tail in one internal dataflow:
   O output enters FFN without DDR, gate/up/SwiGLU stay tile-local, and only the
   final layer-tail output drains to host.
+- `44_projected_current_attention_closed_ffn`: projected current-write
+  attention closed-FFN probe. It projects query/current K/V from hidden, writes
+  current K/V into the KV cache BO, syncs that writeback before scanning the
+  updated cache, and then keeps attention/O/FFN intermediates internal until
+  final output drain.
 
 Earlier syntax probes, one-off diagnostics, and superseded failure
 reproductions were removed so the directory stays focused on the implementation
