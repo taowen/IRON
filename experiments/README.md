@@ -121,6 +121,17 @@ reproduction path are kept here.
   returns per-row attention shards back to the same main16 physical tiles, runs
   the O phase there, and only drains the final gathered output. This replaces
   the invalid "add separate O/FFN workers after full attention" model.
+- `46_main16_edge_return_ffn_tail`: main16 edge-return FFN-tail contract. It
+  extends exp45 by keeping O output, gate, up, and SwiGLU tile-local on the
+  same main16 fabric, then packet-gathers only the final FFN-tail output.
+- `47_main16_multiphase_ffn_replay`: main16 multi-phase FFN replay contract. It
+  splits O, gate, up, and down weights into four lock-ordered slices on the
+  same main tile S2MM input channel, proving phase replay over the same
+  physical main16 resources rather than separate host-visible operators.
+- `48_main16_fullk_q4nx_phase_replay`: main16 full-K Q4NX phase replay
+  contract. It replaces exp47's toy phase weights with four full-K Q4NX
+  streams, using phase-sized runtime descriptors feeding a static row1
+  fat-chunk ring and the same main16 physical compute fabric.
 
 Earlier syntax probes, one-off diagnostics, and superseded failure
 reproductions were removed so the directory stays focused on the implementation
