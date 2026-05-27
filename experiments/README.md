@@ -85,6 +85,32 @@ reproduction path are kept here.
   K/V read per group, row1 reshape/fanout, packet gather, and per-group drain.
   Real-NPU runs pass for L=17/31/32/79, proving the full attention resource map
   fits and routes before reattaching projection/current-write.
+- `39_projected_current_write_full_attention`: projected current-write full
+  attention contract. It removes exp38's host-provided query/current tensors:
+  every worker projects Q from hidden on NPU, each KV group's row-0 worker
+  projects current K/V on NPU, current K/V is written into the cache BO, then
+  the full `32Q/8KV` row1 fanout/packet-gather attention fabric scans the
+  updated cache. Real-NPU runs pass for L=17/31/32/79. The projection kernel is
+  deterministic and scalar, so this proves the fused-layer dataflow boundary
+  rather than final Q4NX projection performance.
+- `40_projection_record_handoff_abi`: projection-record handoff ABI contract.
+  It validates the `17 = 1 header + 16 dword payload` record hypothesis, routes
+  four compute-tile records through row1 into a `65/64` column replay shape, and
+  checks the derived `257`, `2049`, and `6144` ladder sizes against a CPU
+  reference. This targets the missing MyLM phase-handoff ABI rather than
+  attention or FFN math.
+- `41_edge_shape_ab_handoff_probe`: edge shape-A -> shape-B handoff probe. It
+  proves a 17-dword compact state can be produced by one compute tile, sent
+  directly to another compute tile without a host-visible state BO, and consumed
+  with a separate history stream to produce exact host-checked output.
+- `42_attention_output_to_o_projection`: attention-output to O-projection
+  handoff probe. It proves a full 512-dword attention result can flow directly
+  from an edge attention tile into an O-projection tile and be consumed with an
+  O-weight stream, with no host-visible attention output BO.
+- `43_attention_o_ffn_closed_tail`: closed post-attention layer-tail probe. It
+  connects edge attention, O projection, and FFN tail in one internal dataflow:
+  O output enters FFN without DDR, gate/up/SwiGLU stay tile-local, and only the
+  final layer-tail output drains to host.
 
 Earlier syntax probes, one-off diagnostics, and superseded failure
 reproductions were removed so the directory stays focused on the implementation
