@@ -116,6 +116,11 @@ reproduction path are kept here.
   current K/V into the KV cache BO, syncs that writeback before scanning the
   updated cache, and then keeps attention/O/FFN intermediates internal until
   final output drain.
+- `45_main16_edge_return_o_phase`: MyLM-style main16/edge resource-reuse
+  contract. It routes 16 main-fabric projection records into edge/aux tiles,
+  returns per-row attention shards back to the same main16 physical tiles, runs
+  the O phase there, and only drains the final gathered output. This replaces
+  the invalid "add separate O/FFN workers after full attention" model.
 
 Earlier syntax probes, one-off diagnostics, and superseded failure
 reproductions were removed so the directory stays focused on the implementation
