@@ -25,6 +25,8 @@ Start here before reading individual experiments:
    - `63_mylm_packetized_patch_phase`
    - `64_mylm_attention_to_o_direct_handoff`
    - `65_mylm_fused_layer_engine_v0`
+   - `66_mylm_real_attention_o_phase`
+   - `67_mylm_global_qkv_o_layout`
 4. Only then read earlier retained experiments for the specific subproblem they
    isolate.
 
@@ -336,9 +338,11 @@ total 608 patches
 
 The latest experiments prove the manifest, exact patch ordering, small row1
 chunk rings, packetized patch routing, deterministic attention-result handoff
-into O, and a v0 fused-layer engine over the full seven-phase schedule. The
-next hard part is replacing deterministic attention replay with the production
-rounded-KV/online-softmax attention producer.
+into O, a v0 fused-layer engine over the full seven-phase schedule, a local
+online-softmax attention producer, and the global `Attn[32][128]` to O-slice
+layout contract. The next hard part is replacing the diagnostic attention
+producer with the physical MyLM global Q/K/V fanout and production KV-cache
+scan.
 
 ## Row1 Memtile Responsibilities
 
@@ -364,6 +368,11 @@ attention drain between attention-result production and O projection.
 Experiment `65_mylm_fused_layer_engine_v0` scales the same exact patch ABI to
 the full 608-patch Qwen3 schedule and keeps O's deterministic attention-result
 handoff in the same static layer-shaped engine.
+Experiment `66_mylm_real_attention_o_phase` replaces that deterministic O
+producer with a local edge-tile online-softmax/weighted-V diagnostic.
+Experiment `67_mylm_global_qkv_o_layout` then fixes the global head/dim
+coordinate system and proves that O consumes the flattened `32 x 128`
+attention result as `16` consecutive 256-bf16 slices.
 
 ## KV Cache Shape
 
@@ -411,6 +420,10 @@ Experiment `64_mylm_attention_to_o_direct_handoff` separately proves that the
 large attention result itself can stream directly from edge tiles into the O
 projection input channel. Its producer is still deterministic replay; the
 production attention math is the next boundary to replace.
+Experiment `66_mylm_real_attention_o_phase` replaces the deterministic replay
+with online softmax for a local diagnostic. Experiment
+`67_mylm_global_qkv_o_layout` makes the returned O layout target-independent:
+chunk `c` is heads `2*c` and `2*c+1`, flattened as `Attn[32][128]`.
 
 ## Phase Reuse
 
@@ -527,17 +540,24 @@ The current retained chain establishes:
 - deterministic attention-result slices can stream directly into the full
   main16 O phase without a host-visible attention drain,
 - the real seven-phase 608-patch schedule can run as a v0 fused-layer engine
-  using packetized exact MyLM patch descriptors and row1 small chunk rings.
+  using packetized exact MyLM patch descriptors and row1 small chunk rings,
+- Q/K/V-derived online-softmax/weighted-V attention output can replace the
+  deterministic O producer inside that full seven-phase schedule for an `L=31`
+  local edge-tile diagnostic,
+- the global attention result layout is now executable: `Attn[32][128]` is
+  consumed by O as `16` consecutive 256-bf16 slices, with chunk `c` carrying
+  heads `2*c` and `2*c+1`.
 
 ## What Is Still Not Proven
 
 The remaining full-layer work is:
 
-1. Replace deterministic phase records with real attention state.
-2. Implement real Q/K/V current write, KV scan, online softmax, and weighted V
-   in the edge/aux fabric.
-3. Connect the real attention producer to the exp65 O handoff ABI without debug
-   drains.
+1. Replace the exp67 diagnostic global-layout producer with physical MyLM
+   global Q/K/V fanout and exact current K/V cache writeback.
+2. Move from diagnostic KV history generation to production KV cache scan and
+   placement.
+3. Preserve the exp66/67 real attention-to-O handoff while scaling to the exact
+   MyLM edge/aux attention ABI.
 4. Implement real RMSNorm, Q/K norm, RoPE, residual, SwiGLU, and down flow.
 5. Replace contract kernels with high-performance online Q4NX kernels.
 6. Decide where direct CDO generation is necessary for production ownership or

@@ -106,6 +106,16 @@ Total: `608` MyLM-sized patches. A hidden-dim patch is `64 output rows x
   packetized patch descriptors, row1 small chunk rings, and direct
   deterministic attention-result-to-O handoff. It passes on real NPU using
   high-level MLIR-AIE generated descriptors.
+- `66_mylm_real_attention_o_phase`: replaces exp65's deterministic O producer
+  with a real data-dependent producer. Q/K/V phase sidebands carry per-tile
+  projection payloads, edge tiles cache local Q/K/V state, scan an `L=31`
+  rounded KV history with online softmax/weighted V, and stream directly into
+  the existing O handoff. It passes on real NPU.
+- `67_mylm_global_qkv_o_layout`: fixes the global Q/K/V coordinate contract
+  and the exact `Attn[32][128]` to O-phase `16 x 256` slice layout inside the
+  full seven-phase engine. The producer is target-independent for each
+  `global_idx`, so it proves the O packing contract without claiming the final
+  physical all-to-all Q/K/V collector.
 
 ## Deleted Experiments
 
@@ -127,20 +137,22 @@ row1 split.
    packetized descriptors cannot express or for reducing descriptor-program
    overhead.
 2. What is the production attention ABI?
-   We still need to replace deterministic 17-dword records with real Q/current
-   K/V, rounded KV scan, online softmax state, and weighted V. Exp64 proves the
-   return-to-O stream shape for deterministic attention results, but not the
-   production attention producer.
+   Exp66 proves the first non-deterministic attention producer inside the full
+   seven-phase schedule. Exp67 fixes the global head/dim layout and the exact
+   attention-result packing consumed by O. The remaining ABI question is the
+   physical MyLM global Q/K/V fanout plus exact current K/V cache writeback
+   shape.
 3. Where should attention state live?
    The exact placement of running max/sum/output accumulators and the exact
    shape-A/shape-B or packet14/15 consumer relationship remain inferred rather
    than implemented as final code.
 4. How do Q/K/V outputs hand off to edge attention and return to main16 O
    without debug drains?
-   Exp64 proves the return-to-O half without an attention debug drain, and
-   exp65 proves that return path composes with the full seven-phase schedule.
-   The remaining gap is connecting exp39-style real Q/K/V attention output to
-   that same O handoff ABI in one continuous schedule.
+   Exp66 connects Q/K/V-derived online attention output to the same O handoff
+   ABI in one continuous schedule. Exp67 makes the return layout explicit:
+   chunk `c` carries attention heads `2*c` and `2*c+1` as a 256-bf16 O input
+   slice. The remaining gap is replacing the diagnostic global producer with
+   the full MyLM edge/aux Q/K/V distribution.
 5. How do we replace contract kernels with fast kernels?
    The retained experiments mostly use deterministic or scalar kernels to prove
    dataflow. The final engine needs high-throughput online Q4NX kernels with
