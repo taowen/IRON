@@ -29,6 +29,10 @@ import c1r2_generate
 import npu_generate
 import shape_generate
 import swiglu_generate
+from cases import qkv_shape_o_c1r2_generate
+from cases import full_layer_contract_generate
+from cases import attention_kv16_generate
+from cases import kvscan_attention_kv16_generate
 
 
 def validate_runnable_backend() -> list[str]:
@@ -66,6 +70,14 @@ def validate_runnable_backend() -> list[str]:
     errors.extend(c1r2_generate.validate_generated_mlir(c1r2_mlir))
     shape_mlir = shape_generate.generate_mlir()
     errors.extend(shape_generate.validate_generated_mlir(shape_mlir))
+    attention_kv16_mlir = attention_kv16_generate.generate_mlir()
+    errors.extend(attention_kv16_generate.validate_generated_mlir(attention_kv16_mlir))
+    kvscan_attention_mlir = kvscan_attention_kv16_generate.generate_mlir()
+    errors.extend(kvscan_attention_kv16_generate.validate_generated_mlir(kvscan_attention_mlir))
+    qkv_mlir = qkv_shape_o_c1r2_generate.generate_mlir()
+    errors.extend(qkv_shape_o_c1r2_generate.validate_generated_mlir(qkv_mlir))
+    full_mlir = full_layer_contract_generate.generate_mlir()
+    errors.extend(full_layer_contract_generate.validate_generated_mlir(full_mlir))
     return errors
 
 
@@ -90,7 +102,10 @@ def main() -> int:
     print(
         "  bridge_cases=c1r1-o-bridge,c1r1-down-bridge,"
         "ffn-upgate-c6r2-bridge,c1r2-o-upgate-bridge,"
-        "shape-attention-o-bridge"
+        "shape-attention-o-bridge,attention-kv16-o-bridge,"
+        "kvscan-attention-kv16-o-bridge,"
+        "qkv-shape-o-c1r2-bridge,"
+        "full-layer-contract-bridge"
     )
 
     if errors:

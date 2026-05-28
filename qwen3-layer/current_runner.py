@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import argparse
 import os
 import re
 import subprocess
 import sys
-import traceback
 from pathlib import Path
 
 os.environ["PATH"] = "/var/opt/xilinx/xrt/bin:" + os.environ.get("PATH", "")
@@ -23,16 +21,6 @@ from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor
 from aie.utils.npukernel import NPUKernel
 from ml_dtypes import bfloat16
 
-import bridge_generate
-import swiglu_generate
-from bridge_reference import (
-    BRIDGE_CASES,
-    TOTAL_SUMMARY_DWORDS,
-    bridge_case,
-    expected_output as bridge_expected_output,
-    make_payload as bridge_make_payload,
-    validate_output as bridge_validate_output,
-)
 from npu_generate import (
     ACT_SLICE_BF16,
     CHUNK_BF16,
@@ -66,14 +54,6 @@ from npu_generate import (
     generate_mlir,
 )
 from npu_reference import expected_output, make_packed_weights
-from swiglu_reference import (
-    CASE_NAME as SWIGLU_CASE_NAME,
-    SWIGLU_OUTPUT_DWORDS,
-    expected_output as swiglu_expected_output,
-    route_summary as swiglu_route_summary,
-    validate_output as swiglu_validate_output,
-)
-
 EXPERIMENT_DIR = Path(__file__).parent
 
 
@@ -107,35 +87,6 @@ def compile_kernel() -> None:
         str(obj),
     ]
     print("  Compiling qwen3_layer.cc...")
-    run_command(cmd)
-
-
-def compile_bridge_kernel() -> None:
-    peano_dir = Path(peano_install_dir())
-    mlir_aie_dir = Path(root_path())
-    clang = peano_dir / "bin" / "clang++"
-    include_path = mlir_aie_dir / "include"
-    runtime_lib_include = mlir_aie_dir / "aie_runtime_lib" / "AIE2P"
-    src = EXPERIMENT_DIR / "qwen3_bridge.cc"
-    obj = EXPERIMENT_DIR / "qwen3_bridge.o"
-    cmd = [
-        str(clang),
-        "-O2",
-        "-std=c++20",
-        "--target=aie2p-none-unknown-elf",
-        "-Wno-parentheses",
-        "-Wno-attributes",
-        "-Wno-macro-redefined",
-        "-Wno-empty-body",
-        "-Wno-missing-template-arg-list-after-template-kw",
-        f"-I{include_path}",
-        f"-I{runtime_lib_include}",
-        "-c",
-        str(src),
-        "-o",
-        str(obj),
-    ]
-    print("  Compiling qwen3_bridge.cc...")
     run_command(cmd)
 
 
@@ -322,183 +273,6 @@ def build_only() -> bool:
     return True
 
 
-def build_bridge_kernel(case_name: str) -> tuple[Path, Path]:
-    case = bridge_case(case_name)
-    build_dir = EXPERIMENT_DIR / "build" / case.name
-    build_dir.mkdir(parents=True, exist_ok=True)
-    mlir_path = build_dir / "design.mlir"
-    xclbin_path = build_dir / "design.xclbin"
-    insts_path = build_dir / "design.bin"
-
-    mlir_text = bridge_generate.generate_mlir(case)
-    mlir_path.write_text(mlir_text)
-    errors = bridge_generate.validate_generated_mlir(mlir_text, case)
-    if errors:
-        raise RuntimeError("\n".join(f"  BRIDGE STRUCTURE FAIL: {error}" for error in errors))
-
-    compile_mlir(mlir_path, xclbin_path, insts_path)
-    return xclbin_path, insts_path
-
-
-def check_bridge_structure(case_name: str) -> bool:
-    case = bridge_case(case_name)
-    mlir_text = bridge_generate.generate_mlir(case)
-    errors = bridge_generate.validate_generated_mlir(mlir_text, case)
-    if errors:
-        for error in errors:
-            print(f"  BRIDGE STRUCTURE FAIL: {error}")
-        return False
-    print(
-        "  PASS: "
-        f"{case.name} MLIR contains c6r1 packet{case.packet_id} -> "
-        "c1r1 DMA4 -> DMA1 -> main16 multicast"
-    )
-    return True
-
-
-def build_bridge_only(case_name: str) -> bool:
-    compile_bridge_kernel()
-    xclbin_path, insts_path = build_bridge_kernel(case_name)
-    print(f"  PASS: built {xclbin_path}")
-    print(f"  PASS: built {insts_path}")
-    return True
-
-
-def build_swiglu_kernel() -> tuple[Path, Path]:
-    build_dir = EXPERIMENT_DIR / "build" / SWIGLU_CASE_NAME
-    build_dir.mkdir(parents=True, exist_ok=True)
-    mlir_path = build_dir / "design.mlir"
-    xclbin_path = build_dir / "design.xclbin"
-    insts_path = build_dir / "design.bin"
-
-    mlir_text = swiglu_generate.generate_mlir()
-    mlir_path.write_text(mlir_text)
-    errors = swiglu_generate.validate_generated_mlir(mlir_text)
-    if errors:
-        raise RuntimeError("\n".join(f"  SWIGLU STRUCTURE FAIL: {error}" for error in errors))
-
-    compile_mlir(mlir_path, xclbin_path, insts_path)
-    return xclbin_path, insts_path
-
-
-def check_swiglu_structure() -> bool:
-    mlir_text = swiglu_generate.generate_mlir()
-    errors = swiglu_generate.validate_generated_mlir(mlir_text)
-    if errors:
-        for error in errors:
-            print(f"  SWIGLU STRUCTURE FAIL: {error}")
-        return False
-    print(
-        "  PASS: ffn-upgate-c6r2-bridge MLIR contains "
-        "main16 records -> row1 column compact -> c1r1 global compact -> c6r2"
-    )
-    return True
-
-
-def build_swiglu_only() -> bool:
-    compile_bridge_kernel()
-    xclbin_path, insts_path = build_swiglu_kernel()
-    print(f"  PASS: built {xclbin_path}")
-    print(f"  PASS: built {insts_path}")
-    return True
-
-
-def run_bridge_on_npu(case_name: str) -> bool:
-    case = bridge_case(case_name)
-    print("=" * 78)
-    print(f"qwen3-layer: {case.name}")
-    print("=" * 78)
-    print(f"  packet_id: {case.packet_id}")
-    print(f"  payload_dwords: {case.payload_dwords}")
-    print(f"  bridge_iterations: {case.bridge_iterations}")
-    print(f"  main_chunks: {case.main_chunks}")
-    print("  route: c6r1 packet source -> c1r1 DMA4 -> c1r1 DMA1 -> main16 DMA0")
-    print()
-
-    compile_bridge_kernel()
-    xclbin_path, insts_path = build_bridge_kernel(case.name)
-
-    print("  Loading NPU kernel...")
-    kernel = NPUKernel(
-        xclbin_path=str(xclbin_path),
-        kernel_name="MLIR_AIE",
-        insts_path=str(insts_path),
-    )
-    handle = aie_utils.DefaultNPURuntime.load(kernel)
-
-    payload = bridge_make_payload(case)
-    expected = bridge_expected_output(case)
-    payload_buf = XRTTensor.from_torch(torch.from_numpy(payload.copy()).to(torch.int32))
-    output_buf = XRTTensor((TOTAL_SUMMARY_DWORDS,), dtype=np.int32)
-
-    print("  Running on NPU...")
-    result = aie_utils.DefaultNPURuntime.run(handle, [payload_buf, output_buf])
-    got = output_buf.to_torch().numpy().astype(np.int32)
-    print(f"  NPU time: {result.npu_time / 1e3:.1f} us")
-    print(f"  expected[0:8]: {expected[:8].tolist()}")
-    print(f"  got[0:8]:      {got[:8].tolist()}")
-
-    errors = bridge_validate_output(case, got)
-    if errors:
-        print(f"  FAIL: {len(errors)} bridge mismatches")
-        for error in errors:
-            print(f"    {error}")
-        return False
-
-    print(
-        "  PASS: "
-        f"{case.name} delivered {case.main_chunks} chunks to all 16 main tiles"
-    )
-    return True
-
-
-def run_swiglu_on_npu() -> bool:
-    print("=" * 78)
-    print(f"qwen3-layer: {SWIGLU_CASE_NAME}")
-    print("=" * 78)
-    for line in swiglu_route_summary():
-        print(f"  {line}")
-    print(
-        "  route: main16 stubs -> c2r1..c5r1 column compact -> "
-        "c1r1 global compact -> c6r2 -> c6r1 -> host"
-    )
-    print()
-
-    compile_bridge_kernel()
-    xclbin_path, insts_path = build_swiglu_kernel()
-
-    print("  Loading NPU kernel...")
-    kernel = NPUKernel(
-        xclbin_path=str(xclbin_path),
-        kernel_name="MLIR_AIE",
-        insts_path=str(insts_path),
-    )
-    handle = aie_utils.DefaultNPURuntime.load(kernel)
-
-    expected = swiglu_expected_output()
-    output_buf = XRTTensor((SWIGLU_OUTPUT_DWORDS,), dtype=np.int32)
-
-    print("  Running on NPU...")
-    result = aie_utils.DefaultNPURuntime.run(handle, [output_buf])
-    got = output_buf.to_torch().numpy().astype(np.int32)
-    print(f"  NPU time: {result.npu_time / 1e3:.1f} us")
-    print(f"  expected[0:8]: {expected[:8].tolist()}")
-    print(f"  got[0:8]:      {got[:8].tolist()}")
-
-    errors = swiglu_validate_output(got)
-    if errors:
-        print(f"  FAIL: {len(errors)} ffn-upgate-c6r2 mismatches")
-        for error in errors:
-            print(f"    {error}")
-        return False
-
-    print(
-        "  PASS: main16 up/gate records compacted through row1/c1r1 and "
-        "arrived at c6r2 with low=up, high=gate"
-    )
-    return True
-
-
 def _records_to_ordered_values(records_bf16: np.ndarray, label: str) -> np.ndarray:
     records = records_bf16.reshape(-1, OUT_RECORD_BF16)
     expected_records = len(MAIN_COLUMNS) * ROWS_PER_COLUMN
@@ -647,62 +421,3 @@ def run_on_npu() -> bool:
             f"    out[{idx}]: expected={expected_f32[idx]:.6f} got={got_f32[idx]:.6f} err={abs_err[idx]:.6f}"
         )
     return False
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--case",
-        choices=("current", SWIGLU_CASE_NAME) + tuple(case.name for case in BRIDGE_CASES),
-        default="current",
-        help="NPU integration case to run",
-    )
-    parser.add_argument(
-        "--check-only",
-        action="store_true",
-        help="generate MLIR and check structure without compiling",
-    )
-    parser.add_argument(
-        "--build-only",
-        action="store_true",
-        help="compile kernel, MLIR, NPU instructions, and xclbin without running",
-    )
-    return parser.parse_args()
-
-
-def main() -> bool:
-    args = parse_args()
-    if args.check_only and args.build_only:
-        raise ValueError("--check-only and --build-only are mutually exclusive")
-    if args.case == SWIGLU_CASE_NAME:
-        if args.check_only:
-            return check_swiglu_structure()
-        if args.build_only:
-            return build_swiglu_only()
-        print(f"NPU device: {aie_utils.DefaultNPURuntime.device()}")
-        return run_swiglu_on_npu()
-    if args.case != "current":
-        if args.check_only:
-            return check_bridge_structure(args.case)
-        if args.build_only:
-            return build_bridge_only(args.case)
-        print(f"NPU device: {aie_utils.DefaultNPURuntime.device()}")
-        return run_bridge_on_npu(args.case)
-    if args.check_only:
-        return check_backend_structure()
-    if args.build_only:
-        return build_only()
-    print(f"NPU device: {aie_utils.DefaultNPURuntime.device()}")
-    return run_on_npu()
-
-
-if __name__ == "__main__":
-    try:
-        success = main()
-    except Exception as exc:
-        print(f"\nFAILED: {type(exc).__name__}: {exc}")
-        traceback.print_exc()
-        success = False
-    finally:
-        aie_utils.DefaultNPURuntime.cleanup()
-    raise SystemExit(0 if success else 1)
