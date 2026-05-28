@@ -401,6 +401,59 @@ void qkv_emit_qkv_records(int32_t *records, int32_t group, int32_t row) {
     }
 }
 
+void mainq_emit_q_record(int32_t *records, int32_t group, int32_t row) {
+    constexpr int32_t q_phase = 0;
+    constexpr int32_t payload_dwords = 16;
+    records[0] = qkv_record_header(q_phase, group, row);
+    for (int32_t lane = 0; lane < payload_dwords; lane++) {
+        records[1 + lane] = qkv_payload_value(q_phase, group, row, lane);
+    }
+}
+
+void mainq_postprocess_payload(
+    int32_t *q_compact,
+    int32_t *q_payload,
+    int32_t q_dwords
+) {
+    for (int32_t idx = 0; idx < q_dwords; idx++) {
+        const int32_t low_lane = idx * 2;
+        const int32_t high_lane = low_lane + 1;
+        const int32_t low_seed = q_compact[1 + (low_lane & 255)] & 31;
+        const int32_t high_seed = q_compact[1 + (high_lane & 255)] & 31;
+        const int32_t low = ((low_lane * 5 + low_seed) % 31) - 15;
+        const int32_t high = ((high_lane * 5 + high_seed) % 31) - 15;
+        q_payload[idx] = attention_kv16_pack_s16_pair(low, high);
+    }
+}
+
+void mainq_emit_o_record(
+    int32_t *records,
+    int32_t *summary,
+    int32_t group,
+    int32_t row
+) {
+    constexpr int32_t o_phase = 3;
+    constexpr int32_t record_dwords = 17;
+    constexpr int32_t offset = record_dwords;
+    records[offset] = qkv_record_header(o_phase, group, row);
+    records[offset + 1] = summary[2];
+    records[offset + 2] = summary[3];
+    records[offset + 3] = summary[4];
+    records[offset + 4] = summary[5];
+    records[offset + 5] = summary[6];
+    records[offset + 6] = summary[7];
+    records[offset + 7] = group;
+    records[offset + 8] = row;
+    records[offset + 9] = summary[2] ^ group;
+    records[offset + 10] = summary[3] ^ row;
+    records[offset + 11] = summary[4] ^ group;
+    records[offset + 12] = summary[5] ^ row;
+    records[offset + 13] = summary[6] ^ group;
+    records[offset + 14] = summary[7] ^ row;
+    records[offset + 15] = 0x51564F;
+    records[offset + 16] = 0x4F434D50;
+}
+
 void qkv_postprocess_payload(
     int32_t *q_compact,
     int32_t *k_compact,

@@ -124,6 +124,27 @@ def require_count(scope: str, name: str, actual: int, expected: int) -> list[str
     return [f"{scope}: {name} count {actual} != {expected}"]
 
 
+def require_absent_markers(scope: str, mlir: str, markers: tuple[str, ...]) -> list[str]:
+    return [f"{scope}: forbidden marker present: {marker}" for marker in markers if marker in mlir]
+
+
+def require_no_compute_kv_materialization(
+    scope: str,
+    mlir: str,
+    kv_side_dwords: int,
+    kv_all_dwords: int,
+) -> list[str]:
+    errors: list[str] = []
+    for line in mlir.splitlines():
+        has_buffer = "aie.buffer(%" in line
+        has_large_kv_side = f"memref<{kv_side_dwords}xi32>" in line
+        if has_buffer and has_large_kv_side and "%kv_left" not in line and "%kv_right" not in line:
+            errors.append(f"{scope}: large KV side buffer outside row1 KV scan: {line.strip()}")
+        if f"memref<{kv_all_dwords}xi32>" in line:
+            errors.append(f"{scope}: full KV materialization marker present: {line.strip()}")
+    return errors
+
+
 def require_kv16_attention_shapes(
     scope: str,
     k_window_dwords: int,

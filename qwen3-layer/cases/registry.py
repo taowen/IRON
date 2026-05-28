@@ -10,6 +10,7 @@ from cases import (
     current,
     full_layer_contract_runner,
     kvscan_attention_kv16_runner,
+    mainq_kvscan_attention_kv16_runner,
     qkv_shape_o_c1r2_runner,
     shape,
     swiglu,
@@ -20,6 +21,7 @@ CASE_NAMES = (
     c1r2.CASE_NAME,
     attention_kv16_runner.CASE_NAME,
     kvscan_attention_kv16_runner.CASE_NAME,
+    mainq_kvscan_attention_kv16_runner.CASE_NAME,
     qkv_shape_o_c1r2_runner.CASE_NAME,
     full_layer_contract_runner.CASE_NAME,
     shape.CASE_NAME,
@@ -36,6 +38,8 @@ def check_only(case_name: str) -> bool:
         return attention_kv16_runner.check_only()
     if case_name == kvscan_attention_kv16_runner.CASE_NAME:
         return kvscan_attention_kv16_runner.check_only()
+    if case_name == mainq_kvscan_attention_kv16_runner.CASE_NAME:
+        return mainq_kvscan_attention_kv16_runner.check_only()
     if case_name == qkv_shape_o_c1r2_runner.CASE_NAME:
         return qkv_shape_o_c1r2_runner.check_only()
     if case_name == full_layer_contract_runner.CASE_NAME:
@@ -58,6 +62,8 @@ def build_only(case_name: str) -> bool:
         return attention_kv16_runner.build_only()
     if case_name == kvscan_attention_kv16_runner.CASE_NAME:
         return kvscan_attention_kv16_runner.build_only()
+    if case_name == mainq_kvscan_attention_kv16_runner.CASE_NAME:
+        return mainq_kvscan_attention_kv16_runner.build_only()
     if case_name == qkv_shape_o_c1r2_runner.CASE_NAME:
         return qkv_shape_o_c1r2_runner.build_only()
     if case_name == full_layer_contract_runner.CASE_NAME:
@@ -81,6 +87,8 @@ def run(case_name: str) -> bool:
         return attention_kv16_runner.run()
     if case_name == kvscan_attention_kv16_runner.CASE_NAME:
         return kvscan_attention_kv16_runner.run()
+    if case_name == mainq_kvscan_attention_kv16_runner.CASE_NAME:
+        return mainq_kvscan_attention_kv16_runner.run()
     if case_name == qkv_shape_o_c1r2_runner.CASE_NAME:
         return qkv_shape_o_c1r2_runner.run()
     if case_name == full_layer_contract_runner.CASE_NAME:

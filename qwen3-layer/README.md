@@ -70,6 +70,7 @@ The current implementation is the qwen3-dataflow physical skeleton:
 .venv/bin/python qwen3-layer/run_npu.py --case shape-attention-o-bridge
 .venv/bin/python qwen3-layer/run_npu.py --case attention-kv16-o-bridge
 .venv/bin/python qwen3-layer/run_npu.py --case kvscan-attention-kv16-o-bridge
+.venv/bin/python qwen3-layer/run_npu.py --case mainq-kvscan-attention-kv16-o-bridge
 .venv/bin/python qwen3-layer/run_npu.py --case qkv-shape-o-c1r2-bridge
 .venv/bin/python qwen3-layer/run_npu.py --case full-layer-contract-bridge
 ```
@@ -110,6 +111,13 @@ issues 2048-dword BD slices for K0/V0/K1/V1 into c0r1/c7r1, and row1
 memtiles reconstruct the streaming side layout consumed by Shape-A/B. This is
 the boundary the full layer must use; c1r3/c1r4 must not materialize the two
 8192-dword sides.
+The `mainq-kvscan-attention-kv16-o-bridge` case advances that boundary by
+removing host Q. Main16 emits deterministic Q compact records through row1/c1r1,
+c1r3 expands only that Q compact into packed Q[2048], and the already validated
+shim-sliced KV cache scan feeds kv16 Shape-A/B. The attention result returns as
+packet2 to main16 O chunks, then O compact reaches c1r2 for host-visible summary
+validation. This case intentionally keeps current K/V writeback external so a
+failure isolates the main16-Q-to-attention handoff.
 The `qkv-shape-o-c1r2-bridge` case removes the host-fed Q/K/V shortcut from
 that boundary. Main16 emits deterministic Q/K/V records through row1 column
 compact tiles and c1r1, c1r3 expands the global compacts into Q and split K/V
@@ -157,12 +165,12 @@ bridge cases replace the runner's diagnostic main/edge handoff with physical
 c1r1/c6r1, c1r2, and row1/c1r1/c6r2 paths specified by
 `qwen3-dataflow.md`. These cases use deterministic contract kernels to verify
 physical ABI and layout, not production RMSNorm, attention, or SwiGLU math.
-The current attention frontier is `kvscan-attention-kv16-o-bridge`: it proves
-the production-shaped Shape-A/B K/V window and carrier ABI can be fed by
-shim-sliced streaming KV cache buffers on real NPU execution. Remaining work is
-to connect the same boundary to main16-produced Q/current K/V and then replace
-the remaining deterministic RMSNorm, SwiGLU, down, and Q4NX contract pieces
-with production kernels.
+The current attention frontier is `mainq-kvscan-attention-kv16-o-bridge`: it
+proves the production-shaped Shape-A/B K/V window and carrier ABI can be fed by
+shim-sliced streaming KV cache buffers while Q is produced by main16 and expanded
+by c1r3 on real NPU execution. Remaining work is to connect current K/V writeback
+to that scan path and then replace the deterministic RMSNorm, SwiGLU, down, and
+Q4NX contract pieces with production kernels.
 Do not wire this by materializing both 8192-dword KV sides inside the c1r3
 postprocess tile; that would exceed the intended compute-tile local-memory
 budget. The full-layer version needs a streaming KV path through shim/row1/edge
