@@ -59,8 +59,10 @@ AMD XDNA NPU 的设计从一开始就想绕开这个问题。
 设计目标是：跑完整个 Transformer 层（7 个投影阶段 + 归一化 + attention +
 激活函数），NPU 只需要一次启动，主机不需要反复提交 kernel。整层数据流由
 七阶段投影骨架、attention-to-O 直接 handoff、SwiGLU-to-down 共享桥、c1r2
-全向量站、c6r2 SwiGLU 切片站，以及 main16 紧凑 record 协议共同组成；所有
-边界与 lane 顺序在本文档后续章节给出明确定义。
+全向量站、c6r2 SwiGLU 切片站，以及 main16 紧凑 record 协议共同组成。本文区分
+两类边界：physical/control ABI 按 MyLM 逆向结果约束；payload lane order、
+head/window order、carrier scalar 语义等 value ABI 先按 IRON-ABI-v0 定义，后续
+若要兼容 MyLM binary kernel 仍需逐项校准。
 
 | | GPU 方式 | NPU 融合方式 |
 |---|---|---|
@@ -238,13 +240,16 @@ row2          ┃[M01][M02][M03][M04]┃
 阶段 7: down 投影 (12288 → 4096)
 ```
 
-tile 不需要重新配置或重新分配。每个阶段只是换了流入的权重 — 对 tile 来说，
-"又来了一批 5120 字节的权重块"，照常乘累加就行。
+tile 不需要重新配置或重新分配。矩阵乘主体大体复用同一套 projection skeleton：
+每个阶段继续接收 5120 字节权重块和 256 个 bf16 激活并做乘累加。但 main16
+dispatcher/output path 不是完全 phase-blind；不同阶段仍依赖不同 compact record
+family、header/control 和 replay count，Edge 侧也按这些 phase family 接收数据。
 
 物理 projection 顺序是 `Q, K, V, O, up, gate, down` —— up 先于 gate 在
-main16 上执行。算法上 SwiGLU = SiLU(gate) × up 仍然成立；c6r2 在接收端按
-slice 配对，每个 slice 的 up payload 落在输入缓冲区低半区（`0x000..0x3ff`）、
-紧跟着的 gate payload 落在高半区（`0x400..0x7ff`），合成一组完整 SwiGLU 输入。
+main16 上执行。算法上 SwiGLU = SiLU(gate) × up 仍然成立；已确认的 c6r2 物理
+输入半区是 low half = up、high half = gate。IRON-ABI-v0 先采用 adjacent-pair
+调度，让每个 up slice 后紧跟对应 gate slice；MyLM 是否也严格按这个 N-block
+配对顺序执行仍是 value-schedule calibration 项。
 
 ### 3.2 Edge16：一条异构装配线
 
@@ -289,14 +294,16 @@ row0  [K写回]    [────────── shim ────────
 **16 个历史 token 为一个 block** 推进：
 - 用当前 Q 和该 block 内 16 个历史 K 做点积，得到 8 head × 16 token 的
   原始 score
-- 在 block 内做局部 softmax，记录每个 head 的 `block_max` 与 `block_sum`
-- 把该 block 的 16 个权重 + max/sum 通过本地 carrier 交给配对的 shape-B
+- 在 block 内计算 unnormalized exp weights，并记录每个 head 的 block-level
+  `block_max` 与 `block_sum`
+- 把该 block 的权重和统计量通过本地 carrier 交给配对的 shape-B
 
 **求和工位（shape-B）— "加权平均员"，共 4 个（c0r3, c0r5, c7r3, c7r5）**
 
 每个 shape-B 与对应 shape-A 物理相邻。Shape-A 通过本地相邻存储 + lock
 immediate 同步把 carrier 交给 Shape-B —— 不是 DMA tensor stream，而是
-轻量的片上交接。每次交接的 carrier 由两块组成：
+轻量的片上交接。MyLM 已确认 carrier 的物理容量；下面的 value lane 语义是
+IRON-ABI-v0 定义，不是 MyLM binary ABI 的已校准字段顺序：
 
 ```
 base   [0x100] = 256 字节
@@ -354,7 +361,7 @@ K/V 分流：
 c1r2 是承载 2048-dword 全 hidden 向量流和 sum-of-squares / 倒数平方根代码的
 tile。它担任：
 - 输入 hidden 的第一次 RMSNorm（分发给 Main16 之前）
-- O 投影后的残差加 + 第二次 RMSNorm（喂给 gate/up）
+- O 投影后的残差加 + 第二次 RMSNorm（喂给 up/gate）
 - down 投影后的最终残差 + 层输出
 
 之所以放在这里：RMSNorm 和残差都必须看到完整 4096-bf16 hidden 向量，c1r2 的
@@ -363,7 +370,7 @@ boundary 都精确匹配这个角色。
 
 **SwiGLU 切片站（c6r2）— "FFN 激活工位"**
 
-c6r2 接收 512-dword 输入（512 bf16 gate slice + 512 bf16 up slice），执行
+c6r2 接收 512-dword 输入（512 bf16 up slice + 512 bf16 gate slice），执行
 `SiLU(gate) × up`，输出 256-dword（= 512 bf16）SwiGLU slice。一共 24 个 slice
 拼出 12288-bf16 FFN intermediate。
 
@@ -406,7 +413,7 @@ down 投影。
 上下文信息都浓缩在这 4096 个数字里。
 
 同时准备好的还有：
-- 本层的全部权重（Q/K/V/O/gate/up/down 共约 115 MB），存在主存中
+- 本层的全部权重（Q/K/V/O/up/gate/down 共约 115 MB），存在主存中
 - 历史 KV 缓存（之前所有 token 的 K 和 V），也在主存中
 
 NPU 不会一次性把 115 MB 权重全读进来。它按阶段分批流入 — 先流 Q 的权重，
@@ -470,8 +477,9 @@ Q 投影有 64 个 patch = 8 个 N-block。
 **激活广播**：同一列的 4 个 tile 需要相同的激活切片。Row1 memtile 用 4 路 DMA
 把同一份 256 bf16 分别推给 row2/3/4/5。
 
-**流水线**：前一个 chunk 在被计算时，下一个 chunk 已经在传输途中（ping-pong
-缓冲）。计算和传输完全重叠，没有空等。
+**流水线**：目标是在前一个 chunk 被计算时传输下一个 chunk（ping-pong 缓冲）。
+是否能完全隐藏传输延迟，取决于 kernel latency、BD phase、lock order 和 stream
+route。
 
 K 投影和 V 投影与 Q 完全相同，只是输出维度更小（1024 维 = 16 个 patch），
 而且流入不同地址的权重。
@@ -512,7 +520,10 @@ K: c1r3 → packet14 → 向南穿过多个 tile → c0r0 shim → 写入主存 
 V: c1r3 → packet15 → 向东穿过多个 tile → c7r0 shim → 写入主存 KV 缓存
 ```
 
-当前 token 的 K 和 V 被存入 KV 缓存，供将来的 token 做 attention 时使用。
+当前 token 的 K 和 V 被存入 KV 缓存。decode attention 需要覆盖当前 token 自己，
+所以实现时必须保证 packet14/15 当前写回与 rounded history scan 的同步关系明确：
+要么先写当前 K/V 再 scan `[0..current]`，要么把 current K/V 作为等价的旁路输入
+并入 attention。
 
 ### 4.5 Attention：找到相关信息
 
@@ -523,7 +534,9 @@ V: c1r3 → packet15 → 向东穿过多个 tile → c7r0 shim → 写入主存 
 
 **第一步：读出历史 KV 缓存**
 
-历史的 K 和 V 存在主存的 KV 缓存 BO 中。按 KV group 分工扫描：
+历史的 K 和 V 存在主存的 KV 缓存 BO 中。本 token 的 attention scan 范围应覆盖
+`[0..current]`；若采用先写后扫的策略，当前 K/V 写回必须在本次 rounded scan
+可见。按 KV group 分工扫描：
 - c0r0 shim 读出 group 0-3 的 K 和 V（k03/v03）→ 送入 c0r1 memtile
 - c7r0 shim 读出 group 4-7 的 K 和 V（k47/v47）→ 送入 c7r1 memtile
 
@@ -547,10 +560,10 @@ stream — K 历史送 shape-A，V 历史送 shape-B。
 这就是"online softmax" — 不需要先把所有 score 算完再做 softmax，
 一边扫描一边就能得到最终结果。大幅节省存储。
 
-每凑够 16 个历史 token，Shape-A 把该 block 的 carrier
-（`base[0x100]` = 8 heads × 16 token bf16 权重，
-`scalar[0x40]` = 8 × (block_max, block_sum) fp32 pair）经本地相邻存储
-+ lock immediate 同步交给 Shape-B，详见 3.2 节 Shape-B 工位的 carrier 模型。
+每凑够 16 个历史 token，Shape-A 把该 block 的 carrier 经本地相邻存储 +
+lock immediate 同步交给 Shape-B。MyLM 已确认 carrier 由 `base[0x100]` 和
+`scalar[0x40]` 组成；本文采用的 `(block_max, block_sum)` scalar lane 是
+IRON-ABI-v0 设计定义，若复用 MyLM binary kernel 仍需校准 exact lane order。
 
 **第三步：Shape-B 加权求和（c0r3, c0r5, c7r3, c7r5）**
 
@@ -631,28 +644,30 @@ O 投影完成后，按 Transformer 算法需要做两件事：
 两个操作都需要看到完整的 4096 维向量，由 **c1r2 全向量站**承担。Main16 的 17-dword
 O 输出记录走 compact/aux 路径汇入 c1r2，c1r2 在本地重建/累加完整 4096-bf16
 O 结果，与之前缓存的 hidden 残差相加，再施加第二次 RMSNorm 权重，归一化后的
-完整 hidden 重新喂回 Main16 入口，作为 gate/up 投影的激活。
+完整 hidden 重新喂回 Main16 入口，作为 up/gate 投影的激活。
 
 c1r2 同时承担三种 full-vector 工作：进入 attention 前的第一次 RMSNorm、O 后的
 残差 + 第二次 RMSNorm、down 后的最终残差与层输出（见 4.10）。
 
 host-visible layer boundary 上**不暴露** O / 残差 / RMSNorm 的 DDR
-descriptor，所有这些状态都留在片上由 c1r2 维护。c1r2 内部维护一份 2048-dword
-（4096 bf16）full-vector buffer，提供 sum-of-squares / rsqrt 计算做归一化，
-并把归一化后的 full-vector 通过 packet0 切成 16 个 256-bf16 chunk 喂给
-main16。每个 phase 的 chunk 数量与 main16 的 N-block 数对齐：
+descriptor，所有这些状态都留在片上由 c1r2 维护。已确认的是 c1r2 对外承担
+2048-dword（4096 bf16）full-vector packet ABI，并提供 sum-of-squares / rsqrt
+风格计算做归一化；内部 ping-pong pointer、残差缓存和值布局仍是 calibration 项。
+c1r2 的 phase release 计数是 full-vector packet0 replay count，而不是
+256-bf16 chunk count：
 
 ```
-+12 = Q/K/V 输入 chunk replay  (8 + 2 + 2 N-blocks)
-+48 = up/gate 输入 chunk replay (24 + 24 slices)
-+1  = 最终 hidden 输出
++12 = Q/K/V full-vector packet0 replay count  (8 + 2 + 2 N-blocks)
++48 = up/gate full-vector packet0 replay count (24 + 24 slices)
++1  = final hidden-output boundary transfer
 ```
 
-c1r2 的 full-vector layout 采用自然 dim-major：`hidden[dim]`，dim = 0..4095，
-每个 dword 打两个 bf16（`payload_dword[i].lo16 = hidden[2i]`，
-`payload_dword[i].hi16 = hidden[2i+1]`），第 c 个 chunk 覆盖
-`dim c*256..c*256+255`。Q/K/V 输入 replay、up/gate 输入 replay、最终 hidden
-输出共用同一个 full-vector layout。
+每一次 full-vector replay 是 `1 control/header dword + 2048 dword payload`，
+后续才经 c1r1 bridge 切成 main16 需要的 256-bf16 / 128-dword activation
+chunks。IRON-ABI-v0 对该 payload 采用自然 dim-major：`hidden[dim]`，
+dim = 0..4095，每个 dword 打两个 bf16（`payload_dword[i].lo16 = hidden[2i]`，
+`payload_dword[i].hi16 = hidden[2i+1]`）。这个 value layout 是 IRON 自定义
+ABI；MyLM 的 c1r2 register-level ping/pong/value layout 仍需校准。
 
 ### 4.9 FFN：SwiGLU 结构
 
@@ -673,8 +688,9 @@ FFN_intermediate = SiLU(gate_output) × up_output
 ```
 
 SiLU 和逐元素相乘不是矩阵乘，由 **c6r2 SwiGLU 切片站**完成。Main16 产出的
-gate/up 记录被汇入 c6r2，每次 c6r2 接收 512-dword 输入（512 bf16 gate slice +
-512 bf16 up slice），输出 256-dword（512 bf16）SwiGLU slice。每片输出送入
+up/gate 记录被汇入 c6r2，每次 c6r2 接收 512-dword 输入（low half = 512 bf16
+up slice，high half = 512 bf16 gate slice），输出 256-dword（512 bf16）
+SwiGLU slice。每片输出送入
 c6r1 的 6144-dword gather buffer：
 
 ```
@@ -697,9 +713,11 @@ Main16 入口的 128-dword activation ring：
 12288 → 4096 的矩阵乘（64 个 patch）。输入维度变大了，所以每个 tile 需要累加
 48 个 chunk（48 × 256 = 12288）而不是之前的 16 个。
 
-scheduler 以 slice 为单位 adjacent pair 提交：每生成一对 (up[slice],
-gate[slice]) 的 257-dword compact packet，c6r2 即输出一个 256-dword 的
-SwiGLU slice，整层共 24 个 slice。
+IRON-ABI-v0 的 scheduler 以 slice 为单位 adjacent pair 提交：每生成一对
+(up[slice], gate[slice]) 的 257-dword compact packet，c6r2 即输出一个
+256-dword 的 SwiGLU slice，整层共 24 个 slice。MyLM 是否也严格采用
+`up0, gate0, up1, gate1...` 的 N-block 顺序，仍需独立校准；如果复用 MyLM
+binary kernel，不能只凭本文的 IRON schedule 假设。
 
 ### 4.10 终点：最终残差 → 层输出
 
@@ -737,7 +755,7 @@ Edge 侧不同的工位处理后，再流回 Main：
 闭环 2（O → 残差/RMSNorm → up/gate）：
   Main 产出 O 的 17-dword 记录（每 tile 8 条 = 8 N-blocks）
     → compact/aux 路径
-    → c1r2 全向量站（残差加 + 第二次 RMSNorm，下一阶段 +48 chunk replay）
+    → c1r2 全向量站（残差加 + 第二次 RMSNorm，下一阶段 +48 full-vector replay）
     → 回到 Main 做 up/gate 投影（物理 order：up 先于 gate）
 
 闭环 3（up/gate → SwiGLU → down）：
@@ -775,11 +793,13 @@ multicast → Main16 DMA0 128-dword activation ring）—— 不是两套独立�
 输入通道 0:  [激活片][激活片]...[激活片]...[激活片]...[attn结果片]...
 ```
 
-tile 不需要被告知"现在是第几阶段"。它只看到：又来了一个 5120 字节权重块 + 又来了
-256 个 bf16 激活。做乘累加，输出结果。换个权重流 = 换个阶段。
+projection math 复用同一套输入形状：又来了一个 5120 字节权重块 + 又来了
+256 个 bf16 激活，tile 就做乘累加。但阶段仍由静态 schedule、record header/control、
+replay count 和 downstream route 共同定义，不能只靠“换权重流”区分。
 
 好处：
-- 16 个 tile 的利用率接近 100% — 除了阶段切换的短暂间隙，一直在算
+- 16 个 tile 可以在大部分 projection 时间内保持工作，具体利用率取决于生产 kernel、
+  BD/lock phase 和 stream route
 - 不需要复杂的资源调度 — 硬件配置一次，7 个阶段自动依次完成
 - 减少面积浪费 — 不需要 7×16 = 112 个 tile
 
@@ -791,10 +811,10 @@ tile 不需要被告知"现在是第几阶段"。它只看到：又来了一个 
 对于 decode（每次只处理 1 个 token）来说，这个代价是可接受的：单 token 的
 计算量不大，瓶颈在权重带宽而不在并行度。
 
-### 5.3 流水线重叠：传输和计算完全并行
+### 5.3 流水线重叠：传输和计算尽量并行
 
-每个 Main tile 处理一个 chunk 需要的时间 ≈ 传输下一个 chunk 需要的时间。
-利用 ping-pong 双缓冲，两者完全重叠：
+设计目标是让每个 Main tile 处理一个 chunk 的时间接近传输下一个 chunk 的时间。
+利用 ping-pong 双缓冲，DMA 和 compute 可以尽量重叠：
 
 ```
 时间 ─────────────────────────────────────────────→
@@ -807,7 +827,9 @@ tile 不需要被告知"现在是第几阶段"。它只看到：又来了一个 
 - 一个缓冲区正在被 DMA 填充下一个 chunk
 - 另一个缓冲区正在被计算核心消费当前 chunk
 
-结果：**从第一个 chunk 之后，传输延迟被完全隐藏。** 计算核心永远不需要空等数据。
+目标结果是从第一个 chunk 之后尽量隐藏传输延迟。实际是否存在空等，取决于
+kernel latency、BD phase、lock order 和 stream route；small chunk-ring 的
+same-channel phase 一旦不精确，硬件会 timeout。
 
 这就是 DMA 和 Lock 协作的价值：DMA 按 BD 指示搬数据，Lock 保证"填完才能算，
 算完才能填"，两者交替推进。
@@ -844,8 +866,8 @@ RMSNorm / FFN 中间值的 DDR descriptor，这些状态都由片上工位承担
 对比 GPU 方式省掉的主存搬运：
 - Q 投影输出 → 后处理（~8 KB）
 - attention 输出 → O 投影（~8 KB × 2 来回）
-- O 输出 → 残差 + RMSNorm → gate/up 激活
-- gate/up → SwiGLU → down 激活（12288 bf16 = 24 KB × 2 来回）
+- O 输出 → 残差 + RMSNorm → up/gate 激活
+- up/gate → SwiGLU → down 激活（12288 bf16 = 24 KB × 2 来回）
 - down 输出 → 最终残差 → 层输出
 
 设计的核心价值是：**尽可能把主存带宽留给权重流入** — 这才是单 token decode 的
@@ -912,14 +934,15 @@ hidden-in/hidden-out + weights + norm/RoPE 旁路 + KV cache descriptor，
   payload_dword[i].lo16 = output[2i + 0]
   payload_dword[i].hi16 = output[2i + 1]
   ```
-  每个 tile 一次产出 32 个连续 output element。每个 phase 的 record 数：
-  - Q：每 tile 12 条 = 8 N-blocks（K/V 复用同一族，各占其中 2 N-blocks）
+  每个 tile 一次产出 32 个连续 output element。每个 phase family 的 record 数：
+  - Q/K/V family：每 tile 总共 12 条 = Q 8 N-blocks + K 2 N-blocks + V 2 N-blocks
   - O：每 tile 8 条
   - up/gate：每 tile 48 条 = 24 + 24 slices
   - down：每 tile 8 条
 - **N-block 与 tile 顺序**：一个 N-block = 16 tile × 32 bf16 = 512 bf16 =
-  256 dword，tile 顺序按 row1 自然汇聚 (c2..c5) × (r2..r5)，第 n 个 N-block
-  覆盖 global output `n*512 .. n*512 + 511`
+  256 dword。本文用 IRON-ABI-v0 定义 tile 顺序为 row1 自然汇聚
+  `(c2..c5) × (r2..r5)`，第 n 个 N-block 覆盖 global output
+  `n*512 .. n*512 + 511`。MyLM exact lane/tile value order 仍需校准。
 - **共享激活桥**：c6r1 packet → c1r1 DMA4 256-dword bridge → DMA1 multicast
   → Main16 DMA0 128-dword ring。attention 返回（packet2）与 down 输入返回
   （packet0）复用同一条物理桥
@@ -927,9 +950,12 @@ hidden-in/hidden-out + weights + norm/RoPE 旁路 + KV cache descriptor，
   `input[0x400..0x7ff]` = gate）→ 256-dw SwiGLU slice →
   c6r1 6144-dw gather → packet0 发布
 - **Full-vector 放置**：c1r2 承担 hidden/RMSNorm/residual/final-output。
-  full-vector 采用自然 dim-major `hidden[dim]`，dim = 0..4095，dword 打两个
-  bf16；通过 packet0 切成 16 个 256-bf16 chunk 喂给 main16；phase 顺序
-  `+12 → +48 → +1`（Q/K/V → up/gate → 最终 hidden 输出）
+  对外是 `2049-dword` manual-header full-vector packet0 replay
+  （1 control + 2048 payload）；`+12 → +48 → +1` 是 full-vector replay
+  count（Q/K/V → up/gate → final hidden-output boundary transfer），不是
+  256-bf16 chunk count。IRON-ABI-v0 将 payload 定义为自然 dim-major
+  `hidden[dim]`，dim = 0..4095，dword 打两个 bf16；MyLM c1r2 内部 layout
+  仍需校准。
 - **Q / KV 布局**：
   - Q 为 head-major `Q[head][dim]`，head=0..31, dim=0..127
   - K/V 为 GQA group-major `K[group][dim]` / `V[group][dim]`，
@@ -938,7 +964,9 @@ hidden-in/hidden-out + weights + norm/RoPE 旁路 + KV cache descriptor，
     每窗口 = 8 heads × 128 bf16 = 1024 bf16 = 512 dword
   - KV 缓存逻辑布局 `K[layer][group][token][dim]` /
     `V[layer][group][token][dim]`，写入与回读使用同一布局
-- **Shape-A/B carrier**：每 16 个历史 token 一个 block。
+- **Shape-A/B carrier**：每 16 个历史 token 一个 block。MyLM 已确认
+  `base[0x100] + scalar[0x40]` 容量和 neighbor-local handoff；下面是
+  IRON-ABI-v0 value 定义。
   - `base[0x100]` = head-major 8 records × 16-token bf16 权重，
     `base[h][t] = exp(score[h][t] - block_max[h])`
   - `scalar[0x40]` = 8 × (block_max, block_sum) fp32 pair，
@@ -947,7 +975,8 @@ hidden-in/hidden-out + weights + norm/RoPE 旁路 + KV cache descriptor，
   - Shape-B 用标准 online-softmax merge 累加 `accum[8][128]` fp32
 - **Attention 输出 → O chunk 顺序**：head-major，
   `O_chunk[c]` = heads `2c` 与 `2c+1` 的所有 128 dim，每 chunk = 256 bf16 =
-  128 dword，正好匹配 main16 activation ring 的 128-dword chunk
+  128 dword，正好匹配 main16 activation ring 的 128-dword chunk。该 head-pair
+  order 是 IRON-ABI-v0 value layout；MyLM exact return order 仍需校准。
 - **物理 projection 顺序**：`Q, K, V, O, up, gate, down`
 
 ---
@@ -1037,7 +1066,7 @@ row0  │K写回   │                  shim / 主存入口                │V�
 - Shape-B：attention 输出 tile（加权 V 求和）
 - 后处理（c1r3）：Q/K current-side norm + RoPE
 - 全向量站（c1r2）：4096-bf16 hidden 的第一次 RMSNorm、O 后残差+第二次 RMSNorm、最终残差/层输出
-- SwiGLU（c6r2）：512-dw gate/up slice → 256-dw SwiGLU slice
+- SwiGLU（c6r2）：512-dw up/gate slice → 256-dw SwiGLU slice
 - 共享桥（c1r1 memtile）：DMA4 256-dw 双缓冲 ↔ DMA1 multicast，attention 返回与 down 返回共用
 - 枢纽/汇聚（c6r1 memtile）：Q 分发 + attention 结果汇聚（packet2）+ FFN intermediate gather（packet0）
 

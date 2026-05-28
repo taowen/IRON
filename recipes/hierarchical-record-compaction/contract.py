@@ -1,0 +1,14 @@
+"""Shape constants for the hierarchical record-compaction recipe."""
+
+from __future__ import annotations
+
+MAIN_COLUMNS = (2, 3, 4, 5)
+MAIN_ROWS = (2, 3, 4, 5)
+ROWS_PER_COLUMN = len(MAIN_ROWS)
+RECORD_DWORDS = 17
+RECORD_PAYLOAD_DWORDS = RECORD_DWORDS - 1
+CONSUMER_INPUT_DWORDS = 512
+CONSUMER_HALF_DWORDS = CONSUMER_INPUT_DWORDS // 2
+COMPACT_PACKET_DWORDS = (
+    1 + len(MAIN_COLUMNS) * ROWS_PER_COLUMN * RECORD_PAYLOAD_DWORDS
+)
