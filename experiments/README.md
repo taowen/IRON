@@ -1,162 +1,126 @@
 # Retained Fused-Layer Experiments
 
-This directory now keeps only the experiments that still support the current
-MyLM-style fused-layer direction. Older one-off probes were removed after their
-positive lessons were covered by later milestones or their negative lessons were
-folded into this summary.
+This directory keeps only experiments that still support the current
+MyLM-style fused-layer direction. The compact dataflow model lives in
+[xdna-programming-guide.md](xdna-programming-guide.md); individual directories
+are for reproduction and narrow evidence.
 
-If the raw MLIR-AIE code is hard to read, start with
-[XDNA Programming Guide For The Fused-Layer Experiments](xdna-programming-guide.md).
-It explains the tile model, row1 memtile rings, DMA BDs, locks, packet routes,
-Q4NX patch shape, main16/edge16 split, and the remaining full-layer questions.
-
-## Current Understanding
+## Current Direction
 
 The target is our own full-layer fused Qwen3 decode engine. MyLM is the
 hardware-mapping reference, not an instruction-for-instruction compatibility
 target.
 
-The full layer fits by time-reusing one physical fabric instead of allocating
-separate tiles for Q/K/V/O/FFN. The main projection fabric is the 16 compute
-tiles `c2..c5/r2..r5`. The same main16 fabric is reused across Q, K, V, O, up,
-gate, and down phases. The edge/aux side uses `c0/c1/c6/c7` for KV scan,
-current-token packets, attention-side replay, compact phase records, and
-handoff back to main16.
+The stable high-level model is:
 
-MyLM's high-level shape is static PDI/CDO dataflow, not a chain of ordinary
-host operators. Core programs, memtile BD rings, stream switches, and locks are
-configured up front. Runtime patches descriptor addresses/lengths and starts a
-layer run. This is why the current limiting issue is exact phase handoff and
-BD/lock scheduling, not broad tile-count feasibility.
+- main16 `c2..c5/r2..r5` is time-reused for Q/K/V/O/up/gate/down projection;
+- edge/aux `c0/c1/c6/c7` handles current Q/K/V, KV history, attention state,
+  compact records, and return to O;
+- runtime patches descriptors/RTPs and starts a layer run, rather than exposing
+  a host-visible operator chain.
 
-The main-tile projection ABI we currently trust is:
+## Kept Evidence
 
-- activation slice on input channel 0: `128 dwords` / `256 bf16`,
-- Q4NX weight chunk on input channel 1: `1280 dwords` / `5120 bytes`,
-- compact debug/sideband record: `17 dwords`.
+Patch queue and projection schedule:
 
-The real Qwen3 projection patch schedule is:
+- `54_real_qwen_patch_schedule`: real Qwen3 608-patch schedule.
+- `57_mylm_exact_patch_manifest`: exact MyLM patch unit and phase ranges.
+- `58_mylm_patch_pair_row1_split`: patch-pair to four 32-row streams.
+- `59_mylm_exact_nblock_projection`: full main16 projection with full-patch
+  row1 residency.
+- `61_mylm_chunk_ring_slot_locks`, `62_mylm_full_nblock_chunk_ring`: row1
+  small-ring lock and same-channel timeout evidence.
+- `63_mylm_packetized_patch_phase`: retained patch transport result; one
+  logical host queue lands in legal full-main16 row1 BD banks.
 
-| phase | input dim | output dim | patches |
-| --- | ---: | ---: | ---: |
-| Q | 4096 | 4096 | 64 |
-| K | 4096 | 1024 | 16 |
-| V | 4096 | 1024 | 16 |
-| O | 4096 | 4096 | 64 |
-| up | 4096 | 12288 | 192 |
-| gate | 4096 | 12288 | 192 |
-| down | 12288 | 4096 | 64 |
+Attention and O handoff:
 
-Total: `608` MyLM-sized patches. A hidden-dim patch is `64 output rows x
-4096 K = 0x28000 bytes`; the down patch is `64 output rows x 12288 K =
-0x78000 bytes`.
+- `38_full_attention_fabric`: `32Q/8KV` attention resource map fits.
+- `39_projected_current_write_full_attention`: NPU-produced current Q/K/V and
+  current cache writeback baseline.
+- `64_mylm_attention_to_o_direct_handoff`: deterministic attention result
+  streams to O without a host-visible drain.
+- `65_mylm_fused_layer_engine_v0`: fused-engine skeleton with exact patch queue.
+- `66_mylm_real_attention_o_phase`: local online-softmax/weighted-V producer
+  feeds O on real NPU.
+- `67_mylm_global_qkv_o_layout`: `Attn[32][128]` to O `16 x 256` layout.
+- `82_mylm_attention_o_bridge`: packet2 return bridge to O chunks.
 
-## Retained Chain
+MyLM physical reverse evidence:
 
-- `25_mylm_edge_bd_ring`: reproduces the edge/KV row1 static BD-ring skeleton
-  for rounded context lengths `L=17/31/32/128`.
-- `26_kv_edge_aux_reshape`: calibrates packet14/15 current variants,
-  2048-dword half-plane streams, and the 17-dword sideband path.
-- `38_full_attention_fabric`: proves the full `32Q/8KV` attention resource map
-  fits with row1 KV reshape/fanout.
-- `39_projected_current_write_full_attention`: adds NPU-produced Q/current K/V
-  and current cache writeback before the full attention fabric.
-- `48_main16_fullk_q4nx_phase_replay`: proves main16 can replay full-K Q4NX
-  projection phases on the same physical tiles.
-- `52_fullk_edge_slice_replay_q4nx_o_phase`: proves a full-K O projection can
-  consume edge-replayed 256-bf16 slices without a host-visible attention vector.
-- `53_full_layer_phase_chain_contract`: strongest end-to-end contract so far.
-  It runs seven layer-shaped phases over the main16/edge16 fabric with compact
-  phase records. It deliberately uses deterministic replay and simplified
-  `K=4096` phases.
-- `54_real_qwen_patch_schedule`: maps the real Qwen3 projection dimensions to
-  the 608-patch phase schedule.
-- `55_mylm_linked_bd_chain`: proves a linked shim-BD chain can be patched once
-  and consumed by a static row1 ping-pong ring.
-- `56_mylm_linked_qwen_schedule`: combines linked descriptors with the real
-  Qwen3 phase/block schedule.
-- `57_mylm_exact_patch_manifest`: fixes the exact MyLM patch unit and validates
-  patch order, offsets, phase ranges, and BD slot alternation.
-- `58_mylm_patch_pair_row1_split`: proves two 64-row patches can be split by
-  row1 into four 32-row compute streams for one main column.
-- `59_mylm_exact_nblock_projection`: proves exact MyLM-sized patches can feed
-  the full 512-row main16 projection block. It still keeps full patches resident
-  in row1, so it is not the final memory shape.
-- `61_mylm_chunk_ring_slot_locks`: fixes the output route/collector mismatch,
-  gives ping and pong independent slot locks, and proves that a full `0x28000`
-  patch descriptor can stream through a small row1 Q4NX chunk ring on real NPU.
-- `62_mylm_full_nblock_chunk_ring`: current strongest row1/main16 evidence.
-  It scales the small-ring schedule to four main columns and four rows per
-  column with two exact `0x28000` patches per column. The split-channel variant
-  passes on real NPU; the same-channel variant times out because memtile even
-  DMA channels can only use BD `0..23`, while the 32-phase input chain crosses
-  into odd-channel BD slots `24..47`.
-- `63_mylm_packetized_patch_phase`: current strongest patch-handoff evidence.
-  It keeps one linked host `MM2S ch0` patch queue, packetizes each shim BD, and
-  lets packet routing send patch0/patch1 to legal memtile `S2MM ch0/ch1` BD
-  banks. It passes at full main16 scale, so this patch phase does not require
-  direct CDO/transaction generation.
-- `64_mylm_attention_to_o_direct_handoff`: current strongest attention-to-O
-  handoff evidence. Edge tiles replay deterministic attention-result slices
-  directly into the full main16 O phase while O weights arrive through exp63's
-  packetized patch queue and row1 small chunk rings. It passes on real NPU with
-  no host-visible attention drain.
-- `65_mylm_fused_layer_engine_v0`: current fused-engine baseline. It combines
-  the real Qwen3 seven-phase schedule, exact 608-patch MyLM manifest,
-  packetized patch descriptors, row1 small chunk rings, and direct
-  deterministic attention-result-to-O handoff. It passes on real NPU using
-  high-level MLIR-AIE generated descriptors.
-- `66_mylm_real_attention_o_phase`: replaces exp65's deterministic O producer
-  with a real data-dependent producer. Q/K/V phase sidebands carry per-tile
-  projection payloads, edge tiles cache local Q/K/V state, scan an `L=31`
-  rounded KV history with online softmax/weighted V, and stream directly into
-  the existing O handoff. It passes on real NPU.
-- `67_mylm_global_qkv_o_layout`: fixes the global Q/K/V coordinate contract
-  and the exact `Attn[32][128]` to O-phase `16 x 256` slice layout inside the
-  full seven-phase engine. The producer is target-independent for each
-  `global_idx`, so it proves the O packing contract without claiming the final
-  physical all-to-all Q/K/V collector.
+- `70_mylm_stream_switch_physical_path_replay`: CDO/stream-switch replay base.
+- `78_mylm_row0_current_kv_writeback`: packet14/15 are current K/V writeback.
+- `79_mylm_row1_history_split`: K history to Shape-A, V history to Shape-B.
+- `80_mylm_shape_ab_return_phase`: Shape-A hidden carrier, Shape-B 512-dword
+  return.
+- `81_mylm_shape_b_hidden_payload`: compact carrier capacity and fp32
+  accumulator capacity.
+- `83_mylm_layer_boundary_contract`: no DDR-visible O/residual/FFN
+  intermediates.
+- `84_mylm_shape_ab_carrier_lock`: Shape-A owns L7/L5/L4; Shape-B uses
+  north-neighbor lock immediates.
+- `87_mylm_shape_ab_carrier_block_order`: Shape-A publishes carrier ready L7
+  then L5; Shape-B splits the carrier into `base[0x100]` and
+  `scalar[0x40]` through call-slot setup.
+- `85_mylm_main16_phase_record`: `17 dword` record shape and full-Q split.
+- `86_mylm_dispatcher_packet8_aux`: main16 dispatcher/body shape, packet8 as
+  unpacketized compact/aux path, and header source from body input `r0`.
+- `88_mylm_aux_compact_record_roles`: `c1r2` is a full-vector
+  RMSNorm/residual-style aux compute station; `c6r2` is a compact
+  record/indexed-format station on the packet8-side route.
+- `89_mylm_fullvector_ffn_dataflow`: `c1r2` is the hidden-input/RMSNorm/final
+  output full-vector station; `c6r2` is the SwiGLU slice station; `c6r1`
+  gathers the 12288-bf16 FFN intermediate and publishes packet0 for down.
+- `90_mylm_main16_activation_bridge`: packet2/O and packet0/down reuse the same
+  c1r1 DMA4-to-DMA1 256-dword bridge, then feed the main16 128-dword activation
+  ring as 16 O chunks or 48 down chunks.
+- `91_mylm_c1r2_phase_order`: runtime writes the `c1r2` mode flag and L6 start
+  gate; `c1r2.bd3` releases `+12/+48/+1` full-vector packet0 replays for
+  Q/K/V, up/gate, and final hidden output.
+- `92_mylm_main16_phase_control`: main16 body replay counts and compact-record
+  control words are scheduler-known: `12 x 0x1` for Q/K/V, `8 x 0x4` for O,
+  `48 x 0x8` for up/gate, and `8 x 0x4` for down.
+- `93_mylm_shape_ab_carrier_lane_usage`: Shape-B consumes `base[0x100]` as
+  four 0x40 head-pair-sized blocks in read order `0x00,0x40,0xc0,0x80`; the
+  scalar block is online-softmax scale/normalization state, not proven raw
+  max/sum lanes.
+- `94_mylm_shape_a_carrier_producer_layout`: Shape-A helper `0x650` produces
+  `base[0x100]` as eight 0x20 stores, so the carrier base record quantum is one
+  query head x 16 token bf16 weights; Shape-B consumes adjacent records as
+  0x40 head-pair blocks.
+- `95_mylm_c6r2_swiglu_input_layout`: `c6r2` consumes each 512-dword SwiGLU
+  input as `up[0x400]` followed by `gate[0x400]`, matching MyLM's physical
+  patch order `up` before `gate`.
+- `96_mylm_upgate_c6r2_compact_route`: 16 main16 up/gate records are compacted
+  by row1 into one 257-dword c1r1 packet; `c6r2 DMA_0` drops two packet headers
+  and receives two 256-dword payloads as one 512-dword `up+gate` input.
 
-## Deleted Experiments
+## Folded Experiments
 
-The older experiments `11`, `13`, `18..24`, `27..37`, `40..47`, `50`, and
-`60` were removed. They were valuable while exploring, but keeping them made the
-evidence chain harder to read. The retained chain preserves the current useful
-results: KV ring shape, current/cache writeback, full attention resource map,
-main16 phase replay, edge-to-main O replay, real patch schedule, and exact-patch
-row1 split.
+Deleted because their useful conclusions are covered above:
+
+- `25`, `26`: early edge/KV ring and selector skeletons, folded into
+  exp70/78-84.
+- `48`, `52`, `53`: early main16/O/full-layer milestones, folded into
+  exp65/66/83/85.
+- `55`, `56`: linked-descriptor precursors, folded into exp63.
+- `68`, `69`: early reverse probes, folded into exp70/78-86.
+- `71..77`: Q-window, packet-mask, and shim-return probes, folded into
+  exp70/82/85.
+- Older removed experiments: `11`, `13`, `18..24`, `27..37`, `40..47`, `50`,
+  and `60`.
 
 ## Remaining Questions
 
-1. How do we express MyLM-style direct CDO ownership in our codebase?
-   Exp62 shows why a literal same-channel row1 BD chain fails; exp63 shows that
-   packetized linked descriptors can keep one host logical queue while routing
-   phases to legal row1 BD banks. Exp65 shows the v0 fused layer descriptor
-   program is still expressible through high-level MLIR-AIE. Direct
-   CDO/transaction work should now be reserved for phase ownership that
-   packetized descriptors cannot express or for reducing descriptor-program
-   overhead.
-2. What is the production attention ABI?
-   Exp66 proves the first non-deterministic attention producer inside the full
-   seven-phase schedule. Exp67 fixes the global head/dim layout and the exact
-   attention-result packing consumed by O. The remaining ABI question is the
-   physical MyLM global Q/K/V fanout plus exact current K/V cache writeback
-   shape.
-3. Where should attention state live?
-   The exact placement of running max/sum/output accumulators and the exact
-   shape-A/shape-B or packet14/15 consumer relationship remain inferred rather
-   than implemented as final code.
-4. How do Q/K/V outputs hand off to edge attention and return to main16 O
-   without debug drains?
-   Exp66 connects Q/K/V-derived online attention output to the same O handoff
-   ABI in one continuous schedule. Exp67 makes the return layout explicit:
-   chunk `c` carries attention heads `2*c` and `2*c+1` as a 256-bf16 O input
-   slice. The remaining gap is replacing the diagnostic global producer with
-   the full MyLM edge/aux Q/K/V distribution.
-5. How do we replace contract kernels with fast kernels?
-   The retained experiments mostly use deterministic or scalar kernels to prove
-   dataflow. The final engine needs high-throughput online Q4NX kernels with
-   sustained DMA/compute overlap.
-6. How do layer-level runlist and lm_head integrate?
-   Once one fused layer is correct, the final runtime still needs layer-to-layer
-   submission, per-layer weights/cache/state, and an lm_head path.
+1. Calibrate the remaining Shape-A/B compact carrier value order: local head
+   order of the eight 0x20 base records, token lane order inside one record,
+   and online-softmax scalar lane semantics in `scalar[0x40]`.
+2. Calibrate register-level `c1r2` ping/pong pointer order and value layout.
+3. Decode optional bit-level meaning of main16 headers `0x1/0x4/0x8`; the
+   scheduler-critical values and replay counts are known.
+4. Calibrate the exact element order inside each 16-dword main16 payload and the
+   exact up/gate N-block pairing order into `c6r2`.
+5. Replace diagnostic kernels with production RMSNorm, Q/K norm, RoPE, online
+   softmax, SwiGLU, down, and Q4NX kernels.
+6. Integrate layer-to-layer runtime submission, per-layer weights/KV state, and
+   lm_head.
