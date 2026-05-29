@@ -8,7 +8,12 @@
 
 ## 一句话
 
-在 AMD XDNA NPU 上，把 Qwen3-8B 模型的一个 Transformer decode 层做成一台"数据流机器"——配置一次、启动一次、整层跑完。
+在 AMD XDNA NPU 上，把 Qwen3-8B 模型的一个 Transformer decode 层做成一台"数据流机器"：PDI/CDO、stream switch、BD ring 和 lock 预配置，runtime 只 patch descriptor/RTP 并启动一次 layer run。
+
+本文后续作为开发目标使用时要区分两层含义：
+
+- **目标态**：Qwen3 decode 单层在 NPU 上数值正确、速度可用，并且可以多层串联。
+- **当前态**：`qwen3-layer` 已经能在真机跑通 full-layer 物理闭环，但 attention、RMSNorm/RoPE、SwiGLU 和最终 hidden 输出仍是校准/替换对象。当前通过的是真实 Q4NX projection + current K/V + KV scan + fixed-point attention + Q4NX O/up/gate/down 的集成边界，不等于生产数值已经完成。
 
 ## 背景：GPU 怎么做一层推理
 
@@ -25,24 +30,24 @@ Q投影 → K投影 → V投影 → attention → O投影 → up → gate → Sw
 
 不拆成独立算子，而是把整层做成一台预先配好的数据流机器：
 
-- **配置阶段**：CPU 一次性把路由、缓冲区、地址全配好
-- **执行阶段**：NPU 自动运转——权重流入、激活在 tile 之间传递、attention 在片上完成、结果流出。CPU 不参与中间调度
+- **构建阶段**：预生成 core program、memtile BD ring、stream switch、lock 和 packet route
+- **执行阶段**：runtime patch 当前 token、BO 地址、scan descriptor/RTP，然后启动 layer run。NPU 自动运转，CPU 不参与层内 phase 调度
 
-**核心收益**：大部分中间激活（Q/K/V 投影输出、attention 结果、FFN 中间值）都不回主存，只在 tile 之间直接流动。主存带宽几乎全部留给权重流入（~115 MB/层）。
+**核心收益**：大部分中间激活（Q/K/V 投影输出、attention 结果、FFN 中间值）都不回主存，只在 tile 之间直接流动。主存流量主要变成 Q4NX 权重流入（约 115 MiB/层）和 KV cache scan/write；单 token decode 下权重仍是最大流量项。
 
 ## 类比
 
 | GPU | NPU 融合引擎 |
 |-----|-------------|
 | 工厂里每道工序做完，半成品送回仓库，下一道再取 | 流水线车间，半成品直接从一个工位传到下一个 |
-| 每个算子一次 kernel launch | 整层一次启动 |
-| 显存带宽 = 权重 + 中间结果争抢 | 主存带宽 ≈ 只有权重流入 |
+| 每个算子一次 kernel launch | 每层一次 runtime patch + 启动 |
+| 显存带宽 = 权重 + 中间结果争抢 | 主存带宽 = 权重 + KV cache + 层输入/输出 |
 
 ## 适用场景
 
 NPU 融合引擎特别适合**单 token decode**：计算量小、瓶颈在带宽、融合能减少搬运。这正是端侧（笔记本、手机）LLM 推理的核心场景。
 
-Qwen3-8B 共 36 层，每层都是这样一台数据流机器。本项目实现的就是其中一层的完整物理数据流。
+Qwen3-8B 共 36 层，每层都可以用这类数据流机器实现。本项目当前实现的是其中一层的真机物理数据流 frontier；最终目标是把它推进到数值正确、性能足够好的 decode engine。
 
 ---
 
@@ -149,7 +154,7 @@ tile A ──[packet 8]──→ tile X（匹配 ID 8，接收 K）
 | | Main16 | Edge16 |
 |---|---|---|
 | 视野 | 极窄（32×256 小块） | 全局（完整 4096 维） |
-| 运算 | 只有乘累加 | 归一化/softmax/SiLU/逐元素乘 |
+| 运算 | Q4NX 反量化 + 投影 MAC | 归一化/softmax/SiLU/逐元素乘 |
 | 程序 | 16 个 tile 完全相同 | 每个 tile 不同 |
 
 ## Main16：16 台相同的车床
@@ -166,9 +171,9 @@ row2          ┃[M01][M02][M03][M04]┃
 **特点**：
 
 - **完全相同**——跑一模一样的程序，各自处理不同输出行
-- **只做一件事**——128 dword 激活 + 1280 dword Q4NX 权重 → 乘累加 → 17 dword compact record
-- **视野极窄**——每个 tile 一次只看 32 行 × 256 列的窗口，不知道自己在算 Q 还是 down
-- **时分复用**——同一组 16 tile 依次跑 7 个投影阶段（Q→K→V→O→up→gate→down），靠切换权重流区分阶段
+- **只做一类事**——128 dword 激活 + 1280 dword Q4NX row-chunk 权重 → 反量化/MAC/flush → 17 dword compact record
+- **视野极窄**——每个 tile 一次只看 32 行 × 256 列的窗口，看不到完整 4096 维向量
+- **时分复用**——同一组 16 tile 依次跑 7 个投影阶段（Q→K→V→O→up→gate→down）。阶段不是只靠权重区分，还由 body schedule、record header、record slot、replay count 和 Edge 侧消费路径共同定义
 
 每个 tile 有两个 DMA 输入：
 - **DMA0**：激活输入（128 dword = 256 bf16）
@@ -192,21 +197,23 @@ row0  [K写回]    [────────── shim ────────
 
 ### c1r2 全向量站
 
-**职责**：承载完整 4096-bf16 hidden 向量的所有全局操作
+**目标职责**：承载完整 4096-bf16 hidden 向量的全局操作
 
 - 第一次 RMSNorm（进入投影前）
 - O 投影后的残差加 + 第二次 RMSNorm（喂给 up/gate）
 - Down 投影后的最终残差 + 层输出
 
-**为什么在这里**：RMSNorm 和残差必须看到完整 4096 维向量。c1r2 提供 2048-dword full-vector ABI 和 sum-of-squares/rsqrt 计算。
+**为什么在这里**：RMSNorm 和残差必须看到完整 4096 维向量。目标态 c1r2 要提供 2048-dword full-vector ABI、sum-of-squares/rsqrt 和 residual 计算；当前实现只保留这个物理位置和 replay/output 契约。
 
-**对外接口**：2049-dword packet0 replay（1 control + 2048 payload），replay 次数 = +12（Q/K/V）→ +48（up/gate）→ +1（最终输出）。
+**对外接口**：2049-dword packet0 replay（1 control + 2048 payload），replay 次数 = +12（Q/K/V）→ +48（up/gate）。`+1` 是最终 full-vector output/run slot 的契约标记；当前 frontier 仍只 drain 257-dword down compact，用于验证物理闭环，不是最终 2048-dword hidden 输出。
+
+**当前状态**：`full_vector_station.cc` 还不是生产 RMSNorm/residual。当前 Q/K/V 起点主要是 hidden replay；O 后 replay 使用 bounded numeric scale + int32 sqrt 的临时数值路径；最终 down 后还未生成生产 hidden_out。
 
 ### c1r3 后处理站
 
-**职责**：Q/K norm + RoPE 位置编码 + current K/V 路由
+**目标职责**：Q/K norm + RoPE 位置编码 + current K/V 路由
 
-- 接收 main16 产出的 Q+K+V compact record
+- 目标上接收 main16 产出的 Q+K+V 向量记录
 - 对 Q 和 K 做 RMS 归一化
 - 对 Q 和 K 做 RoPE 旋转位置编码（V 不做）
 - 输出 Q（2048 dword）发给 attention 侧
@@ -214,11 +221,13 @@ row0  [K写回]    [────────── shim ────────
 
 **关键约束**：需要 runtime-start lock 门控，否则 c1r3 可能在 host 写 current-token RTP 前就开始执行。
 
+**当前状态**：`postprocess_qkv.cc` 已经实现 Q/K/V body payload 到 attention ABI 的打包、bf16→s16 量化和 current K/V packet8/9 写回。当前 full-layer 里 c1r3 收到的是 header-stripped body payload（Q=2048 dword，K/V=512 dword），不是 12 个带 header 的 257-dword global compact。Q/K RMSNorm、RoPE scale/角度、模型权重加载还没有按生产 Qwen3 校准。
+
 ### c6r1 枢纽（Memtile）
 
 **职责**：分发 + 汇聚的中转站，承担两个方向的工作
 
-- **前向**：接收完整 Q（2048 dword），拆成 4 份 512-dword 窗口发给 4 个 Shape-A
+- **前向**：接收 attention ABI 下的 Q payload（2048 dword，当前 packed s16），拆成 4 份 512-dword 窗口发给 4 个 Shape-A
 - **反向**：接收 4 个 Shape-B 的 attention 结果，拼成 2048 dword，以 packet2 发布
 - **FFN 汇聚**：收集 24 个 SwiGLU slice，拼成 6144-dword FFN intermediate，以 packet1 发布
 
@@ -236,22 +245,26 @@ row0  [K写回]    [────────── shim ────────
 
 **位置**：c0r2, c0r4, c7r2, c7r4
 
-**职责**：QK 点积评分 + block-level softmax
+**目标职责**：QK 点积评分 + block-level softmax
 
 - 接收一个 512-dword Q 窗口（8 heads × 128 dim）
 - 每 16 个历史 token 为一个 block，计算 score 和 block_max/block_sum
 - 把 carrier（权重+统计量）交给配对的 Shape-B
 - 最后一个 block 用 tail-token RTP 把 padding token 权重清零
 
+**当前状态**：`edge_attention.cc` 走 kv16 fixed-point：Q/K/V 都是 packed s16，score、exp weight 和 carrier 都是为真机连通性设计的近似 ABI，还不是 Qwen3 production attention 数值。
+
 ### Shape-B × 4（求和）
 
 **位置**：c0r3, c0r5, c7r3, c7r5
 
-**职责**：加权 V 求和 + online softmax merge
+**目标职责**：加权 V 求和 + online softmax merge
 
 - 接收 Shape-A 的 carrier + 对应 block 的 16 个历史 V
 - 用 block 权重加权 V，与本地累加器做 online-softmax merge
 - 历史扫描结束后输出 `accum / running_sum` = 512-dword attention 结果
+
+**当前状态**：Shape-B 使用 int32 accumulator 和 Q12 scale 合并 block，full-layer 末端再把结果转换成 bf16 packet2 给 O phase；standalone attention case 的 host 输出仍是 fixed-point summary。
 
 ### c0r1 / c7r1 KV 整形（Memtile）
 
@@ -263,11 +276,13 @@ row0  [K写回]    [────────── shim ────────
 
 ### c6r2 SwiGLU 切片站
 
-**职责**：执行 `SiLU(gate) × up`
+**目标职责**：执行 `SiLU(gate) × up`
 
 - 接收 512-dword 输入（低半区 = up slice，高半区 = gate slice）
 - 输出 256-dword（512 bf16）SwiGLU slice
 - 24 个 slice 组成完整 12288-bf16 FFN intermediate
+
+**当前状态**：`swiglu.cc` 的 bf16 path 是 clipped linear sigmoid 近似加 slice_scale，用于验证 up/gate payload-half ABI；后续要换成生产 SiLU。
 
 ### Row1 c2-c5 列 compact tile
 
@@ -276,6 +291,7 @@ row0  [K写回]    [────────── shim ────────
 - S2MM0-3：接收 main16 的 compact record，汇聚成 column-level layout
 - S2MM4/5：接收来自 shim 的 Q4NX 权重
 - MM2S0-3：把权重分发到各行 main16 DMA1
+- MM2S5：column compact 输出到 c1r1/global bridge（不能和 MM2S0-3 权重 fanout 混为一类）
 
 ---
 
@@ -286,12 +302,12 @@ row0  [K写回]    [────────── shim ────────
 ## 起点：准备
 
 一个 token 的隐藏状态 = 4096 个 bf16 数字组成的向量（8 KB）。同时准备好的还有：
-- 本层全部权重（Q/K/V/O/up/gate/down，Q4NX 格式，~115 MB）
+- 本层全部权重（Q/K/V/O/up/gate/down，Q4NX 格式，约 115 MiB）
 - 历史 KV 缓存（之前所有 token 的 K 和 V）
 
 NPU 不会一次性读入所有权重，而是按阶段分批流入。
 
-## 步骤 1：第一次 RMSNorm
+## 步骤 1：第一次 RMSNorm（目标态）
 
 ```
 主存 → hidden vector(4096 bf16) → c1r2 全向量站
@@ -303,7 +319,9 @@ NPU 不会一次性读入所有权重，而是按阶段分批流入。
                             归一化后的 hidden
 ```
 
-RMSNorm 必须看到完整 4096 维向量，所以放在 c1r2。归一化后的 hidden 准备分发给 Main16。
+RMSNorm 必须看到完整 4096 维向量，所以目标上放在 c1r2。归一化后的 hidden 准备分发给 Main16。
+
+当前 `currentkv-full-layer-q4nx-down-bridge` 还没有生产 RMSNorm：Q/K/V body 起点用 c1r2-position full-vector replay 验证物理路径，后续需要把这里替换成带模型 RMSNorm 权重的数值正确实现。
 
 ## 步骤 2：Q/K/V 投影
 
@@ -325,21 +343,23 @@ Main16 DMA1 同时接收 Q4NX 权重（1280 dword/次）
 - K 投影（4096→1024）：2 个 N-block，每 tile 2 条 record
 - V 投影（4096→1024）：2 个 N-block，每 tile 2 条 record
 
-每个 N-block = 16 tile × 32 bf16 = 512 个输出元素。tile 不知道自己在算 Q 还是 V，只管"拿到数字就乘"。
+每个 N-block = 16 tile × 32 bf16 = 512 个输出元素。main16 的 MAC/flush 核心对各 phase 复用，但不是完全 phase-blind：record header、body buffer、weight chunk base 和后续消费者都由 phase schedule 决定。
 
 ## 步骤 3：Q/K/V 后处理
 
 ```
-main16 compact record → row1 汇聚 → c1r3 后处理站
+main16 Q/K/V record/body payload → row1/c1r1 汇聚 → c1r3 后处理站
                                         ↓
-                                  Q/K 做 RMS norm
-                                  Q/K 做 RoPE（V 不做）
+                                  目标: Q/K 做 RMS norm
+                                  目标: Q/K 做 RoPE（V 不做）
                                         ↓
                               Q(2048 dw) → 发给 attention
                               K/V → packet8/9 写回主存
 ```
 
 RoPE 让模型知道"这是第几个词"——按维度两两配对，旋转一个与位置相关的角度。
+
+当前实现已经有 c1r3 的物理位置、runtime-start lock、packet8/9 current K/V 写回和 attention ABI 打包。当前 full-layer 传给 c1r3 的是 Q/K/V body payload，Q payload 为 2048 dword，K/V payload 各 512 dword；真正的 Q/K RMSNorm、RoPE 常量和模型权重仍是待校准项。
 
 ## 步骤 4：Current K/V 写回
 
@@ -348,7 +368,7 @@ c1r3 → packet8 → shim(c0r0) → 写入 K cache BO
 c1r3 → packet9 → shim(c7r0) → 写入 V cache BO
 ```
 
-当前 token 的 K 和 V 必须写入缓存，供未来 token 的 attention 使用。写回使用两个链式 BD（BD14 写偶位置，BD15 写奇位置），实现 head-interleaved scatter。
+当前 token 的 K 和 V 必须写入缓存，供未来 token 的 attention 使用。当前 generator 使用每侧两个 shim S2MM runtime BD 做 even/odd scatter（active 常量是 BD2/BD3），实现 head-interleaved 写入；不要沿用旧实验里的高编号 BD 描述。
 
 **关键约束**：写回必须在 KV scan 之前完成（`npu.sync`），否则当前 token 看不到自己。
 
@@ -375,13 +395,13 @@ c7r0 shim MM2S ch1: V group 4-7 per block → c7r1
   - 逐 block 流入的历史 K
 
 每 16 个 token:
-  score = Q · K / 128
-  求 block_max
-  weight = Q12_exp(block_max - score)
+  当前 fixed-point: score = Q · K / 128
+  当前 fixed-point: 求 block_max
+  当前 fixed-point: weight = Q12_exp(block_max - score)
   打包成 carrier → 交给 Shape-B
 ```
 
-最后一个 block 用 tail-token RTP 把 padding 位置的权重清零。
+最后一个 block 用 tail-token RTP 把 padding 位置的权重清零。生产 Qwen3 attention 不能把 `dot/128` 和 Q12 lookup 当作最终数值；这里后续要替换/校准到 Q/K norm、RoPE 和模型 attention scale 对应的 softmax。
 
 ### 5c. Shape-B 加权求和
 
@@ -390,7 +410,7 @@ c7r0 shim MM2S ch1: V group 4-7 per block → c7r1
   - Shape-A 传来的 carrier（权重 + max/sum）
   - 对应的 16-token V block
 
-每个 block:
+目标数学:
   block_weighted_v = sum(weight[t] × V[t])
   online-softmax merge:
     new_max = max(running_max, block_max)
@@ -400,7 +420,7 @@ c7r0 shim MM2S ch1: V group 4-7 per block → c7r1
 扫描结束: output = accum / running_sum
 ```
 
-每个 Shape-B 产出 512 dword（8 heads × 128 dim）。
+当前实现用 Q12/int32 近似这套 online merge。每个 Shape-B 产出 512 dword（8 heads × 128 dim）；full-layer 中该输出会转换为 bf16 后进入 O phase。
 
 ## 步骤 6：Attention 结果返回 → O 投影
 
@@ -421,6 +441,8 @@ O 投影（4096→4096，8 个 N-block）
 
 ## 步骤 7：O 后残差 + 第二次 RMSNorm
 
+目标数据流：
+
 ```
 O compact record → row1/c1r1 汇聚 → c1r2 全向量站
   ↓
@@ -430,6 +452,8 @@ c1r2 从 O compact 重建完整 4096-bf16 O 结果
   ↓
 归一化后的 hidden 准备发给 up/gate
 ```
+
+当前 frontier 已经把 O compact 送回 c1r2，并用 bounded numeric scale + int32 sqrt 生成 up/gate replay；这能稳定通过真机，但还不是 Qwen3 的 production RMSNorm/residual。
 
 ## 步骤 8：Up/Gate 投影
 
@@ -454,10 +478,12 @@ Main16 DMA1 同时接收 up/gate Q4NX 权重
 c1r1 output BD 跳过 header → 48 个 256-dw payload half → c6r2
   ↓
 c6r2 每收两半（low=up, high=gate）:
-  output = SiLU(gate) × up
+  目标: output = SiLU(gate) × up
   ↓
 24 个 256-dw SwiGLU slice → c6r1 的 6144-dw gather buffer
 ```
+
+当前 `swiglu.cc` 的 bf16 path 使用 clipped linear sigmoid 近似和 slice_scale，目的是验证 payload-half ABI 与 packet1 handoff；后续必须替换为 Qwen3 数值正确的 SiLU/SwiGLU kernel。
 
 ## 步骤 10：Down 投影
 
@@ -487,6 +513,8 @@ layer_output = hidden + down_output
 写回主存（作为下一层的输入）
 ```
 
+这是目标态。当前 frontier 的 host output 是 257-dword down compact drain，用 tolerant reference 证明 Q4NX down 已经接到闭环末端；它还没有输出完整 2048-dword hidden_out，因此不能作为多层推理输入。
+
 ## 全程总结
 
 ```
@@ -500,13 +528,13 @@ shim→edge:                                          [KV scan────]
 Shape-A/B:                                          [attention──]
 c6r1→c1r1:                                                      [pkt2]
 main:                                                           [O投影]
-c1r2:                                                                [残差+norm]
+c1r2:                                                                [目标: 残差+norm]
 c1r2→main:                                                              [48 replay]
 main:                                                                   [up/gate──]
 c6r2:                                                                              [SwiGLU]
 c6r1→main:                                                                               [pkt1 down]
 main:                                                                                    [down投影─]
-c1r2:                                                                                              [残差→out]
+c1r2:                                                                                              [目标: 残差→out]
 ```
 
 ---
@@ -515,7 +543,7 @@ c1r2:                                                                           
 
 ## 5.1 三次闭环：数据在 Main 和 Edge 之间来回
 
-整层计算形成三次 Main↔Edge 闭环，每次都避免了一次主存往返：
+目标整层计算形成三次 Main↔Edge 闭环，每次都把大块中间激活留在片上，而不是写回主存再读回：
 
 ```
 闭环 1（最复杂）：
@@ -524,7 +552,7 @@ c1r2:                                                                           
   → c1r1 bridge → Main 做 O 投影
 
 闭环 2：
-  Main 产出 O record → c1r2 残差+RMSNorm
+  Main 产出 O record → c1r2 目标残差+RMSNorm
   → 48 次 packet0 replay → Main 做 up/gate
 
 闭环 3：
@@ -533,7 +561,7 @@ c1r2:                                                                           
   → c1r1 bridge → Main 做 down 投影
 ```
 
-如果不做融合，每次闭环 = 两次主存往返（出去写一次、回来读一次）。三次闭环 = 省下六次主存搬运。
+如果不做融合，每次闭环通常意味着一次写主存再读回。这里的收益是消除大块中间激活往返；KV cache、权重和层输入/输出仍然经过主存。
 
 ## 5.2 共享激活桥复用
 
@@ -555,7 +583,8 @@ Row1 memtile 有多个 S2MM/MM2S channel，它们被严格划分：
 |---------|------|-------------|
 | S2MM 0-3 | compact record fan-in（main16 record 汇聚） | 如果权重也走这里，lock/BD 冲突 |
 | S2MM 4/5 | Q4NX weight 入口（从 shim 进来） | 专用于权重流，不被 compact 干扰 |
-| MM2S 0-3 | weight 分发到 main16 DMA1 各行 | 同时也复用做 compact output |
+| MM2S 0-3 | weight 分发到 main16 DMA1 各行 | 与 compact output 分离，避免 fanout/compact phase 互相抢锁 |
+| MM2S 5 | column/global compact 输出 | 独立于 weight fanout，按 phase trace 打 packet |
 
 这不是装饰性选择——旧版曾尝试把权重走 S2MM0/1，会和 compact fan-in 冲突。`physical_contract.py` 现在显式禁止旧路由。
 
@@ -575,7 +604,7 @@ push_queue:
   repeat_count = <rounded_blocks - 1>（让同一个 BD 执行完整 scan）
 ```
 
-只要 `iteration_size` 和 `repeat_count` 配对编程，一个 BD 就能扫描任意数量的 block。
+只要 `iteration_size` 和 `repeat_count` 配对编程，一个 K scan BD 和一个 V scan BD 就能在当前 AIEX descriptor 限制内复用扫描多个 rounded block。
 
 **陷阱**：只写 `iteration_size` 不写 repeat count → 只发送第一个 segment → timeout。
 
@@ -597,7 +626,7 @@ push_queue:
 - patched instruction stream 逐 word 等于重新编译的 token91 stream
 - 真机通过
 
-这证明 patch 是精确的，可以作为"固定最大上下文 PDI + 每 token patch"的生产方案雏形。
+这证明 active currentkv/full-layer instruction patch 是精确的，可以作为"固定最大上下文 PDI + 每 token patch"的生产方案雏形；完整生产 runtime 还需要把模型权重、KV cache 管理、final hidden_out 和多层串联一起纳入同一套 patch/submit 边界。
 
 ## 5.6 RTP + Runtime-Start Lock
 
@@ -635,7 +664,7 @@ ch0: K0/K1 per block → row1 S2MM ch0
 ch1: V0/V1 per block → row1 S2MM ch1
 ```
 
-每个 block 每侧只需 2 个 scan BD，释放空间给 current K/V 写回。
+早期 split 方案把每个 block 每侧降到 2 个 scan BD；当前实现进一步压缩为每侧一个 K scan BD + 一个 V scan BD，通过 `iteration_size` 和 queue repeat 扫多个 block，给 current K/V even/odd 写回保留独立 BD。
 
 ## 5.9 数值稳定性选择
 
@@ -674,29 +703,32 @@ output[row] += weight_fp × activation[col]
 
 **整层权重规模**：
 
-| 阶段 | 输入维度 | 输出维度 | patch 数 | chunk/patch | 总 chunk |
-|------|---------|---------|---------|------------|---------|
-| Q | 4096 | 4096 | 64 | 16 | 1024 |
-| K | 4096 | 1024 | 16 | 16 | 256 |
-| V | 4096 | 1024 | 16 | 16 | 256 |
-| O | 4096 | 4096 | 64 | 16 | 1024 |
-| up | 4096 | 12288 | 192 | 16 | 3072 |
-| gate | 4096 | 12288 | 192 | 16 | 3072 |
-| down | 12288 | 4096 | 64 | 48 | 3072 |
-| **总计** | | | **608** | | **11776** |
+| 阶段 | 输入维度 | 输出维度 | patch 数 | row-chunk/patch | 总 row-chunk |
+|------|---------|---------|---------|-----------------|--------------|
+| Q | 4096 | 4096 | 64 | 32 | 2048 |
+| K | 4096 | 1024 | 16 | 32 | 512 |
+| V | 4096 | 1024 | 16 | 32 | 512 |
+| O | 4096 | 4096 | 64 | 32 | 2048 |
+| up | 4096 | 12288 | 192 | 32 | 6144 |
+| gate | 4096 | 12288 | 192 | 32 | 6144 |
+| down | 12288 | 4096 | 64 | 96 | 6144 |
+| **总计** | | | **608** | | **23552** |
 
-608 patch × 5120 字节/chunk × 16 chunk/patch ÷ 16 tile ≈ 每 tile 3,082,240 字节权重流量。
-总权重 ≈ 115 MB。
+这里的 row-chunk 是一个 main tile row 消费的 5120 字节 Q4NX chunk。一个 row1 patch 覆盖同列两个 main rows，所以 4096 输入维度阶段是 `2 rows × 16 input chunks = 32 row-chunk/patch`；down 是 `2 × 48 = 96`。
+
+23552 row-chunk × 5120 字节 ≈ 120,586,240 字节 ≈ 115 MiB。这是单层 Q4NX weight BO 的主流量级。
 
 ## 6.2 bf16（bfloat16）
 
 16 位浮点格式：1 位符号 + 8 位指数 + 7 位尾数。与 float32 共享指数范围，精度低但范围大。
 
-NPU 内部激活全部使用 bf16。一个 dword（32 bit）打两个 bf16：
+Main16 projection 的激活和 compact payload 以 bf16 为主。一个 dword（32 bit）打两个 bf16：
 ```
 dword.lo16 = value[2i]
 dword.hi16 = value[2i+1]
 ```
+
+但不要把这理解成所有内部 ABI 都是 bf16：当前 attention ABI 是 packed s16/fixed-point carrier；full-layer 中 Shape-B 末端再把 attention 输出转成 bf16 packet2 供 O phase 消费。MLIR 里很多 buffer 用 `i32` 承载 packed bf16 或 packed s16。
 
 ## 6.3 Compact Record（17 dword）
 
@@ -731,16 +763,16 @@ payload 采用自然 dim-major：`payload[i].lo16 = hidden[2i]`, `payload[i].hi1
 **replay 次数**：
 - Q/K/V 阶段：12 次（Q 8 N-block + K 2 + V 2）
 - up/gate 阶段：48 次（24 up + 24 gate）
-- 最终输出：1 次
+- 最终 full-vector output/run slot：1 次契约标记。当前 active full-layer 还没有把 down compact 展开成最终 2048-dword hidden_out。
 
 ## 6.5 Shape Carrier（80 dword）
 
-Shape-A 每处理完 16 个历史 token（一个 block），交给 Shape-B 的数据包：
+Shape-A 每处理完 16 个历史 token（一个 block），交给 Shape-B 的数据包。下面是当前 kv16 fixed-point carrier，不是最终 Qwen3 production softmax ABI：
 
 ```
 base [0x100 = 256 字节 = 64 dword]:
   8 heads × 16 tokens 的 Q12 权重
-  base[h][t] = round(4096 × exp(-(block_max[h] - score[h][t]) / 8))
+  base[h][t] = round(4096 × exp(-(block_max[h] - score[h][t]) / 8)) 的查表近似
 
 scalar [0x40 = 64 字节 = 16 dword]:
   8 × (block_max, block_sum) int32 pair
@@ -748,11 +780,11 @@ scalar [0x40 = 64 字节 = 16 dword]:
   scalar[2h+1] = block_sum[h]
 ```
 
-通过本地相邻存储 + lock immediate 同步（不是 DMA tensor stream）。
+当前实现里 carrier 通过 Shape-A 本地 buffer + MM2S0 → Shape-B S2MM1 的 stream/DMA 发送，并用 empty/full lock 做生产者-消费者同步。
 
 ## 6.6 Attention 输出（2048 dword）
 
-4 个 Shape-B 各产出 512 dword = 8 heads × 128 dim：
+目标输出是 4 个 Shape-B 各产出 512 dword bf16 = 8 heads × 128 dim：
 
 ```
 Shape-B 0 (c0r3): heads  0.. 7 → 512 dword
@@ -765,6 +797,8 @@ Shape-B 3 (c7r5): heads 24..31 → 512 dword
 
 在 c6r1 拼接后以 packet2 一次性发布。
 
+当前 standalone currentkv attention case 的 host summary 仍基于 packed s16/fixed-point payload；full-layer case 使用 `attention_kv16_finish_accum_bf16` 把 Shape-B accumulator 转成 bf16 packet2，供 Q4NX O phase 消费。
+
 ## 6.7 SwiGLU 输入/输出
 
 **输入**（512 dword = c6r2 接收）：
@@ -773,28 +807,31 @@ input[0x000..0x1ff] = up slice   (256 dword = 512 bf16)
 input[0x200..0x3ff] = gate slice (256 dword = 512 bf16)
 ```
 
-**输出**（256 dword）：
+**目标输出**（256 dword）：
 ```
 output = SiLU(gate) × up = 512 bf16
 ```
+
+当前 `swiglu.cc` 输出同样是 256 dword / 512 bf16 的 slice，但数值是 clipped sigmoid 近似，不是生产 SiLU。
 
 24 个 slice × 256 dword = 6144 dword = 12288 bf16 = 完整 FFN intermediate。
 
 ## 6.8 KV Cache 布局
 
-逻辑布局：`K[layer][group][token][dim]` / `V[layer][group][token][dim]`
+逻辑布局：token-major 的 `K[token][kv_head][dim_pair]` / `V[token][kv_head][dim_pair]`
 
-- 8 个 KV group × 128 dim = 1024 bf16/token
+- 8 个 KV head/group × 128 dim = 1024 bf16/token = 512 dword/token
 - 按 16-token block 对齐扫描
-- 写入和回读使用同一布局
+- NPU scan BO 使用 block-major 布局：`block → head → token_in_block → dim_pair`
+- packet8/9 current writeback 直接写入 block-major BO 中当前 token 的 8 个 head slice
 
-物理 scan：每侧（左/右）用 `buffer_length=4096`（一个 side 的连续 K 或 V 流）描述整个 block 序列。
+物理 scan：左右两侧各负责 4 个 KV head。每侧每个 K 或 V 平面用 `buffer_length=4096` dword 描述一个 rounded block；`iteration_size=<rounded_blocks>` 和 queue repeat count 让同一个 BD 反复扫描多个 block。
 
 ---
 
 # 七、代码结构
 
-`qwen3-layer/` 目录包含完整的融合层实现：契约定义、数据流图、MLIR 生成器、NPU kernel、可运行 case 和共享工具。
+`qwen3-layer/` 目录包含当前 fused-layer 物理实现和后续生产化开发目标：契约定义、数据流图、MLIR 生成器、NPU kernel、可运行 case 和共享工具。
 
 ## 7.1 契约与数据流图
 
@@ -813,6 +850,7 @@ output = SiLU(gate) × up = 512 bf16
 | `generate.py` | 从 dataflow 图生成物理骨架 MLIR-AIE（tile 声明、ObjectFifo、lock、BD） |
 | `emit_mlir.py` | 输出 `build/qwen3_dataflow.mlir` 文件 |
 | `compact_dataflow.py` | row1/c1r1 compact gather + bridge + hub + row1 S2MM4/5 weight fanout 生成器 |
+| `attention_dataflow.py` | Shape-A/B tile placement、hub BD、KV output BD 和 packet2 attention hub 的单一真相源 |
 | `weight_stream.py` | row1 Q4NX patch-ring 生成器：host/shim weight ingress → main16 DMA1 |
 | `qkv_compact_dataflow.py` | 四阶段 Q/K/V/O compact bridge，current-K/V attention 集成边界用 |
 | `mlir_utils.py` | 共享 MLIR-AIE 工具：BD 声明、lock 分配、queue 配置、runtime sequence 生成、字段校验 |
@@ -830,11 +868,11 @@ output = SiLU(gate) × up = 512 bf16
 | 文件 | 运行在 | 职责 |
 |------|--------|------|
 | `main_projection_q4nx.cc` | c2-c5, r2-r5 | Q4NX 反量化 + MAC + flush + compact record emit |
-| `edge_attention.cc` | c0/c7, r2-r5 | Shape-A（QK score + Q12 exp）、Shape-B（weighted V + online merge） |
-| `postprocess_qkv.cc` | c1r3 | Q/K norm + RoPE + current K/V 打包 |
-| `full_vector_station.cc` | c1r2 | RMSNorm + 残差加 + full-vector replay + compact 展开 |
-| `swiglu.cc` | c6r2 | bf16 up/gate → SiLU(gate)×up → 256-dw slice |
-| `debug_contract.cc` | — | 临时确定性桥和 smoke-test kernel（不属于生产路径） |
+| `edge_attention.cc` | c0/c7, r2-r5 | 当前 fixed-point Shape-A/B attention；目标是生产 online softmax + weighted V |
+| `postprocess_qkv.cc` | c1r3 | 当前 header-stripped Q/K/V body payload → packed attention ABI + packet8/9 current K/V；目标是补齐 Q/K norm + RoPE |
+| `full_vector_station.cc` | c1r2 | 当前 hidden replay、O compact 数值 replay、down compact drain；目标是生产 RMSNorm/residual/hidden_out |
+| `swiglu.cc` | c6r2 | 当前 bf16 up/gate contract SwiGLU 近似；目标是生产 SiLU(gate)×up |
+| `debug_contract.cc` | main16 diagnostic case | 临时确定性桥和 smoke-test kernel；不属于 production full-layer path，但 `currentkv-kvscan-attention-kv16-o-bridge` 诊断 case 仍会链接它 |
 
 共享头文件：
 - `record_format.h`：compact record header 布局和打包/解包 helper
@@ -842,7 +880,7 @@ output = SiLU(gate) × up = 512 bf16
 
 ## 7.4 可运行 Case
 
-`cases/` 目录是模块化的 case 注册机制。每个 case 由三件套组成：
+`cases/` 目录是模块化的 case 注册机制。active case 通常由三件套组成：
 - `*_generate.py`：生成该 case 的 MLIR-AIE
 - `*_reference.py`：CPU 参考实现，用于结果比对
 - `*_runner.py`：NPU 运行器，调用 XRT 提交任务并验证
@@ -871,11 +909,11 @@ python qwen3-layer/run_npu.py --case currentkv-kvscan-attention-kv16-o-bridge \
 
 | Case | 验证边界 |
 |------|---------|
-| `currentkv-full-layer-q4nx-down-bridge` | 完整闭环：hidden→Q/K/V→attention→O→up/gate→SwiGLU→down→output |
+| `currentkv-full-layer-q4nx-down-bridge` | 当前 frontier：hidden replay→Q/K/V→attention→O→up/gate→SwiGLU→down compact drain |
 | `currentkv-kvscan-attention-kv16-o-bridge` | KV cache 写回 + scan + attention + O |
 | `q4nx-qkv-body-post-bridge` | Q/K/V handoff 诊断：hidden replay → Q4NX Q/K/V → c1r3 postprocess |
 
-历史 case（bridge、shape、单阶段 smoke）已下线——它们的约束被并入共享生成器和 `physical_contract.py`。
+历史 case（bridge、shape、单阶段 smoke、旧 q4nx-q-body）已下线，源文件已经删除；它们的有价值约束被并入共享生成器、active reference 和 `physical_contract.py`。
 
 ## 7.5 共享工具
 
@@ -884,14 +922,13 @@ python qwen3-layer/run_npu.py --case currentkv-kvscan-attention-kv16-o-bridge \
 | `npu_build.py` | 编译流水线：扫描 MLIR `link_with` → 编译 kernel .o → aiecc → xclbin |
 | `q4nx_reference.py` | Q4NX chunk 的 CPU 参考数学（反量化 + MAC） |
 | `qkv_compact_reference.py` | Q/K/V/O compact record layout helper |
-| `bridge_generate/reference/runner.py` | c6r1/c1r1/main16 bridge case（共享桥验证） |
-| `swiglu_generate/reference/runner.py` | up/gate compact → c6r2 SwiGLU case |
-| `c1r2_generate/reference/runner.py` | O compact → c1r2 replay → main16 case |
-| `shape_generate/reference/runner.py` | Q fanout + KV split + Shape-A/B + O bridge case |
+| `attention_kv16_reference.py` | kv16 fixed-point attention reference，供 currentkv reference 复用 |
+| `kvscan_attention_kv16_reference.py` | KV cache scan/reference layout helper |
+| `mainq_kvscan_attention_kv16_reference.py` | main16-produced Q 到 attention/O compact 的 reference helper |
 
 ## 7.6 构建产物
 
-`build/` 目录下每个 case 有一个子目录，包含：
+`build/` 是本地生成产物目录，可能残留已删除旧 case 的历史目录。active case 运行时会生成对应子目录，通常包含：
 - `design.mlir`：生成的 MLIR-AIE 源码
 - `design.xclbin`：编译后的 NPU 二进制（包含 kernel ELF + 路由配置）
 - `design.bin`：instruction stream（可被 patch）
@@ -910,21 +947,21 @@ python qwen3-layer/run_npu.py --case currentkv-kvscan-attention-kv16-o-bridge \
 - c1r2 packet0 full-vector replay → c1r1 bridge → main16 DMA0 activation ring
 - c6r1 packet2（attention）和 packet1（FFN）复用 c1r1 shared bridge
 - 48-record upgate body trace + reusable-slot compact + c6r2 payload-half ABI
-- 全层 27-core NPU 数据流闭环（默认 token127，NPU 时间 ~110 ms）
+- 全层 27-core NPU 数据流闭环（默认 token127，最近真机约 120 ms 量级）。这只是正确连接的 frontier，不是性能目标
 
 ### Current K/V + Attention
 
 - Packet8/9 当前 K/V 写回 → host KV cache BO（two-BD even/odd scatter）
 - Rounded KV scan（split K/V channel）+ iterated BD + queue repeat count
 - Shape-A block scoring + tail-token RTP mask
-- Shape-B online-softmax merge + attention output
+- Shape-B fixed-point online-softmax merge + attention output
 - Packet2 返回 → O phase handoff
 
 ### Instruction Patch
 
 - token127 xclbin + patched token91 design.bin → 逐 word 等于重新编译的 token91
 - token1007 cache-capacity PDI（63 rounded blocks）patch 到 token91 → 真机通过
-- 证明高上下文容量 PDI 可复用，每 token 只 patch instruction stream
+- 证明高上下文容量 PDI 可复用，每 token 只 patch instruction stream。这个结论目前覆盖 active currentkv/full-layer instruction stream，不等于完整生产 runtime 已完成
 
 ### 关键约束验证
 
@@ -941,16 +978,19 @@ python qwen3-layer/run_npu.py --case currentkv-kvscan-attention-kv16-o-bridge \
 | 模块 | 当前状态 | 目标 |
 |------|---------|------|
 | Attention（Shape-A/B） | kv16 固定点 Q12 exp + int32 accumulator | 校准到 Qwen3 bf16/fp32 softmax |
-| c1r2 RMSNorm/replay | bounded numeric scale (256) + int32 sqrt | 校准到 Qwen3 RMSNorm 精度 |
-| c6r2 SwiGLU | bf16 输入/输出 ABI 已对齐，近似 SiLU | 校准到 Qwen3 SwiGLU 精度 |
-| c1r3 Q/K norm + RoPE | 有实现 | 校准 exact scale/rotation constant |
+| c1r2 RMSNorm/replay/final output | hidden replay + bounded numeric scale (256) + int32 sqrt + down compact drain | 实现 Qwen3 RMSNorm/residual，并输出完整 hidden_out |
+| c6r2 SwiGLU | bf16 输入/输出 ABI 已对齐，clipped sigmoid 近似 | 替换成 Qwen3 SiLU/SwiGLU 数值 |
+| c1r3 Q/K norm + RoPE | 当前主要是 bf16→s16 attention ABI 打包和 packet8/9 current K/V | 实现并校准 Q/K RMSNorm、RoPE、scale/rotation constant |
+| Main16 Q4NX kernel | 真 Q4NX transport/MAC 已跑通 | 做高性能化、DMA/compute overlap、真实模型权重加载 |
 
 ### 生产集成
 
 - KV cache 运行时保持 block-major scan layout（当前是 test harness 手动填充）
 - 多层串联（当前验证单层）
 - RMSNorm/RoPE 权重从模型文件加载
-- 生产 host runtime（当前是 Python test runner）
+- 生产 host runtime（当前是 Python integration runner）
+- 最终输出必须变成 2048-dword hidden_out，作为下一层输入；不能停留在 257-dword compact drain
+- 建立端到端数值 reference：从 tokenizer/模型权重/单 token hidden 输入到 NPU 层输出，与 Qwen3 CPU/GPU reference 对齐
 
 ### 与 MyLM 对齐（可选方向）
 
@@ -980,7 +1020,7 @@ middle   Q4NX weight stream oracle（验证 weight ingress 能力）
          Q4NX Q/K/V body（替换 deterministic Q/K/V producer）
   ↓
 current  currentkv-full-layer-q4nx-down-bridge
-         （全部 7 phase Q4NX + attention + instruction patch）
+         （全部 7 phase Q4NX + current K/V + KV scan + fixed-point attention + down compact drain）
   ↓
-next     数值校准 → 生产精度 → 多层 → runtime 集成
+next     数值校准 → final hidden_out → 性能化 kernel/overlap → 多层 → runtime 集成
 ```
