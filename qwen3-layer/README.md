@@ -31,6 +31,9 @@ The current implementation is the qwen3-dataflow physical skeleton:
   O/upgate/down Q4NX tail weight chunk bases.
 - `compact_dataflow.py`: shared row1/c1r1 compact gather, bridge, hub, and
   MyLM-aligned row1 S2MM4/5 weight fanout generator used by the frontier.
+- `attention_dataflow.py`: shared Shape-A/B tile placement, hub BD ownership,
+  KV output BDs, and packet2 attention return hub used by active attention
+  generators.
 - `qkv_compact_reference.py`: shared Q/K/V/O compact record layout helpers for
   active attention integration references.
 - `qkv_compact_dataflow.py`: shared four-phase Q/K/V/O compact bridge used by
@@ -38,30 +41,9 @@ The current implementation is the qwen3-dataflow physical skeleton:
   generator/reference has been removed.
 - `q4nx_reference.py`: shared Q4NX chunk reference math used by integration
   checks.
-- `main_projection_q4nx.cc`: main16 role kernel for Q/K/V/O/up/gate/down Q4NX
-  projection MAC, flush, and compact record emit.
-- `record_format.h`, `qwen3_constants.h`: shared kernel-side constants and
-  compact record header helpers.
 - `npu_build.py`: shared MLIR, xclbin, and NPU runtime helpers. It scans
   generated MLIR `link_with` attributes and compiles the required role objects,
   so runners do not duplicate kernel-object ownership.
-- `bridge_generate.py`: runnable MLIR-AIE for c6r1/c1r1/main16 bridge cases.
-- `bridge_reference.py`: CPU reference for bridge smoke cases.
-- `bridge_runner.py`: NPU runner for the shared activation bridge cases.
-- `swiglu_generate.py`: runnable MLIR-AIE for main16 up/gate -> row1/c1r1
-  compact -> c6r2.
-- `swiglu_reference.py`: CPU reference for the up/gate compact and c6r2
-  contract.
-- `swiglu_runner.py`: NPU runner for the up/gate compact case.
-- `c1r2_generate.py`: runnable MLIR-AIE for O compact -> c1r2 -> packet0
-  replay -> main16 -> c6r2.
-- `c1r2_reference.py`: CPU reference for the c1r2 full-vector replay case.
-- `c1r2_runner.py`: NPU runner for the c1r2 integration case.
-- `shape_generate.py`: runnable MLIR-AIE for Q fanout, left/right KV split,
-  Shape-A/B carrier, packet2 O bridge, and main16 O chunk summaries.
-- `shape_reference.py`: CPU reference for the Shape-A/B attention-to-O bridge
-  layout contract.
-- `shape_runner.py`: NPU runner for the Shape-A/B integration case.
 - `main_projection_q4nx.cc`: main16 Q/K/V/O/up/gate/down Q4NX projection,
   flush, and record emit kernels.
 - `edge_attention.cc`: Shape-A/B edge attention kernels for KV scan, online

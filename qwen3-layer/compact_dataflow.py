@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from c1r2_reference import TOTAL_MAIN_CHUNKS
+from attention_dataflow import HUB_Q_OUT_BDS, HUB_RETURN_IN_BDS
 from contract import (
+    C1R2_PACKET_DWORDS,
     C1R2_UPGATE_REPLAYS,
     C6R2_HALF_DWORDS,
     COMPACT_PACKET_DWORDS,
@@ -16,7 +17,6 @@ from contract import (
     ROWS_PER_COLUMN,
 )
 from mlir_utils import lock_pair
-from shape_generate import HUB_Q_OUT_BDS, HUB_RETURN_IN_BDS
 from weight_stream import (
     WeightStreamConfig,
     weight_stream_buffers,
@@ -46,6 +46,8 @@ FULL_REPLAY_PACKET_ID = 0
 DOWN_ACT_PACKET_ID = 1
 DOWN_CHUNKS = DOWN_PACKET_DWORDS // MAIN_CHUNK_DWORDS
 DOWN_PHASE = 6
+MAIN_CHUNKS_PER_REPLAY = (C1R2_PACKET_DWORDS - 1) // MAIN_CHUNK_DWORDS
+TOTAL_MAIN_CHUNKS = C1R2_UPGATE_REPLAYS * MAIN_CHUNKS_PER_REPLAY
 
 BODY_PHASES = ("q", "k", "v", "o", "upgate", "down")
 BODY_RECORD_SLOTS = (0, 1, 2, 3, -1, 6)

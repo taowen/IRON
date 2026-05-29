@@ -4,6 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from attention_dataflow import (
+    HUB_Q_OUT_BDS,
+    HUB_RETURN_IN_BDS,
+    KV_OUT_BDS,
+    SHAPE_A_TILES,
+    SHAPE_B_TILES,
+    attention_hub,
+    shape_a_symbol,
+    shape_b_symbol,
+)
 from contract import COMPACT_PACKET_DWORDS, MAIN_COLUMNS, MAIN_ROWS, RECORD_DWORDS, SHAPE_CARRIER_DWORDS
 from mlir_utils import (
     flow,
@@ -29,9 +39,6 @@ from mlir_utils import (
     require_npu_writebd_id_limit,
     require_unique_bd_ids,
 )
-from shape_generate import HUB_Q_OUT_BDS, HUB_RETURN_IN_BDS, KV_OUT_BDS, SHAPE_A_TILES, SHAPE_B_TILES
-from shape_generate import _hub, _shape_a_symbol, _shape_b_symbol
-from shape_reference import MAIN_CHUNK_DWORDS, PACKET_ID, SUMMARY_DWORDS
 from qkv_compact_dataflow import (
     bridge as qkv_compact_bridge,
     column_memtile as qkv_compact_column_memtile,
@@ -67,9 +74,12 @@ from cases.kvscan_attention_kv16_reference import (
 )
 from qkv_compact_reference import (
     K_GLOBAL_PACKET_ID,
+    MAIN_CHUNK_DWORDS,
     MAIN_PACKET_BASE,
     O_GLOBAL_PACKET_ID,
+    PACKET_ID_ATTENTION,
     Q_GLOBAL_PACKET_ID,
+    SUMMARY_DWORDS,
     V_GLOBAL_PACKET_ID,
     column_packet,
     main_packet,
@@ -312,7 +322,7 @@ def _push_kv_scan_from_cache(
 
 
 def _shape_a_multiblock(window: int) -> str:
-    tile = _shape_a_symbol(window)
+    tile = shape_a_symbol(window)
     blocks_name = _shape_blocks_name(tile)
     tail_tokens_name = _shape_tail_tokens_name(tile)
     runtime_start = _shape_runtime_start_name(tile)
@@ -382,7 +392,7 @@ def _shape_a_multiblock(window: int) -> str:
 
 
 def _shape_b_multiblock(window: int) -> str:
-    tile = _shape_b_symbol(window)
+    tile = shape_b_symbol(window)
     blocks_name = _shape_blocks_name(tile)
     runtime_start = _shape_runtime_start_name(tile)
     return f"""
@@ -463,13 +473,13 @@ def _runtime_sequence(schedule: DecodeSchedule) -> str:
     ]
     lines.append(npu_rtp_write("post_current_token", 0, schedule.current_token))
     for window in range(4):
-        lines.append(npu_rtp_write(_shape_blocks_name(_shape_a_symbol(window)), 0, schedule.kv_blocks))
-        lines.append(npu_rtp_write(_shape_blocks_name(_shape_b_symbol(window)), 0, schedule.kv_blocks))
-        lines.append(npu_rtp_write(_shape_tail_tokens_name(_shape_a_symbol(window)), 0, schedule.tail_tokens))
+        lines.append(npu_rtp_write(_shape_blocks_name(shape_a_symbol(window)), 0, schedule.kv_blocks))
+        lines.append(npu_rtp_write(_shape_blocks_name(shape_b_symbol(window)), 0, schedule.kv_blocks))
+        lines.append(npu_rtp_write(_shape_tail_tokens_name(shape_a_symbol(window)), 0, schedule.tail_tokens))
     lines.append(npu_set_lock("post_runtime_start", 1))
     for window in range(4):
-        lines.append(npu_set_lock(_shape_runtime_start_name(_shape_a_symbol(window)), 1))
-        lines.append(npu_set_lock(_shape_runtime_start_name(_shape_b_symbol(window)), 1))
+        lines.append(npu_set_lock(_shape_runtime_start_name(shape_a_symbol(window)), 1))
+        lines.append(npu_set_lock(_shape_runtime_start_name(shape_b_symbol(window)), 1))
     lines.extend(_push_current_cache_write(0, 0, schedule))
     lines.extend(_push_current_cache_write(7, 1, schedule))
     lines.extend(
@@ -514,9 +524,9 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
         "    %kv_right = aie.tile(7, 1)",
     ]
     for window, (column, row) in enumerate(SHAPE_A_TILES):
-        tile_defs.append(f"    %{_shape_a_symbol(window)} = aie.tile({column}, {row})")
+        tile_defs.append(f"    %{shape_a_symbol(window)} = aie.tile({column}, {row})")
     for window, (column, row) in enumerate(SHAPE_B_TILES):
-        tile_defs.append(f"    %{_shape_b_symbol(window)} = aie.tile({column}, {row})")
+        tile_defs.append(f"    %{shape_b_symbol(window)} = aie.tile({column}, {row})")
     for group, column in enumerate(MAIN_COLUMNS):
         tile_defs.append(f"    %mt{group} = aie.tile({column}, 1)")
         for row_idx, row in enumerate(MAIN_ROWS):
@@ -546,14 +556,14 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
         kv_tile = "kv_left" if window < 2 else "kv_right"
         kv_k_channel = 0 if window in (0, 2) else 2
         kv_v_channel = 1 if window in (0, 2) else 3
-        flows.append(flow("hub", window, _shape_a_symbol(window), 0))
-        flows.append(flow(kv_tile, kv_k_channel, _shape_a_symbol(window), 1))
-        flows.append(flow(kv_tile, kv_v_channel, _shape_b_symbol(window), 0))
-        flows.append(flow(_shape_a_symbol(window), 0, _shape_b_symbol(window), 1))
-        flows.append(flow(_shape_b_symbol(window), 0, "hub", window + 1))
+        flows.append(flow("hub", window, shape_a_symbol(window), 0))
+        flows.append(flow(kv_tile, kv_k_channel, shape_a_symbol(window), 1))
+        flows.append(flow(kv_tile, kv_v_channel, shape_b_symbol(window), 0))
+        flows.append(flow(shape_a_symbol(window), 0, shape_b_symbol(window), 1))
+        flows.append(flow(shape_b_symbol(window), 0, "hub", window + 1))
     flows.extend(
         (
-            packet_flow(PACKET_ID, "hub", 5, "bridge", 4),
+            packet_flow(PACKET_ID_ATTENTION, "hub", 5, "bridge", 4),
             flow("full", 1, "shim_out", 1),
         )
     )
@@ -561,7 +571,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
     blocks = [
         qkv_compact_bridge(),
         _postprocess(),
-        _hub(),
+        attention_hub(),
         _kv_split_scan_memtile(0),
         _kv_split_scan_memtile(1),
         qkv_compact_full_vector(),

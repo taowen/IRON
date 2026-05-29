@@ -5,16 +5,16 @@ from __future__ import annotations
 import numpy as np
 
 from contract import MAIN_COLUMNS, MAIN_ROWS, SHAPE_CARRIER_DWORDS
-from shape_reference import (
+from qkv_compact_reference import (
     MAIN_CHUNK_DWORDS,
-    PACKET_ID,
+    PACKET_ID_ATTENTION,
     Q_DWORDS,
     SUMMARY_DWORDS,
-    TOTAL_SUMMARY_DWORDS,
     WINDOW_DWORDS,
 )
 
 CASE_NAME = "attention-kv16-o-bridge"
+PACKET_ID = PACKET_ID_ATTENTION
 HEADS_PER_WINDOW = 8
 KV_HEADS_PER_WINDOW = 2
 GQA_RATIO = HEADS_PER_WINDOW // KV_HEADS_PER_WINDOW
@@ -28,6 +28,7 @@ OUTPUT_DWORDS = HEADS_PER_WINDOW * HEAD_DIM // 2
 WEIGHT_DWORDS = HEADS_PER_WINDOW * CONTEXT // 2
 SCALAR_DWORDS = HEADS_PER_WINDOW * 2
 COLUMN_SUMMARY_DWORDS = len(MAIN_ROWS) * SUMMARY_DWORDS
+TOTAL_SUMMARY_DWORDS = len(MAIN_COLUMNS) * COLUMN_SUMMARY_DWORDS
 SOFTMAX_SCALE = 4096
 
 # Q12 lookup for round(4096 * exp(-delta / 8)); score delta is integer dot/head_dim.

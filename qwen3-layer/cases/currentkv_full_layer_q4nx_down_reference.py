@@ -21,7 +21,6 @@ from contract import (
     ROWS_PER_PATCH,
     SWIGLU_SLICES,
 )
-from c1r2_reference import _trunc_div
 from compact_dataflow import down_record_header
 from projection_schedule import (
     DOWN_CHUNKS,
@@ -84,6 +83,14 @@ FULL_PIPELINE_ABS_TOL = 16.0
 FULL_PIPELINE_REL_TOL = 1.00
 ATTENTION_QKV_SCALE = 16.0
 CURRENT_CACHE_S16_TOL = 1
+
+
+def _trunc_div(numerator: int, denominator: int) -> int:
+    if denominator == 0:
+        return 0
+    if numerator >= 0:
+        return numerator // denominator
+    return -((-numerator) // denominator)
 
 
 def make_packed_weights(seed: int = 197) -> np.ndarray:

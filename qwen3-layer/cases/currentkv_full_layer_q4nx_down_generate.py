@@ -4,6 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from attention_dataflow import (
+    HUB_Q_OUT_BDS,
+    HUB_RETURN_IN_BDS,
+    KV_OUT_BDS,
+    SHAPE_A_TILES,
+    SHAPE_B_TILES,
+    shape_a_symbol,
+    shape_b_symbol,
+)
 from contract import (
     CHUNK_BF16,
     C1R2_QKV_REPLAYS,
@@ -97,8 +106,6 @@ from projection_schedule import (
     V_CHUNKS_PER_RECORD,
     V_WEIGHT_CHUNK_BASE,
 )
-from shape_generate import HUB_Q_OUT_BDS, HUB_RETURN_IN_BDS, KV_OUT_BDS, SHAPE_A_TILES, SHAPE_B_TILES
-from shape_generate import _shape_a_symbol, _shape_b_symbol
 from cases.currentkv_full_layer_q4nx_down_reference import (
     CASE_NAME,
     COLUMN_WEIGHT_BF16,
@@ -165,13 +172,13 @@ def _runtime_sequence(schedule: DecodeSchedule) -> str:
     ]
     lines.append(npu_rtp_write("post_current_token", 0, schedule.current_token))
     for window in range(4):
-        lines.append(npu_rtp_write(_shape_blocks_name(_shape_a_symbol(window)), 0, schedule.kv_blocks))
-        lines.append(npu_rtp_write(_shape_blocks_name(_shape_b_symbol(window)), 0, schedule.kv_blocks))
-        lines.append(npu_rtp_write(_shape_tail_tokens_name(_shape_a_symbol(window)), 0, schedule.tail_tokens))
+        lines.append(npu_rtp_write(_shape_blocks_name(shape_a_symbol(window)), 0, schedule.kv_blocks))
+        lines.append(npu_rtp_write(_shape_blocks_name(shape_b_symbol(window)), 0, schedule.kv_blocks))
+        lines.append(npu_rtp_write(_shape_tail_tokens_name(shape_a_symbol(window)), 0, schedule.tail_tokens))
     lines.append(npu_set_lock("post_runtime_start", 1))
     for window in range(4):
-        lines.append(npu_set_lock(_shape_runtime_start_name(_shape_a_symbol(window)), 1))
-        lines.append(npu_set_lock(_shape_runtime_start_name(_shape_b_symbol(window)), 1))
+        lines.append(npu_set_lock(_shape_runtime_start_name(shape_a_symbol(window)), 1))
+        lines.append(npu_set_lock(_shape_runtime_start_name(shape_b_symbol(window)), 1))
     lines.extend(_push_current_cache_write(0, 0, schedule))
     lines.extend(_push_current_cache_write(7, 1, schedule))
     lines.extend(
@@ -217,7 +224,7 @@ def _runtime_sequence(schedule: DecodeSchedule) -> str:
 
 
 def _shape_b_multiblock_bf16(window: int) -> str:
-    tile = _shape_b_symbol(window)
+    tile = shape_b_symbol(window)
     blocks_name = _shape_blocks_name(tile)
     runtime_start = _shape_runtime_start_name(tile)
     return f"""
@@ -775,9 +782,9 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
         for row_idx, row in enumerate(MAIN_ROWS):
             tile_defs.append(f"    %{_main_symbol(group, row_idx)} = aie.tile({column}, {row})")
     for window, (column, row) in enumerate(SHAPE_A_TILES):
-        tile_defs.append(f"    %{_shape_a_symbol(window)} = aie.tile({column}, {row})")
+        tile_defs.append(f"    %{shape_a_symbol(window)} = aie.tile({column}, {row})")
     for window, (column, row) in enumerate(SHAPE_B_TILES):
-        tile_defs.append(f"    %{_shape_b_symbol(window)} = aie.tile({column}, {row})")
+        tile_defs.append(f"    %{shape_b_symbol(window)} = aie.tile({column}, {row})")
 
     flows = [f"    // case marker {CASE_NAME}"]
     for group in range(len(MAIN_COLUMNS)):
@@ -806,11 +813,11 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
         kv_tile = "kv_left" if window < 2 else "kv_right"
         kv_k_channel = 0 if window in (0, 2) else 2
         kv_v_channel = 1 if window in (0, 2) else 3
-        flows.append(flow("hub", window, _shape_a_symbol(window), 0))
-        flows.append(flow(kv_tile, kv_k_channel, _shape_a_symbol(window), 1))
-        flows.append(flow(kv_tile, kv_v_channel, _shape_b_symbol(window), 0))
-        flows.append(flow(_shape_a_symbol(window), 0, _shape_b_symbol(window), 1))
-        flows.append(flow(_shape_b_symbol(window), 0, "hub", window + 1))
+        flows.append(flow("hub", window, shape_a_symbol(window), 0))
+        flows.append(flow(kv_tile, kv_k_channel, shape_a_symbol(window), 1))
+        flows.append(flow(kv_tile, kv_v_channel, shape_b_symbol(window), 0))
+        flows.append(flow(shape_a_symbol(window), 0, shape_b_symbol(window), 1))
+        flows.append(flow(shape_b_symbol(window), 0, "hub", window + 1))
     flows.extend(
         (
             packet_flow(PACKET_ID_ATTENTION, "hub", 5, "bridge", 4),
