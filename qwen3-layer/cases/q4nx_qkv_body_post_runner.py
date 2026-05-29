@@ -5,10 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import torch
-from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor
 
-import npu_build
 from cases import q4nx_qkv_body_post_generate as generate
 from cases.q4nx_qkv_body_post_reference import (
     CASE_NAME,
@@ -27,6 +24,8 @@ EXPERIMENT_DIR = Path(__file__).parent.parent
 
 
 def build_kernel() -> tuple[Path, Path]:
+    import npu_build
+
     build_dir = EXPERIMENT_DIR / "build" / CASE_NAME
     build_dir.mkdir(parents=True, exist_ok=True)
     mlir_path = build_dir / "design.mlir"
@@ -62,6 +61,10 @@ def build_only() -> bool:
 
 
 def run() -> bool:
+    import torch
+    from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor
+    import npu_build
+
     print("=" * 78)
     print(f"qwen3-layer: {CASE_NAME}")
     print("=" * 78)

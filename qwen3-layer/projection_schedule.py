@@ -8,7 +8,8 @@ from contract import PHASE_BLOCKS, PHASE_CHUNKS, ROWS_PER_COLUMN, ROWS_PER_PATCH
 
 Q_BODY_RECORDS = PHASE_BLOCKS[0]
 KV_BODY_RECORDS = PHASE_BLOCKS[1]
-O_TAIL_RECORDS = 1
+O_BODY_RECORDS = PHASE_BLOCKS[3]
+DOWN_BODY_RECORDS = PHASE_BLOCKS[6]
 UPGATE_REPLAYS = PHASE_BLOCKS[4] + PHASE_BLOCKS[5]
 PATCHES_PER_COLUMN = ROWS_PER_COLUMN // ROWS_PER_PATCH
 
@@ -45,9 +46,9 @@ QKV_BODY_PLANS = _plan_with_bases(
 
 CURRENT_TAIL_PLANS = _plan_with_bases(
     (
-        ("o", O_TAIL_RECORDS, PHASE_CHUNKS[3]),
+        ("o", O_BODY_RECORDS, PHASE_CHUNKS[3]),
         ("upgate", UPGATE_REPLAYS, PHASE_CHUNKS[4]),
-        ("down", 1, PHASE_CHUNKS[6]),
+        ("down", DOWN_BODY_RECORDS, PHASE_CHUNKS[6]),
     )
 )
 
@@ -79,12 +80,14 @@ V_WEIGHT_CHUNKS = qkv_body_plan("v").weight_chunks
 QKV_BODY_WEIGHT_CHUNKS = sum(plan.weight_chunks for plan in QKV_BODY_PLANS)
 
 O_WEIGHT_CHUNK_BASE = current_tail_plan("o").weight_chunk_base
+O_CHUNKS_PER_RECORD = current_tail_plan("o").chunks_per_record
 O_WEIGHT_CHUNKS = current_tail_plan("o").weight_chunks
 UPGATE_WEIGHT_CHUNK_BASE = current_tail_plan("upgate").weight_chunk_base
 UPGATE_CHUNKS_PER_REPLAY = current_tail_plan("upgate").chunks_per_record
 UPGATE_WEIGHT_CHUNKS = current_tail_plan("upgate").weight_chunks
 DOWN_WEIGHT_CHUNK_BASE = current_tail_plan("down").weight_chunk_base
 DOWN_CHUNKS = current_tail_plan("down").chunks_per_record
+DOWN_WEIGHT_CHUNKS = current_tail_plan("down").weight_chunks
 TOTAL_WEIGHT_CHUNKS = sum(plan.weight_chunks for plan in CURRENT_TAIL_PLANS)
 
 FULL_LAYER_O_WEIGHT_CHUNK_BASE = QKV_BODY_WEIGHT_CHUNKS + O_WEIGHT_CHUNK_BASE

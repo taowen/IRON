@@ -36,6 +36,20 @@ def _require_marker_count(
     return [f"{scope}: {name} marker count {actual} != {expected}: {marker}"]
 
 
+def _require_any_marker_count(
+    scope: str,
+    name: str,
+    mlir: str,
+    markers: tuple[str, ...],
+    expected: int,
+) -> list[str]:
+    actual = sum(mlir.count(marker) for marker in markers)
+    if actual == expected:
+        return []
+    formatted = " | ".join(markers)
+    return [f"{scope}: {name} marker count {actual} != {expected}: {formatted}"]
+
+
 def _require_no_marker(scope: str, name: str, mlir: str, marker: str) -> list[str]:
     if marker not in mlir:
         return []
@@ -203,20 +217,26 @@ def validate_compact_only_full_layer_ownership(scope: str, mlir: str) -> list[st
         )
     )
     errors.extend(
-        _require_marker_count(
+        _require_any_marker_count(
             scope,
             "c1r1 shared activation bridge ingress DMA4",
             mlir,
-            f"aie.dma_start(S2MM, {C1R1_PACKET_S2MM}, ^packet_in_ping, ^packet_out_start)",
+            (
+                f"aie.dma_start(S2MM, {C1R1_PACKET_S2MM}, ^packet_in_ping, ^packet_out_start)",
+                f"aie.dma_start(S2MM, {C1R1_PACKET_S2MM}, ^attention_in, ^packet_out_start)",
+            ),
             1,
         )
     )
     errors.extend(
-        _require_marker_count(
+        _require_any_marker_count(
             scope,
             "c1r1 shared activation bridge egress DMA1",
             mlir,
-            f"aie.dma_start(MM2S, {C1R1_PACKET_MM2S}, ^packet_out_ping, ^end)",
+            (
+                f"aie.dma_start(MM2S, {C1R1_PACKET_MM2S}, ^packet_out_ping, ^end)",
+                f"aie.dma_start(MM2S, {C1R1_PACKET_MM2S}, ^attention_out, ^end)",
+            ),
             1,
         )
     )
@@ -315,20 +335,26 @@ def validate_q4nx_down_full_layer_ownership(scope: str, mlir: str) -> list[str]:
         )
     )
     errors.extend(
-        _require_marker_count(
+        _require_any_marker_count(
             scope,
             "c1r1 shared activation bridge ingress DMA4",
             mlir,
-            f"aie.dma_start(S2MM, {C1R1_PACKET_S2MM}, ^packet_in_ping, ^packet_out_start)",
+            (
+                f"aie.dma_start(S2MM, {C1R1_PACKET_S2MM}, ^packet_in_ping, ^packet_out_start)",
+                f"aie.dma_start(S2MM, {C1R1_PACKET_S2MM}, ^attention_in, ^packet_out_start)",
+            ),
             1,
         )
     )
     errors.extend(
-        _require_marker_count(
+        _require_any_marker_count(
             scope,
             "c1r1 shared activation bridge egress DMA1",
             mlir,
-            f"aie.dma_start(MM2S, {C1R1_PACKET_MM2S}, ^packet_out_ping, ^end)",
+            (
+                f"aie.dma_start(MM2S, {C1R1_PACKET_MM2S}, ^packet_out_ping, ^end)",
+                f"aie.dma_start(MM2S, {C1R1_PACKET_MM2S}, ^attention_out, ^end)",
+            ),
             1,
         )
     )

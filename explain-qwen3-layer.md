@@ -282,7 +282,7 @@ row0  [K写回]    [────────── shim ────────
 - 输出 256-dword（512 bf16）SwiGLU slice
 - 24 个 slice 组成完整 12288-bf16 FFN intermediate
 
-**当前状态**：`swiglu.cc` 的 bf16 path 是 clipped linear sigmoid 近似加 slice_scale，用于验证 up/gate payload-half ABI；后续要换成生产 SiLU。
+**当前状态**：`swiglu.cc` 的 bf16 path 已经去掉人为 `slice_scale`，按 `SiLU(gate) × up` 形态执行；当前为了适配 AIE tile 程序使用本地 bounded table sigmoid 近似，后续还要按 Qwen3 生产 kernel 的误差预算校准。
 
 ### Row1 c2-c5 列 compact tile
 
@@ -483,7 +483,7 @@ c6r2 每收两半（low=up, high=gate）:
 24 个 256-dw SwiGLU slice → c6r1 的 6144-dw gather buffer
 ```
 
-当前 `swiglu.cc` 的 bf16 path 使用 clipped linear sigmoid 近似和 slice_scale，目的是验证 payload-half ABI 与 packet1 handoff；后续必须替换为 Qwen3 数值正确的 SiLU/SwiGLU kernel。
+当前 `swiglu.cc` 的 bf16 path 已经执行 `SiLU(gate) × up` 形态并去掉 `slice_scale`；后续必须把本地 bounded table sigmoid 近似校准到 Qwen3 生产 SiLU/SwiGLU 的误差预算。
 
 ## 步骤 10：Down 投影
 
@@ -812,7 +812,7 @@ input[0x200..0x3ff] = gate slice (256 dword = 512 bf16)
 output = SiLU(gate) × up = 512 bf16
 ```
 
-当前 `swiglu.cc` 输出同样是 256 dword / 512 bf16 的 slice，但数值是 clipped sigmoid 近似，不是生产 SiLU。
+当前 `swiglu.cc` 输出同样是 256 dword / 512 bf16 的 slice，数值路径已经是 `up * gate * sigmoid(gate)`，但 sigmoid 仍是 AIE-local bounded table 近似，尚未完成生产误差校准。
 
 24 个 slice × 256 dword = 6144 dword = 12288 bf16 = 完整 FFN intermediate。
 
@@ -979,7 +979,7 @@ python qwen3-layer/run_npu.py --case currentkv-kvscan-attention-kv16-o-bridge \
 |------|---------|------|
 | Attention（Shape-A/B） | kv16 固定点 Q12 exp + int32 accumulator | 校准到 Qwen3 bf16/fp32 softmax |
 | c1r2 RMSNorm/replay/final output | hidden replay + bounded numeric scale (256) + int32 sqrt + down compact drain | 实现 Qwen3 RMSNorm/residual，并输出完整 hidden_out |
-| c6r2 SwiGLU | bf16 输入/输出 ABI 已对齐，clipped sigmoid 近似 | 替换成 Qwen3 SiLU/SwiGLU 数值 |
+| c6r2 SwiGLU | bf16 输入/输出 ABI 已对齐，`slice_scale` 已删除，执行 AIE-local bounded table `SiLU(gate) * up` | 校准到 Qwen3 SiLU/SwiGLU 生产误差预算 |
 | c1r3 Q/K norm + RoPE | 当前主要是 bf16→s16 attention ABI 打包和 packet8/9 current K/V | 实现并校准 Q/K RMSNorm、RoPE、scale/rotation constant |
 | Main16 Q4NX kernel | 真 Q4NX transport/MAC 已跑通 | 做高性能化、DMA/compute overlap、真实模型权重加载 |
 

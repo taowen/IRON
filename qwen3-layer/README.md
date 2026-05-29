@@ -40,7 +40,13 @@ The current implementation is the qwen3-dataflow physical skeleton:
   current-K/V attention integration boundaries; the old standalone qkv-shape
   generator/reference has been removed.
 - `q4nx_reference.py`: shared Q4NX chunk reference math used by integration
-  checks.
+  checks. It now follows the MyLM 5120-byte Q4NX chunk layout instead of the
+  old row-major synthetic chunk layout.
+- `qwen3_model.py`: typed MyLM `model.q4nx` parser for Qwen3-8B, including
+  layer projection tensors, RMSNorm/QK norm weights, and row1/main16 weight
+  stream construction.
+- `qwen3_download.py`: small downloader for the MyLM Qwen3-8B-NPU2 model files
+  listed in `qwen3_model.py`.
 - `npu_build.py`: shared MLIR, xclbin, and NPU runtime helpers. It scans
   generated MLIR `link_with` attributes and compiles the required role objects,
   so runners do not duplicate kernel-object ownership.
@@ -70,8 +76,11 @@ The current implementation is the qwen3-dataflow physical skeleton:
 
 ```bash
 .venv/bin/python qwen3-layer/run_npu.py --check-only
+.venv/bin/python qwen3-layer/run_npu.py --check-only --download-model
+.venv/bin/python qwen3-layer/run_npu.py --case qwen3-8b-decode-layer --model-path /var/home/taowen/flm/models/Qwen3-8B-NPU2
 .venv/bin/python qwen3-layer/run_npu.py --build-only
 .venv/bin/python qwen3-layer/run_npu.py
+.venv/bin/python qwen3-layer/run_npu.py --case qwen3-8b-qkv-body-post-bridge
 .venv/bin/python qwen3-layer/run_npu.py --case currentkv-kvscan-attention-kv16-o-bridge
 .venv/bin/python qwen3-layer/run_npu.py --case currentkv-kvscan-attention-kv16-o-bridge --current-token 91
 .venv/bin/python qwen3-layer/run_npu.py --case currentkv-kvscan-attention-kv16-o-bridge --current-token 91 --patch-from-token 127
@@ -82,9 +91,22 @@ The current implementation is the qwen3-dataflow physical skeleton:
 ```
 
 This runner is intentionally an integration boundary, not a tiny unit test. The
-default case is `currentkv-full-layer-q4nx-down-bridge`, the current
-qwen3-dataflow fused-layer frontier. Historical migration cases for the old
-608-patch weight-stream oracle, deterministic full-layer tail, and standalone
+default case is now `qwen3-8b-decode-layer`: it validates the real MyLM
+Qwen3-8B-NPU2 assets, computes the input RMSNorm hidden vector on the host,
+constructs the real layer Q4NX weight stream in the main16 ABI, runs the current
+full-layer NPU physical frontier at token31, and compares the 2048-dword final
+hidden payload with the matching physical oracle. token31 is the default because
+it keeps a multi-block KV scan while still producing a non-zero end-to-end
+signal through the temporary kv16 attention ABI; token127 remains covered by
+the currentkv synthetic frontier and patched descriptor checks. This is not the
+final production Qwen3 decode yet: c1r2, c1r3, and attention still use the
+current physical oracle kernels while their production numerics are being
+replaced; c6r2 now runs the bf16 `SiLU(gate) * up` path with the local bounded
+table sigmoid used by the NPU reference. The previous synthetic frontier,
+`currentkv-full-layer-q4nx-down-bridge`, is still kept as a closed-loop
+diagnostic for physical routing, descriptor ownership, and patched decode
+schedules. Historical migration cases for the old 608-patch
+weight-stream oracle, deterministic full-layer tail, and standalone
 down/SwiGLU/Q4NX bridges have been retired from the runnable registry. Their
 useful pieces now live in shared generators: `weight_stream.py` owns row1
 S2MM4/5 weight ingress and row1 MM2S fanout, `compact_dataflow.py` owns the
@@ -96,11 +118,13 @@ vector replayed by c1r2, runs Q4NX Q/K/V on main16, converts the bf16 Q/K/V
 body into the current kv16 attention ABI in c1r3, and writes current K/V through
 packet8/9 before scanning rounded KV cache blocks. The attention result returns
 as a bf16 packet2 payload, main16 consumes it in Q4NX O, c1r2 replays the O
-compact as bf16 full-vector packet0 payloads, main16 runs Q4NX up/gate with
-row1 S2MM4/5 weights on DMA1, c6r2 consumes bf16-input SwiGLU, and main16
-finally runs Q4NX down with the same DMA0/DMA1 activation/weight ABI. It still
-drains the 257-dword down compact for tolerant validation. Its instruction patch path
-has been audited with the larger Q4NX weight stream: `%weights` stays on arg2,
+result as full-vector packet0 payloads, main16 runs Q4NX up/gate with row1
+S2MM4/5 weights on DMA1, c6r2 consumes bf16-input SwiGLU, and main16 finally
+runs Q4NX down with the same DMA0/DMA1 activation/weight ABI. O and down now use
+chunk-major multi-block accumulation on main16, so c6r1/c1r1 do not need MyLM's
+source-side eight-way activation replay for this route. The final validation
+drains the 2048-dword hidden payload. Its instruction patch path has been
+audited with the larger Q4NX weight stream: `%weights` stays on arg2,
 output stays on arg3, token1007 -> token91 patched `design.bin` is
 word-identical to a direct token91 recompile, and both the default token127 run
 and patched token91 run pass on NPU. One resolved failure mode here was the old
@@ -134,6 +158,13 @@ weights enter through row1 S2MM4/5 and main16 DMA1, and c1r3 drains Q plus
 current K/V layout to host. The smaller Q-only diagnostic is no longer a
 runnable registry entry because the QKV boundary covers the same initial hidden
 replay and weight timing with the full Q/K/V postprocess ABI.
+`qwen3-8b-qkv-body-post-bridge` runs the same physical boundary with real
+Qwen3-8B layer Q/K/V Q4NX chunks and a CPU-computed input RMSNorm activation.
+Its preflight checks that the row1/main16 Q/K/V stream reconstructs the direct
+model projection tensors before running the NPU. This is now the first real
+model NPU numerical boundary; it intentionally stops before Q/K norm, RoPE,
+KV-cache writeback, and attention so that stream-order failures remain
+separable from later production kernels.
 `--current-token` selects a single decode schedule: current-token RTP value,
 current-write byte offset, cache BO size, Shape-A/B block count, Shape-A tail
 valid-token count, scan BD `iteration_size`, and queue `repeat_count` all come
@@ -257,7 +288,7 @@ The frontier now uses main16 Q4NX kernels for Q/K/V/O/up/gate/down over the
 same row1 S2MM4/5 -> main16 DMA1 weight stream, including token1007-capacity
 PDI reuse through patched token91 instructions. Remaining numerical work is to
 calibrate the kv16 attention approximation, c1r2 RMSNorm/replay, and c6r2
-SwiGLU against production Qwen3 kernels.
+bounded table sigmoid against production Qwen3 tolerances.
 In IRON MLIR, S2MM and MM2S channel ids are directional
 namespaces: the current main16 record output is emitted as `MM2S1`, which is
 role-equivalent to MyLM's third main16 record stream even though the exact

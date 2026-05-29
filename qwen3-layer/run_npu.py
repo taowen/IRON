@@ -48,6 +48,23 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="compile currentkv xclbin/PDI for this cache-capacity token and patch design.bin to --current-token",
     )
+    parser.add_argument(
+        "--model-path",
+        type=Path,
+        default=None,
+        help="path to MyLM Qwen3-8B-NPU2 model directory for real qwen3-8b cases",
+    )
+    parser.add_argument(
+        "--layer",
+        type=int,
+        default=0,
+        help="Qwen3 layer index for real qwen3-8b cases",
+    )
+    parser.add_argument(
+        "--download-model",
+        action="store_true",
+        help="download missing Qwen3-8B-NPU2 model files before running real qwen3-8b cases",
+    )
     return parser.parse_args()
 
 
@@ -56,10 +73,31 @@ def run_case(args: argparse.Namespace) -> bool:
         raise ValueError("--check-only and --build-only are mutually exclusive")
 
     if args.check_only:
-        return registry.check_only(args.case, args.current_token, args.patch_from_token)
+        return registry.check_only(
+            args.case,
+            args.current_token,
+            args.patch_from_token,
+            args.model_path,
+            args.layer,
+            args.download_model,
+        )
     if args.build_only:
-        return registry.build_only(args.case, args.current_token, args.patch_from_token)
-    return registry.run(args.case, args.current_token, args.patch_from_token)
+        return registry.build_only(
+            args.case,
+            args.current_token,
+            args.patch_from_token,
+            args.model_path,
+            args.layer,
+            args.download_model,
+        )
+    return registry.run(
+        args.case,
+        args.current_token,
+        args.patch_from_token,
+        args.model_path,
+        args.layer,
+        args.download_model,
+    )
 
 
 if __name__ == "__main__":

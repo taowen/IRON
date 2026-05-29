@@ -5,10 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import torch
-from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor
 
-import npu_build
 from cases import currentkv_kvscan_attention_kv16_generate as generate
 from cases.currentkv_instruction_patch import patch_instruction_stream
 from cases.currentkv_kvscan_attention_kv16_reference import (
@@ -29,6 +26,8 @@ EXPERIMENT_DIR = Path(__file__).parent.parent
 
 
 def build_kernel(schedule: DecodeSchedule, build_name: str = CASE_NAME) -> tuple[Path, Path]:
+    import npu_build
+
     build_dir = EXPERIMENT_DIR / "build" / build_name
     build_dir.mkdir(parents=True, exist_ok=True)
     mlir_path = build_dir / "design.mlir"
@@ -105,6 +104,10 @@ def _cache_buffer_payload(
 
 
 def run(current_token: int | None = None, patch_from_token: int | None = None) -> bool:
+    import torch
+    from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor
+    import npu_build
+
     schedule = make_decode_schedule(current_token)
     base_schedule = make_decode_schedule(patch_from_token) if patch_from_token is not None else None
     print("=" * 78)

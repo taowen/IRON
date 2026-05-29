@@ -157,12 +157,12 @@ def _current_from_body(body: np.ndarray) -> np.ndarray:
     return current
 
 
-def expected_output(packed: np.ndarray | None = None) -> np.ndarray:
+def expected_output(packed: np.ndarray | None = None, hidden: np.ndarray | None = None) -> np.ndarray:
     weights = make_packed_weights() if packed is None else packed
-    hidden = make_hidden_bf16()
-    q_body = q_body_payload(weights, hidden)
-    k_body = k_body_payload(weights, hidden)
-    v_body = v_body_payload(weights, hidden)
+    values = make_hidden_bf16() if hidden is None else hidden
+    q_body = q_body_payload(weights, values)
+    k_body = k_body_payload(weights, values)
+    v_body = v_body_payload(weights, values)
     return np.concatenate((q_body, _current_from_body(k_body), _current_from_body(v_body))).astype(np.int32)
 
 

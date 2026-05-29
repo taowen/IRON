@@ -5,58 +5,57 @@
 
 namespace {
 
+constexpr int32_t kOutputBlocks = 8;
+
 static float accum[qwen3::kMainRowsPerTile];
+static float block_accum[kOutputBlocks][qwen3::kMainRowsPerTile];
 
 static inline void q4nx_chunk_accum_slice(
+    float *target,
     bfloat16 *packed_chunk,
     bfloat16 *activation_slice,
     int32_t num_rows
 ) {
     constexpr int groups_per_row = qwen3::kQ4KChunk / qwen3::kQ4GroupSize;
-    constexpr int num_scales = qwen3::kMainRowsPerTile * groups_per_row;
+    constexpr int rows_per_lane = qwen3::kMainRowsPerTile / 2;
+    constexpr int bytes_per_lane = qwen3::kQ4KChunk * (rows_per_lane / 2);
 
     bfloat16 *scales = packed_chunk;
-    bfloat16 *zeros = packed_chunk + num_scales;
-    uint4 *data = reinterpret_cast<uint4 *>(packed_chunk + 2 * num_scales);
+    bfloat16 *zeros = packed_chunk + qwen3::kMainRowsPerTile * groups_per_row;
+    uint8_t *data = reinterpret_cast<uint8_t *>(
+        packed_chunk + 2 * qwen3::kMainRowsPerTile * groups_per_row
+    );
 
     for (int row = 0; row < num_rows; row++) {
         float row_acc = 0.0f;
+        const int lane = row / rows_per_lane;
+        const int local = row - lane * rows_per_lane;
+        const int byte_idx = local / 2;
+        const bool high_nibble = (local & 1) != 0;
 
         for (int group = 0; group < groups_per_row; group++) {
-            bfloat16 scale = scales[row * groups_per_row + group];
-            bfloat16 zero = zeros[row * groups_per_row + group];
-            uint4 *group_ptr =
-                data + row * (qwen3::kQ4KChunk / 2) + group * (qwen3::kQ4GroupSize / 2);
-
-            aie::vector<uint4, qwen3::kQ4GroupSize> packed =
-                aie::load_v<qwen3::kQ4GroupSize>(group_ptr);
-            aie::vector<uint8, qwen3::kQ4GroupSize> as_u8 = aie::unpack(packed);
-            aie::vector<uint16, qwen3::kQ4GroupSize> as_u16 = aie::unpack(as_u8);
-            aie::vector<bfloat16, qwen3::kQ4GroupSize> as_bf16 =
-                aie::to_float<bfloat16>(as_u16, 0);
-
-            aie::vector<bfloat16, qwen3::kQ4GroupSize> zero_vec =
-                aie::broadcast<bfloat16, qwen3::kQ4GroupSize>(zero);
-            aie::vector<bfloat16, qwen3::kQ4GroupSize> scale_vec =
-                aie::broadcast<bfloat16, qwen3::kQ4GroupSize>(scale);
-            aie::vector<bfloat16, qwen3::kQ4GroupSize> shifted = aie::sub(as_bf16, zero_vec);
-            aie::accum<accfloat, qwen3::kQ4GroupSize> dequant_acc =
-                aie::mul(shifted, scale_vec);
-            aie::vector<bfloat16, qwen3::kQ4GroupSize> dequant =
-                dequant_acc.to_vector<bfloat16>();
-
-            aie::vector<bfloat16, qwen3::kQ4GroupSize> act =
-                aie::load_v<qwen3::kQ4GroupSize>(
-                    activation_slice + group * qwen3::kQ4GroupSize
-                );
-            aie::accum<accfloat, qwen3::kQ4GroupSize> mac_acc = aie::mul(dequant, act);
-            aie::vector<float, qwen3::kQ4GroupSize> mac_f32 = mac_acc.to_vector<float>();
-
-            row_acc += aie::reduce_add(mac_f32);
+            const int scale_idx = group * qwen3::kMainRowsPerTile + row;
+            const float scale = static_cast<float>(scales[scale_idx]);
+            const float zero = static_cast<float>(zeros[scale_idx]);
+            for (int dim = 0; dim < qwen3::kQ4GroupSize; dim++) {
+                const int col = group * qwen3::kQ4GroupSize + dim;
+                const uint8_t packed = data[lane * bytes_per_lane + col * (rows_per_lane / 2) + byte_idx];
+                const uint8_t q = high_nibble ? packed >> 4 : packed & 0x0f;
+                const float weight = (static_cast<float>(q) - zero) * scale;
+                row_acc += weight * static_cast<float>(activation_slice[col]);
+            }
         }
 
-        accum[row] += row_acc;
+        target[row] += row_acc;
     }
+}
+
+static inline void q4nx_chunk_accum_single(
+    bfloat16 *packed_chunk,
+    bfloat16 *activation_slice,
+    int32_t num_rows
+) {
+    q4nx_chunk_accum_slice(accum, packed_chunk, activation_slice, num_rows);
 }
 
 static inline void write_record_payload(bfloat16 *payload, bfloat16 *output, int32_t num_rows) {
@@ -108,13 +107,48 @@ void q4nx_chunk_accum_slice_i32(
     int32_t *activation_words,
     int32_t num_rows
 ) {
-    q4nx_chunk_accum_slice(packed_chunk, reinterpret_cast<bfloat16 *>(activation_words), num_rows);
+    q4nx_chunk_accum_single(packed_chunk, reinterpret_cast<bfloat16 *>(activation_words), num_rows);
+}
+
+void q4nx_clear_block_summaries(int32_t blocks, int32_t num_rows) {
+    for (int32_t block = 0; block < blocks && block < kOutputBlocks; block++) {
+        for (int32_t row = 0; row < num_rows; row++) {
+            block_accum[block][row] = 0.0f;
+        }
+    }
+}
+
+void q4nx_chunk_accum_block_slice_i32(
+    bfloat16 *packed_chunk,
+    int32_t *activation_words,
+    int32_t block,
+    int32_t num_rows
+) {
+    if (block < 0 || block >= kOutputBlocks) {
+        return;
+    }
+    q4nx_chunk_accum_slice(
+        block_accum[block],
+        packed_chunk,
+        reinterpret_cast<bfloat16 *>(activation_words),
+        num_rows
+    );
 }
 
 void q4nx_flush_output(bfloat16 *output, int32_t num_rows) {
     for (int row = 0; row < num_rows; row++) {
         output[row] = static_cast<bfloat16>(accum[row]);
         accum[row] = 0.0f;
+    }
+}
+
+void q4nx_flush_block_output(bfloat16 *output, int32_t block, int32_t num_rows) {
+    if (block < 0 || block >= kOutputBlocks) {
+        return;
+    }
+    for (int row = 0; row < num_rows; row++) {
+        output[row] = static_cast<bfloat16>(block_accum[block][row]);
+        block_accum[block][row] = 0.0f;
     }
 }
 
@@ -152,6 +186,28 @@ void q4nx_emit_o_record(
         row,
         num_rows
     );
+}
+
+void q4nx_emit_o_body_record(
+    int32_t *records,
+    bfloat16 *output,
+    int32_t group,
+    int32_t row,
+    int32_t block,
+    int32_t num_rows
+) {
+    emit_body_record(records, output, qwen3::kOPhase, block, group, row, num_rows);
+}
+
+void q4nx_emit_down_body_record(
+    int32_t *records,
+    bfloat16 *output,
+    int32_t group,
+    int32_t row,
+    int32_t block,
+    int32_t num_rows
+) {
+    emit_body_record(records, output, qwen3::kDownPhase, block, group, row, num_rows);
 }
 
 void q4nx_emit_q_body_record(

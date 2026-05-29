@@ -9,19 +9,17 @@ from ml_dtypes import bfloat16
 
 from contract import (
     ACT_SLICE_BF16,
-    C1R2_PACKET_DWORDS,
     C6R2_HALF_DWORDS,
     CHUNK_BF16,
     COMPACT_PACKET_DWORDS,
+    HIDDEN_DIM,
     MAIN_COLUMNS,
     M_PER_TILE,
     RECORD_DWORDS,
-    RECORD_PAYLOAD_DWORDS,
     ROWS_PER_COLUMN,
     ROWS_PER_PATCH,
     SWIGLU_SLICES,
 )
-from compact_dataflow import down_record_header
 from projection_schedule import (
     DOWN_CHUNKS,
     FULL_LAYER_DOWN_WEIGHT_CHUNK_BASE,
@@ -31,7 +29,9 @@ from projection_schedule import (
     K_CHUNKS_PER_RECORD,
     K_WEIGHT_CHUNK_BASE,
     KV_BODY_RECORDS,
-    O_WEIGHT_CHUNKS,
+    DOWN_BODY_RECORDS,
+    O_BODY_RECORDS,
+    O_CHUNKS_PER_RECORD,
     PATCHES_PER_COLUMN,
     Q_BODY_RECORDS,
     Q_CHUNKS_PER_RECORD,
@@ -45,8 +45,6 @@ from projection_schedule import (
 from q4nx_reference import (
     CHUNK_BYTES,
     HIDDEN_DWORDS,
-    OUT_RECORD_BF16,
-    OUT_TOTAL_I32,
     hidden_as_i32,
     make_q4nx_chunk,
     make_hidden_bf16,
@@ -70,19 +68,89 @@ from qkv_compact_reference import (
 
 CASE_NAME = "currentkv-full-layer-q4nx-down-bridge"
 DEFAULT_SCHEDULE = make_decode_schedule(None)
-OUTPUT_DWORDS = COMPACT_PACKET_DWORDS
+OUTPUT_DWORDS = HIDDEN_DIM // 2
 Q_BODY_COMPACT_DWORDS = Q_BODY_RECORDS * COMPACT_PACKET_DWORDS
 KV_BODY_COMPACT_DWORDS = KV_BODY_RECORDS * COMPACT_PACKET_DWORDS
 PATCH_WEIGHT_BF16 = ROWS_PER_PATCH * FULL_LAYER_TOTAL_WEIGHT_CHUNKS * CHUNK_BF16
 COLUMN_WEIGHT_BF16 = PATCHES_PER_COLUMN * PATCH_WEIGHT_BF16
 TOTAL_WEIGHT_BF16 = len(MAIN_COLUMNS) * COLUMN_WEIGHT_BF16
 TOTAL_WEIGHT_I32 = TOTAL_WEIGHT_BF16 // 2
-COMPACT_NUMERIC_LANES = RECORD_PAYLOAD_DWORDS * len(MAIN_COLUMNS) * ROWS_PER_COLUMN * 2
 REPLAY_FIXED_SCALE = 256.0
 FULL_PIPELINE_ABS_TOL = 16.0
 FULL_PIPELINE_REL_TOL = 1.00
 ATTENTION_QKV_SCALE = 16.0
 CURRENT_CACHE_S16_TOL = 1
+SIGMOID_TABLE_SCALE = 8.0
+SIGMOID_TABLE = np.array(
+    [
+        0.5000000000,
+        0.5312093734,
+        0.5621765009,
+        0.5926666000,
+        0.6224593312,
+        0.6513548647,
+        0.6791786992,
+        0.7057850278,
+        0.7310585786,
+        0.7549149869,
+        0.7772998612,
+        0.7981867777,
+        0.8175744762,
+        0.8354835371,
+        0.8519528020,
+        0.8670357598,
+        0.8807970780,
+        0.8933094061,
+        0.9046505351,
+        0.9149009550,
+        0.9241418200,
+        0.9324533089,
+        0.9399133498,
+        0.9465966702,
+        0.9525741268,
+        0.9579122721,
+        0.9626731127,
+        0.9669140216,
+        0.9706877692,
+        0.9740426428,
+        0.9770226301,
+        0.9796676467,
+        0.9820137900,
+        0.9840936083,
+        0.9859363730,
+        0.9875683491,
+        0.9890130574,
+        0.9902915235,
+        0.9914225146,
+        0.9924227587,
+        0.9933071491,
+        0.9940889311,
+        0.9947798743,
+        0.9953904278,
+        0.9959298623,
+        0.9964063974,
+        0.9968273172,
+        0.9971990730,
+        0.9975273768,
+        0.9978172836,
+        0.9980732653,
+        0.9982992776,
+        0.9984988177,
+        0.9986749776,
+        0.9988304897,
+        0.9989677690,
+        0.9990889488,
+        0.9991959141,
+        0.9992903296,
+        0.9993736658,
+        0.9994472214,
+        0.9995121429,
+        0.9995694429,
+        0.9996200155,
+        0.9996646499,
+    ],
+    dtype=np.float32,
+)
 
 
 def _trunc_div(numerator: int, denominator: int) -> int:
@@ -271,16 +339,16 @@ def merged_v_cache_payload_body(
     return _write_current(schedule, make_history_v_cache_payload(schedule), current_v_payload_body(packed, hidden))
 
 
-def _normalized_replay_bf16(compact: np.ndarray) -> np.ndarray:
-    payload_dwords = C1R2_PACKET_DWORDS - 1
-    lanes = payload_dwords * 2
-    compact_values = np.frombuffer(compact[1:].tobytes(), dtype=bfloat16).astype(np.float32)
-    compact_fixed = np.trunc(compact_values * REPLAY_FIXED_SCALE).astype(np.int32)
-    sum_sq = int(np.sum(compact_fixed.astype(np.int64) * compact_fixed.astype(np.int64)))
-    denominator = math.isqrt(sum_sq // COMPACT_NUMERIC_LANES + 1)
-    replay = np.empty(lanes, dtype=bfloat16)
-    for lane in range(lanes):
-        scaled = _trunc_div(int(compact_fixed[lane & (COMPACT_NUMERIC_LANES - 1)]) * 1024, denominator)
+def _normalized_full_vector_bf16(values: np.ndarray) -> np.ndarray:
+    if values.shape != (HIDDEN_DIM,):
+        raise ValueError(f"full vector shape mismatch: {values.shape} != {(HIDDEN_DIM,)}")
+    vector = values.astype(np.float32)
+    fixed = np.trunc(vector * REPLAY_FIXED_SCALE).astype(np.int32)
+    sum_sq = int(np.sum(fixed.astype(np.int64) * fixed.astype(np.int64)))
+    denominator = math.isqrt(sum_sq // HIDDEN_DIM + 1)
+    replay = np.empty(HIDDEN_DIM, dtype=bfloat16)
+    for lane in range(HIDDEN_DIM):
+        scaled = _trunc_div(int(fixed[lane]) * 1024, denominator)
         replay[lane] = bfloat16(scaled / 1024.0)
     return replay
 
@@ -313,24 +381,46 @@ def attention_payload_bf16(
     return np.frombuffer(values.tobytes(), dtype=np.int32).copy()
 
 
-def q4nx_o_global_compact(schedule: DecodeSchedule, packed: np.ndarray, hidden: np.ndarray) -> np.ndarray:
+def _compact_payload_bf16(compact: np.ndarray) -> np.ndarray:
+    return np.frombuffer(compact[1:].tobytes(), dtype=bfloat16).copy()
+
+
+def _full_vector_from_compacts(compacts: np.ndarray, records: int) -> np.ndarray:
+    if compacts.shape != (records * COMPACT_PACKET_DWORDS,):
+        raise ValueError(f"compact shape mismatch: {compacts.shape} != {(records * COMPACT_PACKET_DWORDS,)}")
+    parts = [
+        _compact_payload_bf16(compacts[record * COMPACT_PACKET_DWORDS : (record + 1) * COMPACT_PACKET_DWORDS])
+        for record in range(records)
+    ]
+    return np.concatenate(parts).astype(bfloat16)
+
+
+def q4nx_o_global_compacts(schedule: DecodeSchedule, packed: np.ndarray, hidden: np.ndarray) -> np.ndarray:
     activation_values = np.frombuffer(attention_payload_bf16(schedule, packed, hidden).tobytes(), dtype=bfloat16)
-    columns = []
-    for group in range(len(MAIN_COLUMNS)):
-        compact_records = []
-        for row in range(ROWS_PER_COLUMN):
-            accum = np.zeros(M_PER_TILE, dtype=np.float32)
-            for chunk in range(O_WEIGHT_CHUNKS):
-                accum += q4nx_matvec_from_chunk(
-                    _chunk_for_tile(packed, group, row, FULL_LAYER_O_WEIGHT_CHUNK_BASE + chunk),
-                    _activation_slice(activation_values, chunk),
-                )
-            record = np.empty(RECORD_DWORDS, dtype=np.int32)
-            record[0] = (3 << 24) | (group << 16) | (row << 8) | 0xD0
-            record[1:] = np.frombuffer(accum.astype(bfloat16).tobytes(), dtype=np.int32)
-            compact_records.append(record)
-        columns.append(column_compact_from_records(compact_records))
-    return global_compact_from_columns(columns)
+    compacts = []
+    for block in range(O_BODY_RECORDS):
+        columns = []
+        for group in range(len(MAIN_COLUMNS)):
+            compact_records = []
+            for row in range(ROWS_PER_COLUMN):
+                accum = np.zeros(M_PER_TILE, dtype=np.float32)
+                for chunk in range(O_CHUNKS_PER_RECORD):
+                    weight_chunk = FULL_LAYER_O_WEIGHT_CHUNK_BASE + chunk * O_BODY_RECORDS + block
+                    accum += q4nx_matvec_from_chunk(
+                        _chunk_for_tile(packed, group, row, weight_chunk),
+                        _activation_slice(activation_values, chunk),
+                    )
+                record = np.empty(RECORD_DWORDS, dtype=np.int32)
+                record[0] = (3 << 24) | (block << 20) | (group << 16) | (row << 8) | 0xD0
+                record[1:] = np.frombuffer(accum.astype(bfloat16).tobytes(), dtype=np.int32)
+                compact_records.append(record)
+            columns.append(column_compact_from_records(compact_records))
+        compacts.append(global_compact_from_columns(columns))
+    return np.concatenate(compacts).astype(np.int32)
+
+
+def q4nx_o_global_compact(schedule: DecodeSchedule, packed: np.ndarray, hidden: np.ndarray) -> np.ndarray:
+    return q4nx_o_global_compacts(schedule, packed, hidden)[:COMPACT_PACKET_DWORDS]
 
 
 def _upgate_tile_output(
@@ -386,60 +476,90 @@ def q4nx_upgate_global_compact(
     hidden: np.ndarray,
     replay: int,
 ) -> np.ndarray:
-    replay_values = _normalized_replay_bf16(q4nx_o_global_compact(schedule, packed, hidden))
+    o_values = _full_vector_from_compacts(q4nx_o_global_compacts(schedule, packed, hidden), O_BODY_RECORDS)
+    replay_values = _normalized_full_vector_bf16(o_values)
     return _q4nx_upgate_global_compact_from_replay(replay_values, packed, replay)
 
 
-def _swiglu_bf16_inputs(input_slice: np.ndarray, slice_index: int) -> np.ndarray:
+def _sigmoid_approx(values: np.ndarray) -> np.ndarray:
+    scaled = np.minimum(np.abs(values), 8.0) * SIGMOID_TABLE_SCALE
+    index = np.trunc(scaled).astype(np.int32)
+    base_index = np.minimum(index, SIGMOID_TABLE.shape[0] - 2)
+    fraction = scaled - base_index.astype(np.float32)
+    low = SIGMOID_TABLE[base_index]
+    high = SIGMOID_TABLE[base_index + 1]
+    positive = np.where(
+        index >= SIGMOID_TABLE.shape[0] - 1,
+        SIGMOID_TABLE[-1],
+        low + (high - low) * fraction,
+    )
+    sigmoid = np.where(values >= 0.0, positive, 1.0 - positive)
+    return np.where(values > 8.0, 1.0, np.where(values < -8.0, 0.0, sigmoid))
+
+
+def _swiglu_bf16_inputs(input_slice: np.ndarray) -> np.ndarray:
     values = np.frombuffer(input_slice.tobytes(), dtype=bfloat16).astype(np.float32)
     up = values[: C6R2_HALF_DWORDS * 2]
     gate = values[C6R2_HALF_DWORDS * 2 :]
-    sigmoid = np.clip(0.5 + gate * 0.125, 0.0, 1.0)
-    scale = 1.0 + slice_index / 256.0
-    return (up * gate * sigmoid * scale).astype(bfloat16)
+    return (up * gate * _sigmoid_approx(gate)).astype(bfloat16)
 
 
 def swiglu_activation_payload(schedule: DecodeSchedule, packed: np.ndarray, hidden: np.ndarray) -> np.ndarray:
-    replay_values = _normalized_replay_bf16(q4nx_o_global_compact(schedule, packed, hidden))
+    o_values = _full_vector_from_compacts(q4nx_o_global_compacts(schedule, packed, hidden), O_BODY_RECORDS)
+    replay_values = _normalized_full_vector_bf16(o_values)
     slices = []
     for slice_index in range(SWIGLU_SLICES):
         up = _q4nx_upgate_global_compact_from_replay(replay_values, packed, slice_index * 2)[1:]
         gate = _q4nx_upgate_global_compact_from_replay(replay_values, packed, slice_index * 2 + 1)[1:]
         if up.shape[0] != C6R2_HALF_DWORDS or gate.shape[0] != C6R2_HALF_DWORDS:
             raise RuntimeError(f"bad q4nx up/gate halves: {up.shape[0]}/{gate.shape[0]}")
-        slices.append(_swiglu_bf16_inputs(np.concatenate((up, gate)).astype(np.int32), slice_index))
+        slices.append(_swiglu_bf16_inputs(np.concatenate((up, gate)).astype(np.int32)))
     activation = np.concatenate(slices).astype(bfloat16)
     return np.frombuffer(activation.tobytes(), dtype=np.int32).copy()
 
 
-def q4nx_down_global_compact(schedule: DecodeSchedule, packed: np.ndarray, hidden: np.ndarray) -> np.ndarray:
+def q4nx_down_global_compacts(schedule: DecodeSchedule, packed: np.ndarray, hidden: np.ndarray) -> np.ndarray:
     activation = swiglu_activation_payload(schedule, packed, hidden)
     activation_values = np.frombuffer(activation.tobytes(), dtype=bfloat16)
-    columns = []
-    for group in range(len(MAIN_COLUMNS)):
-        compact_records = []
-        for row in range(ROWS_PER_COLUMN):
-            accum = np.zeros(M_PER_TILE, dtype=np.float32)
-            for chunk in range(DOWN_CHUNKS):
-                accum += q4nx_matvec_from_chunk(
-                    _chunk_for_tile(packed, group, row, FULL_LAYER_DOWN_WEIGHT_CHUNK_BASE + chunk),
-                    _activation_slice(activation_values, chunk),
-                )
-            record = np.empty(RECORD_DWORDS, dtype=np.int32)
-            record[0] = down_record_header(group, row)
-            record[1:] = np.frombuffer(accum.astype(bfloat16).tobytes(), dtype=np.int32)
-            compact_records.append(record)
-        columns.append(column_compact_from_records(compact_records))
-    return global_compact_from_columns(columns)
+    compacts = []
+    for block in range(DOWN_BODY_RECORDS):
+        columns = []
+        for group in range(len(MAIN_COLUMNS)):
+            compact_records = []
+            for row in range(ROWS_PER_COLUMN):
+                accum = np.zeros(M_PER_TILE, dtype=np.float32)
+                for chunk in range(DOWN_CHUNKS):
+                    weight_chunk = FULL_LAYER_DOWN_WEIGHT_CHUNK_BASE + chunk * DOWN_BODY_RECORDS + block
+                    accum += q4nx_matvec_from_chunk(
+                        _chunk_for_tile(packed, group, row, weight_chunk),
+                        _activation_slice(activation_values, chunk),
+                    )
+                record = np.empty(RECORD_DWORDS, dtype=np.int32)
+                record[0] = (6 << 24) | (block << 20) | (group << 16) | (row << 8) | 0xD0
+                record[1:] = np.frombuffer(accum.astype(bfloat16).tobytes(), dtype=np.int32)
+                compact_records.append(record)
+            columns.append(column_compact_from_records(compact_records))
+        compacts.append(global_compact_from_columns(columns))
+    return np.concatenate(compacts).astype(np.int32)
+
+
+def q4nx_down_global_compact(schedule: DecodeSchedule, packed: np.ndarray, hidden: np.ndarray) -> np.ndarray:
+    return q4nx_down_global_compacts(schedule, packed, hidden)[:COMPACT_PACKET_DWORDS]
+
+
+def q4nx_down_hidden_output(schedule: DecodeSchedule, packed: np.ndarray, hidden: np.ndarray) -> np.ndarray:
+    values = _full_vector_from_compacts(q4nx_down_global_compacts(schedule, packed, hidden), DOWN_BODY_RECORDS)
+    return np.frombuffer(values.tobytes(), dtype=np.int32).copy()
 
 
 def expected_output(
     schedule: DecodeSchedule = DEFAULT_SCHEDULE,
     packed: np.ndarray | None = None,
+    hidden: np.ndarray | None = None,
 ) -> np.ndarray:
     weights = make_packed_weights() if packed is None else packed
-    hidden = make_hidden_bf16()
-    return q4nx_down_global_compact(schedule, weights, hidden)
+    values = make_hidden_bf16() if hidden is None else hidden
+    return q4nx_down_hidden_output(schedule, weights, values)
 
 
 def validate_cache_writeback(
@@ -485,10 +605,16 @@ def validate_expected_output(expected: np.ndarray, got: np.ndarray) -> list[str]
     if got.shape != expected.shape:
         return [f"shape mismatch: {got.shape} != {expected.shape}"]
     errors: list[str] = []
-    if int(got[0]) != int(expected[0]):
-        errors.append(f"compact header mismatch: expected={int(expected[0])} got={int(got[0])}")
-    expected_values = np.frombuffer(expected[1:].tobytes(), dtype=bfloat16).astype(np.float32)
-    got_values = np.frombuffer(got[1:].tobytes(), dtype=bfloat16).astype(np.float32)
+    expected_values = np.frombuffer(expected.tobytes(), dtype=bfloat16).astype(np.float32)
+    got_values = np.frombuffer(got.tobytes(), dtype=bfloat16).astype(np.float32)
+    if not bool(np.all(np.isfinite(expected_values))):
+        bad = int(np.flatnonzero(~np.isfinite(expected_values))[0])
+        errors.append(f"expected output is not finite at bf16 lane {bad}: {float(expected_values[bad])}")
+    if not bool(np.all(np.isfinite(got_values))):
+        bad = int(np.flatnonzero(~np.isfinite(got_values))[0])
+        errors.append(f"NPU output is not finite at bf16 lane {bad}: {float(got_values[bad])}")
+    if errors:
+        return errors
     abs_err = np.abs(expected_values - got_values)
     rel_err = abs_err / np.maximum(np.abs(expected_values), 1e-6)
     mask = abs_err > np.maximum(FULL_PIPELINE_ABS_TOL, FULL_PIPELINE_REL_TOL * np.abs(expected_values))
