@@ -205,9 +205,9 @@ row0  [K写回]    [────────── shim ────────
 
 **为什么在这里**：RMSNorm 和残差必须看到完整 4096 维向量。目标态 c1r2 要提供 2048-dword full-vector ABI、sum-of-squares/rsqrt 和 residual 计算；当前实现只保留这个物理位置和 replay/output 契约。
 
-**对外接口**：2049-dword packet0 replay（1 control + 2048 payload），replay 次数 = +12（Q/K/V）→ +48（up/gate）。`+1` 是最终 full-vector output/run slot 的契约标记；当前 frontier 仍只 drain 257-dword down compact，用于验证物理闭环，不是最终 2048-dword hidden 输出。
+**对外接口**：2049-dword packet0 replay（1 control + 2048 payload），replay 次数 = +12（Q/K/V）→ +48（up/gate）。最终输出是 2048-dword hidden_out。c1r2 本地只常驻一个 2048-dword hidden/residual buffer、一个 2048-dword vector/norm buffer、一个 2049-dword replay buffer、一个 257-dword compact receive buffer 和一个 2048-dword output buffer；它不接收 6144-dword full_input，也不常驻 8 条 O/down compact record。
 
-**当前状态**：`full_vector_station.cc` 还不是生产 RMSNorm/residual。当前 Q/K/V 起点主要是 hidden replay；O 后 replay 使用 bounded numeric scale + int32 sqrt 的临时数值路径；最终 down 后还未生成生产 hidden_out。
+**当前状态**：`full_vector_station.cc` 已经按 phase station 运行：host raw hidden 进入 hidden/residual buffer，arg2 尾部的 input/post RMSNorm 权重复用 2048-dword vector buffer，O compact 流式累加到 residual，post RMSNorm replay 后驱动 up/gate，down compact 流式加回 residual 形成 hidden_out。RMSNorm 仍是当前 bounded fixed-scale 数值路径，不是最终生产 rsqrt kernel；c1r3/attention 也仍是当前 physical oracle。
 
 ### c1r3 后处理站
 

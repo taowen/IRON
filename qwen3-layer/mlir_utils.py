@@ -24,9 +24,13 @@ def npu_writebd(
     d2_stride: int = 0,
     iteration_size: int = 0,
     iteration_stride: int = 0,
+    enable_packet: bool = False,
+    packet_id: int = 0,
+    packet_type: int = 0,
 ) -> str:
     """Emit raw AIEX NPU BD setup. Stride fields use the encoded step value."""
     use_next = 1 if use_next_bd else 0
+    packet_enable = 1 if enable_packet else 0
     return (
         f"      aiex.npu.writebd {{bd_id = {bd_id} : i32, "
         f"buffer_length = {buffer_length} : i32, buffer_offset = {buffer_offset} : i32, "
@@ -37,12 +41,12 @@ def npu_writebd(
         f"d1_zero_after = 0 : i32, d1_zero_before = 0 : i32, "
         f"d2_size = {d2_size} : i32, d2_stride = {d2_stride} : i32, "
         f"d2_zero_after = 0 : i32, d2_zero_before = 0 : i32, "
-        f"enable_packet = 0 : i32, iteration_current = 0 : i32, "
+        f"enable_packet = {packet_enable} : i32, iteration_current = 0 : i32, "
         f"iteration_size = {iteration_size} : i32, iteration_stride = {iteration_stride} : i32, "
         f"lock_acq_enable = 0 : i32, lock_acq_id = 0 : i32, lock_acq_val = 0 : i32, "
         f"lock_rel_id = 0 : i32, lock_rel_val = 0 : i32, "
         f"next_bd = {next_bd} : i32, out_of_order_id = 0 : i32, "
-        f"packet_id = 0 : i32, packet_type = 0 : i32, "
+        f"packet_id = {packet_id} : i32, packet_type = {packet_type} : i32, "
         f"row = 0 : i32, use_next_bd = {use_next} : i32, valid_bd = 1 : i32}}"
     )
 

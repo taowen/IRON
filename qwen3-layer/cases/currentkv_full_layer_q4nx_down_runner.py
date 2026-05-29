@@ -9,24 +9,27 @@ import numpy as np
 from cases import currentkv_full_layer_q4nx_down_generate as generate
 from cases.currentkv_instruction_patch import patch_instruction_stream
 from cases.currentkv_full_layer_q4nx_down_reference import (
+    AUX_DWORDS,
     CASE_NAME,
     HIDDEN_DWORDS,
     OUTPUT_DWORDS,
-    TOTAL_WEIGHT_I32,
+    TOTAL_WEIGHT_AND_AUX_I32,
+    aux_as_i32,
     expected_output,
-    hidden_as_i32,
+    hidden_input_as_i32,
+    input_norm_activation,
     make_packed_weights,
     make_hidden_bf16,
-    packed_as_i32,
+    make_history_k_cache_payload_bf16,
+    make_history_v_cache_payload_bf16,
     route_summary,
     validate_cache_writeback,
     validate_expected_output,
+    weights_with_aux_i32,
 )
 from cases.currentkv_kvscan_attention_kv16_reference import (
     DecodeSchedule,
     make_decode_schedule,
-    make_history_k_cache_payload,
-    make_history_v_cache_payload,
     validate_cache_layout_contract,
 )
 
@@ -126,7 +129,7 @@ def run(current_token: int | None = None, patch_from_token: int | None = None) -
     if base_schedule is not None:
         print(
             f"  patch: compile token{base_schedule.current_token} cache-capacity xclbin once, "
-            f"patch design.bin to token{schedule.current_token}; weights stay on arg2, output on arg3, hidden on arg4"
+            f"patch design.bin to token{schedule.current_token}; weights and aux stay on arg2, output on arg3, hidden on arg4"
         )
     print()
 
@@ -143,20 +146,26 @@ def run(current_token: int | None = None, patch_from_token: int | None = None) -
     handle = npu_build.load_kernel(xclbin_path, insts_path)
 
     print("  Preparing hidden, K/V cache, Q4NX weights, and CPU reference...")
-    k_cache = _cache_buffer_payload(make_history_k_cache_payload(schedule), schedule, base_schedule)
-    v_cache = _cache_buffer_payload(make_history_v_cache_payload(schedule), schedule, base_schedule)
+    k_cache = _cache_buffer_payload(make_history_k_cache_payload_bf16(schedule), schedule, base_schedule)
+    v_cache = _cache_buffer_payload(make_history_v_cache_payload_bf16(schedule), schedule, base_schedule)
     expected_cache_dwords = base_schedule.kv_cache_dwords if base_schedule is not None else schedule.kv_cache_dwords
     if k_cache.shape != (expected_cache_dwords,) or v_cache.shape != (expected_cache_dwords,):
         raise ValueError(f"kv cache payload shape mismatch: {k_cache.shape}/{v_cache.shape}")
     packed = make_packed_weights()
-    hidden = hidden_as_i32()
     hidden_bf16 = make_hidden_bf16()
-    weights_i32 = packed_as_i32(packed)
+    input_norm_weight = np.ones(hidden_bf16.shape, dtype=hidden_bf16.dtype)
+    post_norm_weight = np.ones(hidden_bf16.shape, dtype=hidden_bf16.dtype)
+    hidden = hidden_input_as_i32(hidden_bf16)
+    aux = aux_as_i32(schedule.current_token, input_norm_weight, post_norm_weight)
+    qkv_activation = input_norm_activation(hidden_bf16, input_norm_weight)
+    weights_i32 = weights_with_aux_i32(packed, schedule.current_token, input_norm_weight, post_norm_weight)
     if hidden.shape[0] != HIDDEN_DWORDS:
         raise RuntimeError(f"hidden i32 mismatch: {hidden.shape[0]} != {HIDDEN_DWORDS}")
-    if weights_i32.shape[0] != TOTAL_WEIGHT_I32:
-        raise RuntimeError(f"weight i32 mismatch: {weights_i32.shape[0]} != {TOTAL_WEIGHT_I32}")
-    expected = expected_output(schedule, packed)
+    if aux.shape[0] != AUX_DWORDS:
+        raise RuntimeError(f"aux i32 mismatch: {aux.shape[0]} != {AUX_DWORDS}")
+    if weights_i32.shape[0] != TOTAL_WEIGHT_AND_AUX_I32:
+        raise RuntimeError(f"weight+aux i32 mismatch: {weights_i32.shape[0]} != {TOTAL_WEIGHT_AND_AUX_I32}")
+    expected = expected_output(schedule, packed, hidden_bf16, input_norm_weight, post_norm_weight)
 
     k_cache_buf = XRTTensor.from_torch(torch.from_numpy(k_cache.copy()).to(torch.int32))
     v_cache_buf = XRTTensor.from_torch(torch.from_numpy(v_cache.copy()).to(torch.int32))
@@ -180,7 +189,7 @@ def run(current_token: int | None = None, patch_from_token: int | None = None) -
         got_k[: schedule.kv_cache_dwords],
         got_v[: schedule.kv_cache_dwords],
         packed,
-        hidden_bf16,
+        qkv_activation,
     )
     errors.extend(validate_expected_output(expected, got))
     if errors:

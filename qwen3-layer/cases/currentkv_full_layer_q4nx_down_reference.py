@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 from ml_dtypes import bfloat16
 
@@ -12,6 +10,7 @@ from contract import (
     C6R2_HALF_DWORDS,
     CHUNK_BF16,
     COMPACT_PACKET_DWORDS,
+    HEAD_DIM,
     HIDDEN_DIM,
     MAIN_COLUMNS,
     M_PER_TILE,
@@ -45,7 +44,6 @@ from projection_schedule import (
 from q4nx_reference import (
     CHUNK_BYTES,
     HIDDEN_DWORDS,
-    hidden_as_i32,
     make_q4nx_chunk,
     make_hidden_bf16,
     packed_as_i32 as q4nx_packed_as_i32,
@@ -54,10 +52,12 @@ from q4nx_reference import (
 from cases.currentkv_kvscan_attention_kv16_reference import (
     CURRENT_DWORDS,
     DecodeSchedule,
-    attention_payload_from_qkv,
+    HEAD_DWORDS,
+    KV_HEADS,
+    logical_cache_index,
     make_decode_schedule,
-    make_history_k_cache_payload,
-    make_history_v_cache_payload,
+    pack_logical_cache_to_npu,
+    unpack_npu_cache_to_logical,
     validate_cache_layout_contract,
     _write_current,
 )
@@ -69,17 +69,19 @@ from qkv_compact_reference import (
 CASE_NAME = "currentkv-full-layer-q4nx-down-bridge"
 DEFAULT_SCHEDULE = make_decode_schedule(None)
 OUTPUT_DWORDS = HIDDEN_DIM // 2
+RMS_NORM_DWORDS = HIDDEN_DWORDS * 2
+QK_ROPE_BF16 = HEAD_DIM + HEAD_DIM + HEAD_DIM
+QK_ROPE_DWORDS = QK_ROPE_BF16 // 2
+AUX_DWORDS = RMS_NORM_DWORDS + QK_ROPE_DWORDS
 Q_BODY_COMPACT_DWORDS = Q_BODY_RECORDS * COMPACT_PACKET_DWORDS
 KV_BODY_COMPACT_DWORDS = KV_BODY_RECORDS * COMPACT_PACKET_DWORDS
 PATCH_WEIGHT_BF16 = ROWS_PER_PATCH * FULL_LAYER_TOTAL_WEIGHT_CHUNKS * CHUNK_BF16
 COLUMN_WEIGHT_BF16 = PATCHES_PER_COLUMN * PATCH_WEIGHT_BF16
 TOTAL_WEIGHT_BF16 = len(MAIN_COLUMNS) * COLUMN_WEIGHT_BF16
 TOTAL_WEIGHT_I32 = TOTAL_WEIGHT_BF16 // 2
-REPLAY_FIXED_SCALE = 256.0
+TOTAL_WEIGHT_AND_AUX_I32 = TOTAL_WEIGHT_I32 + AUX_DWORDS
 FULL_PIPELINE_ABS_TOL = 16.0
 FULL_PIPELINE_REL_TOL = 1.00
-ATTENTION_QKV_SCALE = 16.0
-CURRENT_CACHE_S16_TOL = 1
 SIGMOID_TABLE_SCALE = 8.0
 SIGMOID_TABLE = np.array(
     [
@@ -153,14 +155,6 @@ SIGMOID_TABLE = np.array(
 )
 
 
-def _trunc_div(numerator: int, denominator: int) -> int:
-    if denominator == 0:
-        return 0
-    if numerator >= 0:
-        return numerator // denominator
-    return -((-numerator) // denominator)
-
-
 def make_packed_weights(seed: int = 197) -> np.ndarray:
     rng = np.random.default_rng(seed)
     parts: list[np.ndarray] = []
@@ -177,6 +171,110 @@ def make_packed_weights(seed: int = 197) -> np.ndarray:
 
 def packed_as_i32(packed: np.ndarray) -> np.ndarray:
     return q4nx_packed_as_i32(packed)
+
+
+def _default_norm_weight() -> np.ndarray:
+    return np.ones(HIDDEN_DIM, dtype=bfloat16)
+
+
+def _default_head_norm_weight() -> np.ndarray:
+    return np.ones(HEAD_DIM, dtype=bfloat16)
+
+
+def hidden_input_as_i32(hidden: np.ndarray | None = None) -> np.ndarray:
+    raw_hidden = make_hidden_bf16() if hidden is None else hidden
+    if raw_hidden.shape != (HIDDEN_DIM,):
+        raise ValueError(f"hidden shape mismatch: {raw_hidden.shape} != {(HIDDEN_DIM,)}")
+    packed = np.frombuffer(raw_hidden.astype(bfloat16).tobytes(), dtype=np.int32).copy()
+    if packed.shape != (HIDDEN_DWORDS,):
+        raise RuntimeError(f"hidden input shape mismatch: {packed.shape} != {(HIDDEN_DWORDS,)}")
+    return packed
+
+
+def qk_rope_side_bf16(
+    current_token: int,
+    q_norm_weight: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
+) -> np.ndarray:
+    q_weight = _default_head_norm_weight() if q_norm_weight is None else q_norm_weight
+    k_weight = _default_head_norm_weight() if k_norm_weight is None else k_norm_weight
+    for label, values in (
+        ("q_norm_weight", q_weight),
+        ("k_norm_weight", k_weight),
+    ):
+        if values.shape != (HEAD_DIM,):
+            raise ValueError(f"{label} shape mismatch: {values.shape} != {(HEAD_DIM,)}")
+    dims = np.arange(0, HEAD_DIM, 2, dtype=np.float32)
+    inv_freq = np.power(np.float32(rope_theta), -dims / np.float32(HEAD_DIM))
+    angles = np.float32(current_token) * inv_freq
+    side = np.concatenate(
+        (
+            q_weight.astype(bfloat16),
+            k_weight.astype(bfloat16),
+            np.cos(angles).astype(bfloat16),
+            np.sin(angles).astype(bfloat16),
+        )
+    )
+    if side.shape != (QK_ROPE_BF16,):
+        raise RuntimeError(f"q/k norm+RoPE side shape mismatch: {side.shape} != {(QK_ROPE_BF16,)}")
+    return side
+
+
+def aux_as_i32(
+    current_token: int = DEFAULT_SCHEDULE.current_token,
+    input_norm_weight: np.ndarray | None = None,
+    post_norm_weight: np.ndarray | None = None,
+    q_norm_weight: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
+) -> np.ndarray:
+    input_weight = _default_norm_weight() if input_norm_weight is None else input_norm_weight
+    post_weight = _default_norm_weight() if post_norm_weight is None else post_norm_weight
+    for label, values in (
+        ("input_norm_weight", input_weight),
+        ("post_norm_weight", post_weight),
+    ):
+        if values.shape != (HIDDEN_DIM,):
+            raise ValueError(f"{label} shape mismatch: {values.shape} != {(HIDDEN_DIM,)}")
+    qk_side = qk_rope_side_bf16(current_token, q_norm_weight, k_norm_weight, rope_theta)
+    payload = np.concatenate(
+        (
+            input_weight.astype(bfloat16),
+            post_weight.astype(bfloat16),
+            qk_side,
+        )
+    )
+    packed = np.frombuffer(payload.tobytes(), dtype=np.int32).copy()
+    if packed.shape != (AUX_DWORDS,):
+        raise RuntimeError(f"aux shape mismatch: {packed.shape} != {(AUX_DWORDS,)}")
+    return packed
+
+
+def weights_with_aux_i32(
+    packed: np.ndarray,
+    current_token: int = DEFAULT_SCHEDULE.current_token,
+    input_norm_weight: np.ndarray | None = None,
+    post_norm_weight: np.ndarray | None = None,
+    q_norm_weight: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
+) -> np.ndarray:
+    weight_words = packed_as_i32(packed)
+    aux_words = aux_as_i32(
+        current_token,
+        input_norm_weight,
+        post_norm_weight,
+        q_norm_weight,
+        k_norm_weight,
+        rope_theta,
+    )
+    combined = np.concatenate((weight_words, aux_words)).astype(np.int32)
+    if combined.shape != (TOTAL_WEIGHT_AND_AUX_I32,):
+        raise RuntimeError(
+            f"weight+aux shape mismatch: {combined.shape} != {(TOTAL_WEIGHT_AND_AUX_I32,)}"
+        )
+    return combined
 
 
 def _chunk_for_tile(packed: np.ndarray, group: int, row: int, chunk: int) -> np.ndarray:
@@ -280,77 +378,30 @@ def _body_payload_word(body: np.ndarray, word: int) -> np.int32:
     return body[block * COMPACT_PACKET_DWORDS + 1 + payload_word]
 
 
-def _bf16_word_to_attention_s16(word: np.int32) -> np.int32:
-    values = np.frombuffer(np.array([word], dtype=np.int32).tobytes(), dtype=bfloat16).astype(np.float32)
-    scaled = values * ATTENTION_QKV_SCALE
-    rounded = np.where(scaled >= 0.0, np.floor(scaled + 0.5), np.ceil(scaled - 0.5)).astype(np.int32)
-    clipped = np.clip(rounded, -32768, 32767)
-    low = int(clipped[0]) & 0xFFFF
-    high = int(clipped[1]) & 0xFFFF
-    return np.array(low | (high << 16), dtype=np.uint32).view(np.int32)
-
-
-def _body_attention_word(body: np.ndarray, word: int) -> np.int32:
-    return _bf16_word_to_attention_s16(_body_payload_word(body, word))
-
-
-def q_payload_body(
-    packed: np.ndarray | None = None,
-    hidden: np.ndarray | None = None,
-) -> np.ndarray:
-    compact = q_body_compact(packed, hidden)
-    return np.array(
-        [_body_attention_word(compact, word) for word in range(Q_BODY_RECORDS * (COMPACT_PACKET_DWORDS - 1))],
-        dtype=np.int32,
-    )
-
-
-def _current_cache_payload_from_body(body: np.ndarray) -> np.ndarray:
-    return np.array([_body_attention_word(body, word) for word in range(CURRENT_DWORDS)], dtype=np.int32)
-
-
-def current_k_payload_body(
-    packed: np.ndarray | None = None,
-    hidden: np.ndarray | None = None,
-) -> np.ndarray:
-    return _current_cache_payload_from_body(k_body_compact(packed, hidden))
-
-
-def current_v_payload_body(
-    packed: np.ndarray | None = None,
-    hidden: np.ndarray | None = None,
-) -> np.ndarray:
-    return _current_cache_payload_from_body(v_body_compact(packed, hidden))
-
-
-def merged_k_cache_payload_body(
-    schedule: DecodeSchedule,
-    packed: np.ndarray | None = None,
-    hidden: np.ndarray | None = None,
-) -> np.ndarray:
-    return _write_current(schedule, make_history_k_cache_payload(schedule), current_k_payload_body(packed, hidden))
-
-
-def merged_v_cache_payload_body(
-    schedule: DecodeSchedule,
-    packed: np.ndarray | None = None,
-    hidden: np.ndarray | None = None,
-) -> np.ndarray:
-    return _write_current(schedule, make_history_v_cache_payload(schedule), current_v_payload_body(packed, hidden))
-
-
-def _normalized_full_vector_bf16(values: np.ndarray) -> np.ndarray:
+def _weighted_normalized_full_vector_bf16(values: np.ndarray, weight: np.ndarray) -> np.ndarray:
     if values.shape != (HIDDEN_DIM,):
         raise ValueError(f"full vector shape mismatch: {values.shape} != {(HIDDEN_DIM,)}")
+    if weight.shape != (HIDDEN_DIM,):
+        raise ValueError(f"norm weight shape mismatch: {weight.shape} != {(HIDDEN_DIM,)}")
     vector = values.astype(np.float32)
-    fixed = np.trunc(vector * REPLAY_FIXED_SCALE).astype(np.int32)
-    sum_sq = int(np.sum(fixed.astype(np.int64) * fixed.astype(np.int64)))
-    denominator = math.isqrt(sum_sq // HIDDEN_DIM + 1)
-    replay = np.empty(HIDDEN_DIM, dtype=bfloat16)
-    for lane in range(HIDDEN_DIM):
-        scaled = _trunc_div(int(fixed[lane]) * 1024, denominator)
-        replay[lane] = bfloat16(scaled / 1024.0)
-    return replay
+    weights = weight.astype(np.float32)
+    scale = np.float32(1.0 / np.sqrt(float(np.mean(vector * vector)) + 0.000001))
+    return (vector * scale * weights).astype(bfloat16)
+
+
+def input_norm_activation(hidden: np.ndarray, input_norm_weight: np.ndarray) -> np.ndarray:
+    return _weighted_normalized_full_vector_bf16(hidden, input_norm_weight)
+
+
+def _post_attention_residual_and_replay(
+    raw_hidden: np.ndarray,
+    o_values: np.ndarray,
+    post_norm_weight: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    if raw_hidden.shape != (HIDDEN_DIM,) or o_values.shape != (HIDDEN_DIM,):
+        raise ValueError(f"post-attention vector shape mismatch: {raw_hidden.shape}/{o_values.shape}")
+    residual = (raw_hidden.astype(np.float32) + o_values.astype(np.float32)).astype(bfloat16)
+    return residual, _weighted_normalized_full_vector_bf16(residual, post_norm_weight)
 
 
 def _activation_slice(values: np.ndarray, chunk: int) -> np.ndarray:
@@ -358,28 +409,179 @@ def _activation_slice(values: np.ndarray, chunk: int) -> np.ndarray:
     return values[start : start + ACT_SLICE_BF16]
 
 
-def _unpack_s16(payload: np.ndarray, lane: int) -> int:
-    word = int(payload[lane >> 1]) & 0xFFFF_FFFF
-    raw = (word >> 16) & 0xFFFF if lane & 1 else word & 0xFFFF
-    return raw - 0x10000 if raw & 0x8000 else raw
+def _body_payload_bf16(body: np.ndarray, records: int) -> np.ndarray:
+    words = np.array(
+        [_body_payload_word(body, word) for word in range(records * (COMPACT_PACKET_DWORDS - 1))],
+        dtype=np.int32,
+    )
+    return np.frombuffer(words.tobytes(), dtype=bfloat16).copy()
+
+
+def _head_rms_norm(values: np.ndarray, weight: np.ndarray) -> np.ndarray:
+    if values.shape[0] % HEAD_DIM != 0:
+        raise ValueError(f"head vector shape mismatch: {values.shape}")
+    if weight.shape != (HEAD_DIM,):
+        raise ValueError(f"head norm shape mismatch: {weight.shape} != {(HEAD_DIM,)}")
+    heads = values.astype(np.float32).reshape(-1, HEAD_DIM)
+    weights = weight.astype(np.float32)
+    output = np.empty_like(heads, dtype=np.float32)
+    for head in range(heads.shape[0]):
+        scale = np.float32(1.0 / np.sqrt(float(np.mean(heads[head] * heads[head])) + 0.000001))
+        output[head] = heads[head] * scale * weights
+    return output.reshape(values.shape).astype(bfloat16)
+
+
+def _apply_rope(values: np.ndarray, current_token: int, rope_theta: float) -> np.ndarray:
+    heads = values.astype(np.float32).reshape(-1, HEAD_DIM)
+    dims = np.arange(0, HEAD_DIM, 2, dtype=np.float32)
+    inv_freq = np.power(np.float32(rope_theta), -dims / np.float32(HEAD_DIM))
+    angles = np.float32(current_token) * inv_freq
+    cos = np.cos(angles)
+    sin = np.sin(angles)
+    output = np.empty_like(heads)
+    even = heads[:, 0::2]
+    odd = heads[:, 1::2]
+    output[:, 0::2] = even * cos - odd * sin
+    output[:, 1::2] = even * sin + odd * cos
+    return output.reshape(values.shape).astype(bfloat16)
+
+
+def q_payload_body(
+    packed: np.ndarray | None = None,
+    hidden: np.ndarray | None = None,
+    q_norm_weight: np.ndarray | None = None,
+    current_token: int = DEFAULT_SCHEDULE.current_token,
+    rope_theta: float = 1_000_000.0,
+) -> np.ndarray:
+    compact = q_body_compact(packed, hidden)
+    q_values = _body_payload_bf16(compact, Q_BODY_RECORDS)
+    q_norm = _default_head_norm_weight() if q_norm_weight is None else q_norm_weight
+    q_payload = _apply_rope(_head_rms_norm(q_values, q_norm), current_token, rope_theta)
+    return np.frombuffer(q_payload.tobytes(), dtype=np.int32).copy()
+
+
+def _current_cache_payload(values: np.ndarray) -> np.ndarray:
+    words = np.frombuffer(values.astype(bfloat16).tobytes(), dtype=np.int32).copy()
+    if words.shape != (CURRENT_DWORDS,):
+        raise RuntimeError(f"current cache payload shape mismatch: {words.shape} != {(CURRENT_DWORDS,)}")
+    return words
+
+
+def current_k_payload_body(
+    packed: np.ndarray | None = None,
+    hidden: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    current_token: int = DEFAULT_SCHEDULE.current_token,
+    rope_theta: float = 1_000_000.0,
+) -> np.ndarray:
+    compact = k_body_compact(packed, hidden)
+    k_values = _body_payload_bf16(compact, KV_BODY_RECORDS)
+    k_norm = _default_head_norm_weight() if k_norm_weight is None else k_norm_weight
+    current_k = _apply_rope(_head_rms_norm(k_values, k_norm), current_token, rope_theta)
+    return _current_cache_payload(current_k)
+
+
+def current_v_payload_body(
+    packed: np.ndarray | None = None,
+    hidden: np.ndarray | None = None,
+) -> np.ndarray:
+    compact = v_body_compact(packed, hidden)
+    return _current_cache_payload(_body_payload_bf16(compact, KV_BODY_RECORDS))
+
+
+def _history_value(token: int, head: int, dim: int, is_v: bool) -> float:
+    if is_v:
+        raw = ((head + 5) * 7 + token * 11 + dim * 2) % 127 - 63
+    else:
+        raw = ((head + 3) * 9 + token * 5 + dim * 3) % 127 - 63
+    return raw / 256.0
+
+
+def bf16_cache_payload(schedule: DecodeSchedule, cache_values: np.ndarray) -> np.ndarray:
+    expected = (schedule.total_context, KV_HEADS, HEAD_DIM)
+    if cache_values.shape != expected:
+        raise ValueError(f"bf16 cache shape mismatch: {cache_values.shape} != {expected}")
+    logical = np.empty(schedule.logical_cache_dwords, dtype=np.int32)
+    for token in range(schedule.total_context):
+        for head in range(KV_HEADS):
+            for dim_pair in range(HEAD_DWORDS):
+                low_dim = dim_pair * 2
+                pair = cache_values[token, head, low_dim : low_dim + 2].astype(bfloat16)
+                logical[logical_cache_index(token, head, dim_pair)] = np.frombuffer(pair.tobytes(), dtype=np.int32)[0]
+    return pack_logical_cache_to_npu(schedule, logical)
+
+
+def make_history_k_cache_payload_bf16(schedule: DecodeSchedule) -> np.ndarray:
+    values = np.empty((schedule.total_context, KV_HEADS, HEAD_DIM), dtype=bfloat16)
+    for token in range(schedule.total_context):
+        for head in range(KV_HEADS):
+            for dim in range(HEAD_DIM):
+                values[token, head, dim] = bfloat16(_history_value(token, head, dim, False))
+    return bf16_cache_payload(schedule, values)
+
+
+def make_history_v_cache_payload_bf16(schedule: DecodeSchedule) -> np.ndarray:
+    values = np.empty((schedule.total_context, KV_HEADS, HEAD_DIM), dtype=bfloat16)
+    for token in range(schedule.total_context):
+        for head in range(KV_HEADS):
+            for dim in range(HEAD_DIM):
+                values[token, head, dim] = bfloat16(_history_value(token, head, dim, True))
+    return bf16_cache_payload(schedule, values)
+
+
+def merged_k_cache_payload_body(
+    schedule: DecodeSchedule,
+    packed: np.ndarray | None = None,
+    hidden: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
+    history_cache: np.ndarray | None = None,
+) -> np.ndarray:
+    base = make_history_k_cache_payload_bf16(schedule) if history_cache is None else history_cache
+    return _write_current(
+        schedule,
+        base,
+        current_k_payload_body(packed, hidden, k_norm_weight, schedule.current_token, rope_theta),
+    )
+
+
+def merged_v_cache_payload_body(
+    schedule: DecodeSchedule,
+    packed: np.ndarray | None = None,
+    hidden: np.ndarray | None = None,
+    history_cache: np.ndarray | None = None,
+) -> np.ndarray:
+    base = make_history_v_cache_payload_bf16(schedule) if history_cache is None else history_cache
+    return _write_current(schedule, base, current_v_payload_body(packed, hidden))
 
 
 def attention_payload_bf16(
     schedule: DecodeSchedule,
     packed: np.ndarray,
     hidden: np.ndarray,
+    q_norm_weight: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
+    history_k_cache: np.ndarray | None = None,
+    history_v_cache: np.ndarray | None = None,
 ) -> np.ndarray:
-    attention_words = attention_payload_from_qkv(
-        schedule,
-        q_payload_body(packed, hidden),
-        merged_k_cache_payload_body(schedule, packed, hidden),
-        merged_v_cache_payload_body(schedule, packed, hidden),
-    )
-    values = np.empty(attention_words.shape[0] * 2, dtype=bfloat16)
-    for lane in range(values.shape[0]):
-        values[lane] = bfloat16(_unpack_s16(attention_words, lane) / 1024.0)
-    return np.frombuffer(values.tobytes(), dtype=np.int32).copy()
-
+    q_words = q_payload_body(packed, hidden, q_norm_weight, schedule.current_token, rope_theta)
+    k_cache = merged_k_cache_payload_body(schedule, packed, hidden, k_norm_weight, rope_theta, history_k_cache)
+    v_cache = merged_v_cache_payload_body(schedule, packed, hidden, history_v_cache)
+    q = np.frombuffer(q_words.tobytes(), dtype=bfloat16).astype(np.float32).reshape(-1, HEAD_DIM)
+    k_values = np.frombuffer(unpack_npu_cache_to_logical(schedule, k_cache).tobytes(), dtype=bfloat16).astype(np.float32)
+    v_values = np.frombuffer(unpack_npu_cache_to_logical(schedule, v_cache).tobytes(), dtype=bfloat16).astype(np.float32)
+    k_values = k_values.reshape(schedule.total_context, KV_HEADS, HEAD_DIM)[: schedule.current_token + 1]
+    v_values = v_values.reshape(schedule.total_context, KV_HEADS, HEAD_DIM)[: schedule.current_token + 1]
+    output = np.empty((q.shape[0], HEAD_DIM), dtype=bfloat16)
+    score_scale = np.float32(1.0 / np.sqrt(HEAD_DIM))
+    for q_head in range(q.shape[0]):
+        kv_head = q_head // (q.shape[0] // KV_HEADS)
+        scores = np.einsum("d,td->t", q[q_head], k_values[:, kv_head, :]) * score_scale
+        weights = np.exp(scores - np.max(scores))
+        weights /= np.sum(weights)
+        output[q_head] = np.einsum("t,td->d", weights, v_values[:, kv_head, :]).astype(bfloat16)
+    return np.frombuffer(output.reshape(-1).tobytes(), dtype=np.int32).copy()
 
 def _compact_payload_bf16(compact: np.ndarray) -> np.ndarray:
     return np.frombuffer(compact[1:].tobytes(), dtype=bfloat16).copy()
@@ -395,8 +597,29 @@ def _full_vector_from_compacts(compacts: np.ndarray, records: int) -> np.ndarray
     return np.concatenate(parts).astype(bfloat16)
 
 
-def q4nx_o_global_compacts(schedule: DecodeSchedule, packed: np.ndarray, hidden: np.ndarray) -> np.ndarray:
-    activation_values = np.frombuffer(attention_payload_bf16(schedule, packed, hidden).tobytes(), dtype=bfloat16)
+def q4nx_o_global_compacts(
+    schedule: DecodeSchedule,
+    packed: np.ndarray,
+    hidden: np.ndarray,
+    q_norm_weight: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
+    history_k_cache: np.ndarray | None = None,
+    history_v_cache: np.ndarray | None = None,
+) -> np.ndarray:
+    activation_values = np.frombuffer(
+        attention_payload_bf16(
+            schedule,
+            packed,
+            hidden,
+            q_norm_weight,
+            k_norm_weight,
+            rope_theta,
+            history_k_cache,
+            history_v_cache,
+        ).tobytes(),
+        dtype=bfloat16,
+    )
     compacts = []
     for block in range(O_BODY_RECORDS):
         columns = []
@@ -419,8 +642,17 @@ def q4nx_o_global_compacts(schedule: DecodeSchedule, packed: np.ndarray, hidden:
     return np.concatenate(compacts).astype(np.int32)
 
 
-def q4nx_o_global_compact(schedule: DecodeSchedule, packed: np.ndarray, hidden: np.ndarray) -> np.ndarray:
-    return q4nx_o_global_compacts(schedule, packed, hidden)[:COMPACT_PACKET_DWORDS]
+def q4nx_o_global_compact(
+    schedule: DecodeSchedule,
+    packed: np.ndarray,
+    hidden: np.ndarray,
+    q_norm_weight: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
+) -> np.ndarray:
+    return q4nx_o_global_compacts(schedule, packed, hidden, q_norm_weight, k_norm_weight, rope_theta)[
+        :COMPACT_PACKET_DWORDS
+    ]
 
 
 def _upgate_tile_output(
@@ -473,11 +705,23 @@ def _q4nx_upgate_global_compact_from_replay(
 def q4nx_upgate_global_compact(
     schedule: DecodeSchedule,
     packed: np.ndarray,
-    hidden: np.ndarray,
+    qkv_activation: np.ndarray,
+    raw_hidden: np.ndarray,
+    post_norm_weight: np.ndarray,
     replay: int,
+    q_norm_weight: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
 ) -> np.ndarray:
-    o_values = _full_vector_from_compacts(q4nx_o_global_compacts(schedule, packed, hidden), O_BODY_RECORDS)
-    replay_values = _normalized_full_vector_bf16(o_values)
+    o_values = _full_vector_from_compacts(
+        q4nx_o_global_compacts(schedule, packed, qkv_activation, q_norm_weight, k_norm_weight, rope_theta),
+        O_BODY_RECORDS,
+    )
+    _post_residual, replay_values = _post_attention_residual_and_replay(
+        raw_hidden,
+        o_values,
+        post_norm_weight,
+    )
     return _q4nx_upgate_global_compact_from_replay(replay_values, packed, replay)
 
 
@@ -504,9 +748,43 @@ def _swiglu_bf16_inputs(input_slice: np.ndarray) -> np.ndarray:
     return (up * gate * _sigmoid_approx(gate)).astype(bfloat16)
 
 
-def swiglu_activation_payload(schedule: DecodeSchedule, packed: np.ndarray, hidden: np.ndarray) -> np.ndarray:
-    o_values = _full_vector_from_compacts(q4nx_o_global_compacts(schedule, packed, hidden), O_BODY_RECORDS)
-    replay_values = _normalized_full_vector_bf16(o_values)
+def _ffn_replay_values(
+    schedule: DecodeSchedule,
+    packed: np.ndarray,
+    qkv_activation: np.ndarray,
+    raw_hidden: np.ndarray,
+    post_norm_weight: np.ndarray,
+    q_norm_weight: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    o_values = _full_vector_from_compacts(
+        q4nx_o_global_compacts(schedule, packed, qkv_activation, q_norm_weight, k_norm_weight, rope_theta),
+        O_BODY_RECORDS,
+    )
+    return _post_attention_residual_and_replay(raw_hidden, o_values, post_norm_weight)
+
+
+def swiglu_activation_payload(
+    schedule: DecodeSchedule,
+    packed: np.ndarray,
+    qkv_activation: np.ndarray,
+    raw_hidden: np.ndarray,
+    post_norm_weight: np.ndarray,
+    q_norm_weight: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
+) -> np.ndarray:
+    _post_residual, replay_values = _ffn_replay_values(
+        schedule,
+        packed,
+        qkv_activation,
+        raw_hidden,
+        post_norm_weight,
+        q_norm_weight,
+        k_norm_weight,
+        rope_theta,
+    )
     slices = []
     for slice_index in range(SWIGLU_SLICES):
         up = _q4nx_upgate_global_compact_from_replay(replay_values, packed, slice_index * 2)[1:]
@@ -518,8 +796,26 @@ def swiglu_activation_payload(schedule: DecodeSchedule, packed: np.ndarray, hidd
     return np.frombuffer(activation.tobytes(), dtype=np.int32).copy()
 
 
-def q4nx_down_global_compacts(schedule: DecodeSchedule, packed: np.ndarray, hidden: np.ndarray) -> np.ndarray:
-    activation = swiglu_activation_payload(schedule, packed, hidden)
+def q4nx_down_global_compacts(
+    schedule: DecodeSchedule,
+    packed: np.ndarray,
+    qkv_activation: np.ndarray,
+    raw_hidden: np.ndarray,
+    post_norm_weight: np.ndarray,
+    q_norm_weight: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
+) -> np.ndarray:
+    activation = swiglu_activation_payload(
+        schedule,
+        packed,
+        qkv_activation,
+        raw_hidden,
+        post_norm_weight,
+        q_norm_weight,
+        k_norm_weight,
+        rope_theta,
+    )
     activation_values = np.frombuffer(activation.tobytes(), dtype=bfloat16)
     compacts = []
     for block in range(DOWN_BODY_RECORDS):
@@ -543,23 +839,90 @@ def q4nx_down_global_compacts(schedule: DecodeSchedule, packed: np.ndarray, hidd
     return np.concatenate(compacts).astype(np.int32)
 
 
-def q4nx_down_global_compact(schedule: DecodeSchedule, packed: np.ndarray, hidden: np.ndarray) -> np.ndarray:
-    return q4nx_down_global_compacts(schedule, packed, hidden)[:COMPACT_PACKET_DWORDS]
+def q4nx_down_global_compact(
+    schedule: DecodeSchedule,
+    packed: np.ndarray,
+    qkv_activation: np.ndarray,
+    raw_hidden: np.ndarray,
+    post_norm_weight: np.ndarray,
+    q_norm_weight: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
+) -> np.ndarray:
+    return q4nx_down_global_compacts(
+        schedule,
+        packed,
+        qkv_activation,
+        raw_hidden,
+        post_norm_weight,
+        q_norm_weight,
+        k_norm_weight,
+        rope_theta,
+    )[:COMPACT_PACKET_DWORDS]
 
 
-def q4nx_down_hidden_output(schedule: DecodeSchedule, packed: np.ndarray, hidden: np.ndarray) -> np.ndarray:
-    values = _full_vector_from_compacts(q4nx_down_global_compacts(schedule, packed, hidden), DOWN_BODY_RECORDS)
-    return np.frombuffer(values.tobytes(), dtype=np.int32).copy()
+def q4nx_down_hidden_output(
+    schedule: DecodeSchedule,
+    packed: np.ndarray,
+    qkv_activation: np.ndarray,
+    raw_hidden: np.ndarray,
+    post_norm_weight: np.ndarray,
+    q_norm_weight: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
+) -> np.ndarray:
+    residual, _ffn_replay = _ffn_replay_values(
+        schedule,
+        packed,
+        qkv_activation,
+        raw_hidden,
+        post_norm_weight,
+        q_norm_weight,
+        k_norm_weight,
+        rope_theta,
+    )
+    down_values = _full_vector_from_compacts(
+        q4nx_down_global_compacts(
+            schedule,
+            packed,
+            qkv_activation,
+            raw_hidden,
+            post_norm_weight,
+            q_norm_weight,
+            k_norm_weight,
+            rope_theta,
+        ),
+        DOWN_BODY_RECORDS,
+    )
+    output = (residual.astype(np.float32) + down_values.astype(np.float32)).astype(bfloat16)
+    return np.frombuffer(output.tobytes(), dtype=np.int32).copy()
 
 
 def expected_output(
     schedule: DecodeSchedule = DEFAULT_SCHEDULE,
     packed: np.ndarray | None = None,
     hidden: np.ndarray | None = None,
+    input_norm_weight: np.ndarray | None = None,
+    post_norm_weight: np.ndarray | None = None,
+    q_norm_weight: np.ndarray | None = None,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
 ) -> np.ndarray:
     weights = make_packed_weights() if packed is None else packed
-    values = make_hidden_bf16() if hidden is None else hidden
-    return q4nx_down_hidden_output(schedule, weights, values)
+    raw_hidden = make_hidden_bf16() if hidden is None else hidden
+    input_weight = _default_norm_weight() if input_norm_weight is None else input_norm_weight
+    post_weight = _default_norm_weight() if post_norm_weight is None else post_norm_weight
+    qkv_activation = input_norm_activation(raw_hidden, input_weight)
+    return q4nx_down_hidden_output(
+        schedule,
+        weights,
+        qkv_activation,
+        raw_hidden,
+        post_weight,
+        q_norm_weight,
+        k_norm_weight,
+        rope_theta,
+    )
 
 
 def validate_cache_writeback(
@@ -568,37 +931,54 @@ def validate_cache_writeback(
     got_v: np.ndarray,
     packed: np.ndarray,
     hidden: np.ndarray,
+    k_norm_weight: np.ndarray | None = None,
+    rope_theta: float = 1_000_000.0,
+    history_k_cache: np.ndarray | None = None,
+    history_v_cache: np.ndarray | None = None,
 ) -> list[str]:
     errors = validate_cache_layout_contract(schedule)
-    expected_k = merged_k_cache_payload_body(schedule, packed, hidden)
-    expected_v = merged_v_cache_payload_body(schedule, packed, hidden)
+    expected_k = merged_k_cache_payload_body(schedule, packed, hidden, k_norm_weight, rope_theta, history_k_cache)
+    expected_v = merged_v_cache_payload_body(schedule, packed, hidden, history_v_cache)
     if got_k.shape != expected_k.shape:
         errors.append(f"K cache shape mismatch: {got_k.shape} != {expected_k.shape}")
     if got_v.shape != expected_v.shape:
         errors.append(f"V cache shape mismatch: {got_v.shape} != {expected_v.shape}")
     if errors:
         return errors
-    _validate_s16_cache("K", expected_k, got_k, errors)
-    _validate_s16_cache("V", expected_v, got_v, errors)
+    _validate_bf16_cache("K", expected_k, got_k, errors, 0.035)
+    _validate_bf16_cache("V", expected_v, got_v, errors, 0.05)
     return errors
 
 
-def _validate_s16_cache(label: str, expected: np.ndarray, got: np.ndarray, errors: list[str]) -> None:
-    mismatch_count = 0
-    for word_idx in range(expected.shape[0]):
-        for lane in range(2):
-            expected_lane = _unpack_s16(expected, word_idx * 2 + lane)
-            got_lane = _unpack_s16(got, word_idx * 2 + lane)
-            diff = abs(expected_lane - got_lane)
-            if diff > CURRENT_CACHE_S16_TOL:
-                if mismatch_count < 16:
-                    errors.append(
-                        f"{label} cache word {word_idx} lane {lane}: "
-                        f"expected={expected_lane} got={got_lane} diff={diff}"
-                    )
-                mismatch_count += 1
-    if mismatch_count > 16:
-        errors.append(f"{mismatch_count - 16} additional {label} cache lane mismatches")
+def _validate_bf16_cache(
+    label: str,
+    expected: np.ndarray,
+    got: np.ndarray,
+    errors: list[str],
+    abs_tol: float,
+) -> None:
+    expected_values = np.frombuffer(expected.tobytes(), dtype=bfloat16).astype(np.float32)
+    got_values = np.frombuffer(got.tobytes(), dtype=bfloat16).astype(np.float32)
+    expected_bad = np.flatnonzero(~np.isfinite(expected_values))
+    got_bad = np.flatnonzero(~np.isfinite(got_values))
+    for lane in expected_bad[:16]:
+        errors.append(f"{label} cache expected lane {int(lane)} is not finite: {float(expected_values[lane])}")
+    for lane in got_bad[:16]:
+        errors.append(f"{label} cache got lane {int(lane)} is not finite: {float(got_values[lane])}")
+    if expected_bad.size > 16:
+        errors.append(f"{expected_bad.size - 16} additional non-finite expected {label} cache lanes")
+    if got_bad.size > 16:
+        errors.append(f"{got_bad.size - 16} additional non-finite got {label} cache lanes")
+    diff = np.abs(expected_values - got_values)
+    finite = np.isfinite(expected_values) & np.isfinite(got_values)
+    mismatch = np.flatnonzero((diff > abs_tol) & finite)
+    for lane in mismatch[:16]:
+        errors.append(
+            f"{label} cache lane {int(lane)}: expected={float(expected_values[lane]):.6f} "
+            f"got={float(got_values[lane]):.6f} abs={float(diff[lane]):.6f}"
+        )
+    if mismatch.size > 16:
+        errors.append(f"{mismatch.size - 16} additional {label} cache lane mismatches")
 
 
 def validate_expected_output(expected: np.ndarray, got: np.ndarray) -> list[str]:
@@ -633,10 +1013,10 @@ def validate_expected_output(expected: np.ndarray, got: np.ndarray) -> list[str]
 def route_summary(schedule: DecodeSchedule) -> list[str]:
     return [
         f"case={CASE_NAME}",
-        "closed_loop_1=host hidden -> c1r2 packet0 replay -> main16 Q4NX Q/K/V -> c1r3 bf16-to-s16 attention ABI -> current K/V writeback -> KV scan -> kv16 attention -> packet2 -> main16 O",
-        "closed_loop_2=bf16 attention packet2 plus Q4NX O -> c1r2 bf16 replay -> main16 Q4NX up/gate -> c6r2 bf16-input SwiGLU",
+        "closed_loop_1=host raw hidden+RMSNorm weights -> c1r2 input RMSNorm replay -> main16 Q4NX Q/K/V -> c1r3 Q/K norm+RoPE bf16 ABI -> current K/V writeback -> KV scan -> bf16 attention -> packet2 -> main16 O",
+        "closed_loop_2=bf16 attention packet2 plus Q4NX O -> c1r2 residual+post RMSNorm replay -> main16 Q4NX up/gate -> c6r2 bf16-input SwiGLU",
         "closed_loop_3=packet1 down activation plus row1 S2MM4/5 Q4NX weights -> main16 DMA0/DMA1",
         "output=main16 Q4NX down compact records -> row1/c1r1 compact -> c1r2 compact drain",
         f"decode_token={schedule.current_token}, blocks={schedule.kv_blocks}, tail={schedule.tail_tokens}",
-        f"hidden={HIDDEN_DWORDS} dwords, qkv_weight_chunks={QKV_BODY_WEIGHT_CHUNKS}, tail_weight_chunks={FULL_LAYER_TOTAL_WEIGHT_CHUNKS - QKV_BODY_WEIGHT_CHUNKS}, host_output={OUTPUT_DWORDS} dwords",
+        f"hidden={HIDDEN_DWORDS} dwords, aux={AUX_DWORDS} dwords, qkv_weight_chunks={QKV_BODY_WEIGHT_CHUNKS}, tail_weight_chunks={FULL_LAYER_TOTAL_WEIGHT_CHUNKS - QKV_BODY_WEIGHT_CHUNKS}, host_output={OUTPUT_DWORDS} dwords",
     ]

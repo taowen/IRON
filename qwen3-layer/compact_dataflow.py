@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from attention_dataflow import HUB_Q_OUT_BDS, HUB_RETURN_IN_BDS
 from contract import (
     C1R2_PACKET_DWORDS,
     C1R2_UPGATE_REPLAYS,
@@ -73,7 +72,14 @@ MAIN_RECORD_BDS = (2, 3, 4, 5, 6, 7)
 WEIGHT_PATCH_INPUT_BDS = ((14, 15), (30, 40))
 WEIGHT_ROW_BDS = ((16, 17), (44, 45), (18, 19), (46, 47))
 
-HUB_FFN_IN_BD = 36
+HUB_Q_IN_CHANNEL = 1
+HUB_Q_IN_BD = 24
+HUB_Q_OUT_CHANNELS = (1, 2, 3, 4)
+HUB_Q_OUT_BDS = (25, 2, 26, 3)
+HUB_RETURN_IN_CHANNELS = (2, 3, 4, 5)
+HUB_RETURN_IN_BDS = (4, 28, 6, 30)
+HUB_FFN_IN_CHANNEL = 0
+HUB_FFN_IN_BD = 0
 HUB_ATTENTION_OUT_BD = 34
 HUB_FFN_OUT_BD = 35
 
@@ -535,10 +541,10 @@ def _bridge(phase_trace: tuple[CompactPhase, ...]) -> str:
 
 def _hub() -> str:
     q_outs: list[str] = []
-    for window, bd_id in enumerate(HUB_Q_OUT_BDS):
+    for window, (channel, bd_id) in enumerate(zip(HUB_Q_OUT_CHANNELS, HUB_Q_OUT_BDS, strict=True)):
         next_start = f"^q{window + 1}_start" if window + 1 < 4 else "^return0_start"
         q_outs.append(f"""    ^q{window}_start:
-      %q{window}_dma = aie.dma_start(MM2S, {window}, ^q{window}_out, {next_start})
+      %q{window}_dma = aie.dma_start(MM2S, {channel}, ^q{window}_out, {next_start})
     ^q{window}_out:
       aie.use_lock(%hub_q_full, AcquireGreaterEqual, 1)
       aie.dma_bd(%hub_q : memref<{Q_DWORDS}xi32>, {window * WINDOW_DWORDS}, {WINDOW_DWORDS}) {{bd_id = {bd_id} : i32}}
@@ -546,10 +552,10 @@ def _hub() -> str:
       aie.next_bd ^q{window}_out""")
 
     return_ins: list[str] = []
-    for window, bd_id in enumerate(HUB_RETURN_IN_BDS):
+    for window, (channel, bd_id) in enumerate(zip(HUB_RETURN_IN_CHANNELS, HUB_RETURN_IN_BDS, strict=True)):
         next_start = f"^return{window + 1}_start" if window + 1 < 4 else "^ffn_in_start"
         return_ins.append(f"""    ^return{window}_start:
-      %return{window}_dma = aie.dma_start(S2MM, {window + 1}, ^return{window}_in, {next_start})
+      %return{window}_dma = aie.dma_start(S2MM, {channel}, ^return{window}_in, {next_start})
     ^return{window}_in:
       aie.use_lock(%hub_return_empty, AcquireGreaterEqual, 1)
       aie.dma_bd(%hub_return : memref<{Q_DWORDS}xi32>, {window * WINDOW_DWORDS}, {WINDOW_DWORDS}) {{bd_id = {bd_id} : i32}}
@@ -557,9 +563,9 @@ def _hub() -> str:
       aie.next_bd ^return{window}_in""")
 
     return f"""
-    %hub_q = aie.buffer(%hub) {{sym_name = "hub_q"}} : memref<{Q_DWORDS}xi32>
-    %hub_return = aie.buffer(%hub) {{sym_name = "hub_return"}} : memref<{Q_DWORDS}xi32>
-    %hub_ffn = aie.buffer(%hub) {{sym_name = "hub_ffn"}} : memref<{C6R2_HALF_DWORDS}xi32>
+    %hub_q = aie.buffer(%hub) {{address = 147456 : i32, sym_name = "hub_q"}} : memref<{Q_DWORDS}xi32>
+    %hub_return = aie.buffer(%hub) {{address = 163840 : i32, sym_name = "hub_return"}} : memref<{Q_DWORDS}xi32>
+    %hub_ffn = aie.buffer(%hub) {{address = 180224 : i32, sym_name = "hub_ffn"}} : memref<{C6R2_HALF_DWORDS}xi32>
     %hub_q_empty = aie.lock(%hub, 0) {{init = 4 : i32, sym_name = "hub_q_empty"}}
     %hub_q_full = aie.lock(%hub, 1) {{init = 0 : i32, sym_name = "hub_q_full"}}
     %hub_return_empty = aie.lock(%hub, 2) {{init = 4 : i32, sym_name = "hub_return_empty"}}
@@ -567,10 +573,10 @@ def _hub() -> str:
 {lock_pair("hub", "ffn", 4)}
 
     %hub_dma = aie.memtile_dma(%hub) {{
-      %q_in_dma = aie.dma_start(S2MM, 0, ^q_in, ^q0_start)
+      %q_in_dma = aie.dma_start(S2MM, {HUB_Q_IN_CHANNEL}, ^q_in, ^q0_start)
     ^q_in:
       aie.use_lock(%hub_q_empty, AcquireGreaterEqual, 4)
-      aie.dma_bd(%hub_q : memref<{Q_DWORDS}xi32>, 0, {Q_DWORDS}) {{bd_id = 0 : i32}}
+      aie.dma_bd(%hub_q : memref<{Q_DWORDS}xi32>, 0, {Q_DWORDS}) {{bd_id = {HUB_Q_IN_BD} : i32}}
       aie.use_lock(%hub_q_full, Release, 4)
       aie.next_bd ^q_in
 
@@ -579,7 +585,7 @@ def _hub() -> str:
 {chr(10).join(return_ins)}
 
     ^ffn_in_start:
-      %ffn_in_dma = aie.dma_start(S2MM, 5, ^ffn_in, ^packet_out_start)
+      %ffn_in_dma = aie.dma_start(S2MM, {HUB_FFN_IN_CHANNEL}, ^ffn_in, ^packet_out_start)
     ^ffn_in:
       aie.use_lock(%hub_ffn_empty, AcquireGreaterEqual, 1)
       aie.dma_bd(%hub_ffn : memref<{C6R2_HALF_DWORDS}xi32>, 0, {C6R2_HALF_DWORDS}) {{bd_id = {HUB_FFN_IN_BD} : i32}}

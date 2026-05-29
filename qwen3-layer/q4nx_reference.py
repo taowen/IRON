@@ -106,10 +106,7 @@ def q4nx_matvec_from_chunk(packed_chunk: np.ndarray, activation_slice: np.ndarra
 
     grouped_weights = weights_u4.reshape(M_PER_TILE, GROUPS_PER_CHUNK, GROUP_SIZE)
     grouped_act = activation_slice.astype(np.float32).reshape(GROUPS_PER_CHUNK, GROUP_SIZE)
-    dequant = (
-        (grouped_weights - zeros.astype(np.float32)[:, :, None])
-        * scales.astype(np.float32)[:, :, None]
-    ).astype(bfloat16).astype(np.float32)
+    dequant = (grouped_weights - zeros[:, :, None]) * scales[:, :, None]
     return np.sum(
         dequant * grouped_act[None, :, :],
         axis=(1, 2),

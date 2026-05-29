@@ -210,7 +210,7 @@ stride 描述：
 
 这意味着如果你的算子需要描述 20 种不同的搬运模式，16 个 BD 不够用。你必须用 BD ring 复用（同一个 BD 反复执行）、iteration field（让一个 BD 自动递增地址）、或 queue repeat count（同一个 BD 反复入队）。
 
-Memtile 的 BD 更多一些，但有 bank 规则：**偶数 channel 只能用 BD 0-23，奇数 channel 只能用 BD 24-47**。违反这个规则不会编译报错，但运行时会静默死锁。
+Memtile 的 BD 更多一些，但有 bank 规则：**偶数 channel 只能用 BD 0-23，奇数 channel 只能用 BD 24-47**。违反这个规则不会编译报错，但运行时会静默死锁。第九章会展示这在实际编排中的影响。
 
 ### Iterated BD：一个 BD 扫描多个 Block
 
@@ -328,12 +328,7 @@ NPU 死锁的表现是 **timeout**——runtime 等不到 NPU 完成。定位困
 4. **多 producer 共用 channel**：两个不相关的 producer 往同一个 physical channel 写，顺序不确定 → lock 计数混乱
 5. **counting lock 计数不平衡**：producer release 4 但只有 3 个 consumer release back → 永久少 1
 
-### 调试直觉
-
-如果 NPU 返回 timeout：
-- 首先怀疑 lock。检查每个 lock 的 acquire/release 是否配对
-- 其次怀疑 BD bank 规则。Memtile 的偶/奇 channel 用对了吗？
-- 然后检查 iteration/repeat 是否配对。只有 iteration 没有 repeat = 只发一次就停
+记住一条经验法则：**NPU timeout ≈ 先查 lock 配对，再查 BD bank，再查 iteration/repeat**。
 
 ---
 
@@ -451,7 +446,7 @@ CPU 思维：一步一步来，每步都"调用"一个函数，等它"返回"，
   - Lock: 连接 A 和 B 的 ping-pong 同步
   - Stream: A 的 MM2S → B 的 S2MM
 
-执行阶段（运行时）：
+执行阶段（运行时，第十章详述）：
   - Host 填好输入 BO、权重 BO
   - Host 提交 runtime sequence
   - NPU 自动运转，数据流过所有阶段

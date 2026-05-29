@@ -5,8 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from attention_dataflow import (
-    HUB_Q_OUT_BDS,
-    HUB_RETURN_IN_BDS,
     KV_OUT_BDS,
     SHAPE_A_TILES,
     SHAPE_B_TILES,
@@ -61,6 +59,12 @@ from compact_dataflow import (
     DOWN_GLOBAL_PACKET_ID,
     FFN_GLOBAL_PACKET_ID,
     FULL_REPLAY_PACKET_ID,
+    HUB_FFN_IN_CHANNEL,
+    HUB_Q_IN_CHANNEL,
+    HUB_Q_OUT_BDS,
+    HUB_Q_OUT_CHANNELS,
+    HUB_RETURN_IN_BDS,
+    HUB_RETURN_IN_CHANNELS,
     K_GLOBAL_PACKET_ID,
     MAIN_CHUNK_DWORDS,
     MAIN_RECORD_DWORDS,
@@ -117,6 +121,9 @@ from cases.currentkv_full_layer_q4nx_down_reference import (
     HIDDEN_DWORDS,
     OUTPUT_DWORDS,
     PATCH_WEIGHT_BF16,
+    QK_ROPE_DWORDS,
+    RMS_NORM_DWORDS,
+    TOTAL_WEIGHT_AND_AUX_I32,
     TOTAL_WEIGHT_I32,
 )
 from cases.currentkv_kvscan_attention_kv16_generate import (
@@ -132,7 +139,6 @@ from cases.currentkv_kvscan_attention_kv16_generate import (
     _kv_split_scan_memtile,
     _push_current_cache_write,
     _push_kv_scan_from_cache,
-    _shape_a_multiblock,
     _shape_blocks_name,
     _shape_runtime_start_name,
     _shape_tail_tokens_name,
@@ -170,7 +176,7 @@ def _runtime_sequence(schedule: DecodeSchedule) -> str:
     lines = [
         f"    aie.runtime_sequence(%k_cache: memref<{schedule.kv_cache_dwords}xi32>, "
         f"%v_cache: memref<{schedule.kv_cache_dwords}xi32>, "
-        f"%weights: memref<{TOTAL_WEIGHT_I32}xi32>, "
+        f"%weights: memref<{TOTAL_WEIGHT_AND_AUX_I32}xi32>, "
         f"%output: memref<{OUTPUT_DWORDS}xi32>, "
         f"%hidden: memref<{HIDDEN_DWORDS}xi32>) {{"
     ]
@@ -179,6 +185,18 @@ def _runtime_sequence(schedule: DecodeSchedule) -> str:
         lines.append(npu_rtp_write(_shape_blocks_name(shape_a_symbol(window)), 0, schedule.kv_blocks))
         lines.append(npu_rtp_write(_shape_blocks_name(shape_b_symbol(window)), 0, schedule.kv_blocks))
         lines.append(npu_rtp_write(_shape_tail_tokens_name(shape_a_symbol(window)), 0, schedule.tail_tokens))
+    lines.extend(
+        (
+            npu_writebd(
+                1,
+                10,
+                QK_ROPE_DWORDS,
+                (TOTAL_WEIGHT_I32 + RMS_NORM_DWORDS) * 4,
+            ),
+            npu_address_patch(1, 10, 2, (TOTAL_WEIGHT_I32 + RMS_NORM_DWORDS) * 4),
+            npu_push_queue(1, "MM2S", 1, 10),
+        )
+    )
     lines.append(npu_set_lock("post_runtime_start", 1))
     for window in range(4):
         lines.append(npu_set_lock(_shape_runtime_start_name(shape_a_symbol(window)), 1))
@@ -193,6 +211,12 @@ def _runtime_sequence(schedule: DecodeSchedule) -> str:
             npu_writebd(1, 12, HIDDEN_DWORDS, 0),
             npu_address_patch(1, 12, 4, 0),
             npu_push_queue(1, "MM2S", 0, 12),
+            npu_writebd(1, 14, HIDDEN_DWORDS, TOTAL_WEIGHT_I32 * 4),
+            npu_address_patch(1, 14, 2, TOTAL_WEIGHT_I32 * 4),
+            npu_push_queue(1, "MM2S", 0, 14),
+            npu_writebd(1, 15, HIDDEN_DWORDS, (TOTAL_WEIGHT_I32 + HIDDEN_DWORDS) * 4),
+            npu_address_patch(1, 15, 2, (TOTAL_WEIGHT_I32 + HIDDEN_DWORDS) * 4),
+            npu_push_queue(1, "MM2S", 0, 15),
         )
     )
     for group, column in enumerate(MAIN_COLUMNS):
@@ -223,8 +247,79 @@ def _runtime_sequence(schedule: DecodeSchedule) -> str:
         lines.extend((npu_sync(column, 0, direction=1), npu_sync(column, 1, direction=1)))
     lines.append(npu_sync(1, 1))
     lines.append(npu_sync(1, 0, direction=1))
+    lines.append(npu_sync(1, 1, direction=1))
     lines.append("    }")
     return "\n".join(lines)
+
+
+def _shape_a_multiblock_bf16(window: int) -> str:
+    tile = shape_a_symbol(window)
+    blocks_name = _shape_blocks_name(tile)
+    tail_tokens_name = _shape_tail_tokens_name(tile)
+    runtime_start = _shape_runtime_start_name(tile)
+    return f"""
+    %{tile}_q = aie.buffer(%{tile}) {{sym_name = "{tile}_q"}} : memref<{WINDOW_DWORDS}xi32>
+    %{tile}_k = aie.buffer(%{tile}) {{sym_name = "{tile}_k"}} : memref<{K_WINDOW_DWORDS}xi32>
+    %{tile}_carrier = aie.buffer(%{tile}) {{sym_name = "{tile}_carrier"}} : memref<{SHAPE_CARRIER_DWORDS}xi32>
+    %{blocks_name} = aie.buffer(%{tile}) {{sym_name = "{blocks_name}"}} : memref<1xi32>
+    %{tail_tokens_name} = aie.buffer(%{tile}) {{sym_name = "{tail_tokens_name}"}} : memref<1xi32>
+{lock_pair(tile, "q", 0)}
+{lock_pair(tile, "k", 2)}
+{lock_pair(tile, "carrier", 4)}
+    %{runtime_start} = aie.lock(%{tile}, 6) {{init = 0 : i32, sym_name = "{runtime_start}"}}
+
+    %{tile}_core = aie.core(%{tile}) {{
+      %c0 = arith.constant 0 : index
+      %c1 = arith.constant 1 : index
+      aie.use_lock(%{runtime_start}, Acquire, 1)
+      %blocks_i32 = memref.load %{blocks_name}[%c0] : memref<1xi32>
+      %tail_tokens_i32 = memref.load %{tail_tokens_name}[%c0] : memref<1xi32>
+      %blocks = arith.index_cast %blocks_i32 : i32 to index
+      %window_i32 = arith.constant {window} : i32
+      %q_dwords_i32 = arith.constant {WINDOW_DWORDS} : i32
+      %k_dwords_i32 = arith.constant {K_WINDOW_DWORDS} : i32
+      %carrier_dwords_i32 = arith.constant {SHAPE_CARRIER_DWORDS} : i32
+      aie.use_lock(%{tile}_q_full, AcquireGreaterEqual, 1)
+      scf.for %block = %c0 to %blocks step %c1 {{
+        %block_i32 = arith.index_cast %block : index to i32
+        aie.use_lock(%{tile}_k_full, AcquireGreaterEqual, 1)
+        aie.use_lock(%{tile}_carrier_empty, AcquireGreaterEqual, 1)
+        func.call @qwen3_attention_bf16_make_carrier_masked(%{tile}_q, %{tile}_k, %{tile}_carrier, %window_i32, %block_i32, %blocks_i32, %tail_tokens_i32, %q_dwords_i32, %k_dwords_i32, %carrier_dwords_i32)
+          : (memref<{WINDOW_DWORDS}xi32>, memref<{K_WINDOW_DWORDS}xi32>, memref<{SHAPE_CARRIER_DWORDS}xi32>, i32, i32, i32, i32, i32, i32, i32) -> ()
+        aie.use_lock(%{tile}_k_empty, Release, 1)
+        aie.use_lock(%{tile}_carrier_full, Release, 1)
+      }}
+      aie.use_lock(%{tile}_q_empty, Release, 1)
+      aie.end
+    }}
+
+    %{tile}_mem = aie.mem(%{tile}) {{
+      %q_dma = aie.dma_start(S2MM, 0, ^q_in, ^k_start)
+    ^q_in:
+      aie.use_lock(%{tile}_q_empty, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_q : memref<{WINDOW_DWORDS}xi32>, 0, {WINDOW_DWORDS}) {{bd_id = 0 : i32}}
+      aie.use_lock(%{tile}_q_full, Release, 1)
+      aie.next_bd ^q_in
+
+    ^k_start:
+      %k_dma = aie.dma_start(S2MM, 1, ^k_in, ^carrier_start)
+    ^k_in:
+      aie.use_lock(%{tile}_k_empty, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_k : memref<{K_WINDOW_DWORDS}xi32>, 0, {K_WINDOW_DWORDS}) {{bd_id = 1 : i32}}
+      aie.use_lock(%{tile}_k_full, Release, 1)
+      aie.next_bd ^k_in
+
+    ^carrier_start:
+      %carrier_dma = aie.dma_start(MM2S, 0, ^carrier_out, ^end)
+    ^carrier_out:
+      aie.use_lock(%{tile}_carrier_full, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_carrier : memref<{SHAPE_CARRIER_DWORDS}xi32>, 0, {SHAPE_CARRIER_DWORDS}) {{bd_id = 2 : i32}}
+      aie.use_lock(%{tile}_carrier_empty, Release, 1)
+      aie.next_bd ^carrier_out
+    ^end:
+      aie.end
+    }}
+"""
 
 
 def _shape_b_multiblock_bf16(window: int) -> str:
@@ -254,19 +349,19 @@ def _shape_b_multiblock_bf16(window: int) -> str:
       %carrier_dwords_i32 = arith.constant {SHAPE_CARRIER_DWORDS} : i32
       %accum_lanes_i32 = arith.constant {ACCUM_LANES} : i32
       %state_dwords_i32 = arith.constant {SCALAR_DWORDS} : i32
-      func.call @attention_kv16_init_accum(%{tile}_accum, %{tile}_state, %accum_lanes_i32, %state_dwords_i32)
+      func.call @qwen3_attention_bf16_init_accum(%{tile}_accum, %{tile}_state, %accum_lanes_i32, %state_dwords_i32)
         : (memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, i32, i32) -> ()
       scf.for %block = %c0 to %blocks step %c1 {{
         %block_i32 = arith.index_cast %block : index to i32
         aie.use_lock(%{tile}_v_full, AcquireGreaterEqual, 1)
         aie.use_lock(%{tile}_carrier_full, AcquireGreaterEqual, 1)
-        func.call @attention_kv16_accum_block(%{tile}_v, %{tile}_carrier, %{tile}_accum, %{tile}_state, %block_i32, %v_dwords_i32, %carrier_dwords_i32, %accum_lanes_i32, %state_dwords_i32)
+        func.call @qwen3_attention_bf16_accum_block(%{tile}_v, %{tile}_carrier, %{tile}_accum, %{tile}_state, %block_i32, %v_dwords_i32, %carrier_dwords_i32, %accum_lanes_i32, %state_dwords_i32)
           : (memref<{V_WINDOW_DWORDS}xi32>, memref<{SHAPE_CARRIER_DWORDS}xi32>, memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, i32, i32, i32, i32, i32) -> ()
         aie.use_lock(%{tile}_v_empty, Release, 1)
         aie.use_lock(%{tile}_carrier_empty, Release, 1)
       }}
       aie.use_lock(%{tile}_output_empty, AcquireGreaterEqual, 1)
-      func.call @attention_kv16_finish_accum_bf16(%{tile}_accum, %{tile}_state, %{tile}_output, %out_dwords_i32, %accum_lanes_i32, %state_dwords_i32)
+      func.call @qwen3_attention_bf16_finish_accum(%{tile}_accum, %{tile}_state, %{tile}_output, %out_dwords_i32, %accum_lanes_i32, %state_dwords_i32)
         : (memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, memref<{ATTENTION_OUTPUT_DWORDS}xi32>, i32, i32, i32) -> ()
       aie.use_lock(%{tile}_output_full, Release, 1)
       aie.end
@@ -306,6 +401,7 @@ def _postprocess_qkv_body() -> str:
     %post_q_compact = aie.buffer(%post) {{sym_name = "post_q_compact"}} : memref<{Q_DWORDS}xi32>
     %post_k_compact = aie.buffer(%post) {{sym_name = "post_k_compact"}} : memref<{CURRENT_DWORDS}xi32>
     %post_v_compact = aie.buffer(%post) {{sym_name = "post_v_compact"}} : memref<{CURRENT_DWORDS}xi32>
+    %post_qk_rope_side = aie.buffer(%post) {{sym_name = "post_qk_rope_side"}} : memref<{QK_ROPE_DWORDS}xi32>
     %post_q_payload = aie.buffer(%post) {{sym_name = "post_q_payload"}} : memref<{Q_DWORDS}xi32>
     %post_current_k = aie.buffer(%post) {{sym_name = "post_current_k"}} : memref<{CURRENT_DWORDS}xi32>
     %post_current_v = aie.buffer(%post) {{sym_name = "post_current_v"}} : memref<{CURRENT_DWORDS}xi32>
@@ -316,6 +412,7 @@ def _postprocess_qkv_body() -> str:
 {lock_pair("post", "q_payload", 6)}
 {lock_pair("post", "current_k", 8)}
 {lock_pair("post", "current_v", 10)}
+{lock_pair("post", "qk_rope_side", 13)}
     %post_runtime_start = aie.lock(%post, 12) {{init = 0 : i32, sym_name = "post_runtime_start"}}
 
     %post_core = aie.core(%post) {{
@@ -325,14 +422,16 @@ def _postprocess_qkv_body() -> str:
       aie.use_lock(%post_q_compact_full, AcquireGreaterEqual, 1)
       aie.use_lock(%post_k_compact_full, AcquireGreaterEqual, 1)
       aie.use_lock(%post_v_compact_full, AcquireGreaterEqual, 1)
+      aie.use_lock(%post_qk_rope_side_full, AcquireGreaterEqual, 1)
       aie.use_lock(%post_q_payload_empty, AcquireGreaterEqual, 1)
       aie.use_lock(%post_current_k_empty, AcquireGreaterEqual, 1)
       aie.use_lock(%post_current_v_empty, AcquireGreaterEqual, 1)
-      func.call @currentkv_postprocess_q4nx_body_payload(%post_q_compact, %post_k_compact, %post_v_compact, %post_q_payload, %post_current_k, %post_current_v, %post_current_token, %q_dwords_i32, %current_dwords_i32)
-        : (memref<{Q_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{Q_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<1xi32>, i32, i32) -> ()
+      func.call @qwen3_postprocess_q4nx_body_payload(%post_q_compact, %post_k_compact, %post_v_compact, %post_qk_rope_side, %post_q_payload, %post_current_k, %post_current_v, %post_current_token, %q_dwords_i32, %current_dwords_i32)
+        : (memref<{Q_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{QK_ROPE_DWORDS}xi32>, memref<{Q_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<1xi32>, i32, i32) -> ()
       aie.use_lock(%post_q_compact_empty, Release, 1)
       aie.use_lock(%post_k_compact_empty, Release, 1)
       aie.use_lock(%post_v_compact_empty, Release, 1)
+      aie.use_lock(%post_qk_rope_side_empty, Release, 1)
       aie.use_lock(%post_q_payload_full, Release, 1)
       aie.use_lock(%post_current_k_full, Release, 1)
       aie.use_lock(%post_current_v_full, Release, 1)
@@ -340,7 +439,7 @@ def _postprocess_qkv_body() -> str:
     }}
 
     %post_mem = aie.mem(%post) {{
-      %compact_dma = aie.dma_start(S2MM, 0, ^q_in, ^q_out_start)
+      %compact_dma = aie.dma_start(S2MM, 0, ^q_in, ^side_start)
     ^q_in:
       aie.use_lock(%post_q_compact_empty, AcquireGreaterEqual, 1)
       aie.dma_bd(%post_q_compact : memref<{Q_DWORDS}xi32>, 0, {Q_DWORDS}) {{bd_id = 0 : i32, next_bd_id = 1 : i32}}
@@ -356,6 +455,14 @@ def _postprocess_qkv_body() -> str:
       aie.dma_bd(%post_v_compact : memref<{CURRENT_DWORDS}xi32>, 0, {CURRENT_DWORDS}) {{bd_id = 2 : i32}}
       aie.use_lock(%post_v_compact_full, Release, 1)
       aie.next_bd ^v_in
+
+    ^side_start:
+      %side_dma = aie.dma_start(S2MM, 1, ^side_in, ^q_out_start)
+    ^side_in:
+      aie.use_lock(%post_qk_rope_side_empty, AcquireGreaterEqual, 1)
+      aie.dma_bd(%post_qk_rope_side : memref<{QK_ROPE_DWORDS}xi32>, 0, {QK_ROPE_DWORDS}) {{bd_id = 6 : i32}}
+      aie.use_lock(%post_qk_rope_side_full, Release, 1)
+      aie.next_bd ^side_in
 
     ^q_out_start:
       %q_dma = aie.dma_start(MM2S, 0, ^q_out, ^current_out_start)
@@ -647,55 +754,63 @@ def _main_tile(group: int, row: int) -> str:
 
 def _full_vector_q4nx_output() -> str:
     replay_payload_dwords = C1R2_PACKET_DWORDS - 1
-    compact_dwords = DOWN_BODY_RECORDS * COMPACT_PACKET_DWORDS
     return f"""
     %full_hidden = aie.buffer(%full) {{sym_name = "full_hidden"}} : memref<{HIDDEN_DWORDS}xi32>
-    %full_compact = aie.buffer(%full) {{sym_name = "full_compact"}} : memref<{compact_dwords}xi32>
+    %full_vector = aie.buffer(%full) {{sym_name = "full_vector"}} : memref<{HIDDEN_DWORDS}xi32>
+    %full_compact = aie.buffer(%full) {{sym_name = "full_compact"}} : memref<{COMPACT_PACKET_DWORDS}xi32>
     %full_replay = aie.buffer(%full) {{sym_name = "full_replay"}} : memref<{C1R2_PACKET_DWORDS}xi32>
     %full_output = aie.buffer(%full) {{sym_name = "full_output"}} : memref<{OUTPUT_DWORDS}xi32>
     %full_hidden_empty = aie.lock(%full, 0) {{init = 1 : i32, sym_name = "full_hidden_empty"}}
     %full_hidden_full = aie.lock(%full, 1) {{init = 0 : i32, sym_name = "full_hidden_full"}}
-    %full_compact_empty = aie.lock(%full, 2) {{init = 1 : i32, sym_name = "full_compact_empty"}}
-    %full_compact_full = aie.lock(%full, 3) {{init = 0 : i32, sym_name = "full_compact_full"}}
-    %full_replay_empty = aie.lock(%full, 4) {{init = 1 : i32, sym_name = "full_replay_empty"}}
-    %full_replay_full = aie.lock(%full, 5) {{init = 0 : i32, sym_name = "full_replay_full"}}
-    %full_output_empty = aie.lock(%full, 6) {{init = 1 : i32, sym_name = "full_output_empty"}}
-    %full_output_full = aie.lock(%full, 7) {{init = 0 : i32, sym_name = "full_output_full"}}
+    %full_vector_empty = aie.lock(%full, 2) {{init = 1 : i32, sym_name = "full_vector_empty"}}
+    %full_vector_full = aie.lock(%full, 3) {{init = 0 : i32, sym_name = "full_vector_full"}}
+    %full_compact_empty = aie.lock(%full, 4) {{init = 1 : i32, sym_name = "full_compact_empty"}}
+    %full_compact_full = aie.lock(%full, 5) {{init = 0 : i32, sym_name = "full_compact_full"}}
+    %full_replay_empty = aie.lock(%full, 6) {{init = 1 : i32, sym_name = "full_replay_empty"}}
+    %full_replay_full = aie.lock(%full, 7) {{init = 0 : i32, sym_name = "full_replay_full"}}
+    %full_output_empty = aie.lock(%full, 8) {{init = 1 : i32, sym_name = "full_output_empty"}}
+    %full_output_full = aie.lock(%full, 9) {{init = 0 : i32, sym_name = "full_output_full"}}
 
     %full_core = aie.core(%full) {{
       %c0 = arith.constant 0 : index
       %c1 = arith.constant 1 : index
-      %qkv_replays = arith.constant {C1R2_QKV_REPLAYS} : index
-      %replays = arith.constant {C1R2_UPGATE_REPLAYS} : index
+      %o_blocks = arith.constant {O_BODY_RECORDS} : index
+      %down_blocks = arith.constant {DOWN_BODY_RECORDS} : index
       %payload_i32 = arith.constant {replay_payload_dwords} : i32
-      %compact_i32 = arith.constant {compact_dwords} : i32
-      %blocks_i32 = arith.constant {DOWN_BODY_RECORDS} : i32
 
       aie.use_lock(%full_hidden_full, AcquireGreaterEqual, 1)
-      scf.for %replay = %c0 to %qkv_replays step %c1 {{
-        aie.use_lock(%full_replay_empty, AcquireGreaterEqual, 1)
-        func.call @full_c1r2_copy_hidden_replay(%full_hidden, %full_replay, %payload_i32)
-          : (memref<{HIDDEN_DWORDS}xi32>, memref<{C1R2_PACKET_DWORDS}xi32>, i32) -> ()
-        aie.use_lock(%full_replay_full, Release, 1)
-      }}
-      aie.use_lock(%full_hidden_empty, Release, 1)
+      aie.use_lock(%full_vector_full, AcquireGreaterEqual, 1)
+      aie.use_lock(%full_replay_empty, AcquireGreaterEqual, 1)
+      func.call @full_c1r2_make_input_norm_replay(%full_hidden, %full_vector, %full_replay, %payload_i32)
+        : (memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{C1R2_PACKET_DWORDS}xi32>, i32) -> ()
+      aie.use_lock(%full_replay_full, Release, {C1R2_QKV_REPLAYS})
+      aie.use_lock(%full_vector_empty, Release, 1)
 
-      aie.use_lock(%full_compact_full, AcquireGreaterEqual, 1)
-      scf.for %replay = %c0 to %replays step %c1 {{
-        %replay_i32 = arith.index_cast %replay : index to i32
-        aie.use_lock(%full_replay_empty, AcquireGreaterEqual, 1)
-        func.call @full_c1r2_make_replay_from_o_compacts(%full_compact, %full_replay, %replay_i32, %payload_i32, %blocks_i32)
-          : (memref<{compact_dwords}xi32>, memref<{C1R2_PACKET_DWORDS}xi32>, i32, i32, i32) -> ()
-        aie.use_lock(%full_replay_full, Release, 1)
+      scf.for %block = %c0 to %o_blocks step %c1 {{
+        %block_i32 = arith.index_cast %block : index to i32
+        aie.use_lock(%full_compact_full, AcquireGreaterEqual, 1)
+        func.call @full_c1r2_add_o_compact_to_residual(%full_hidden, %full_compact, %block_i32)
+          : (memref<{HIDDEN_DWORDS}xi32>, memref<{COMPACT_PACKET_DWORDS}xi32>, i32) -> ()
+        aie.use_lock(%full_compact_empty, Release, 1)
       }}
-      aie.use_lock(%full_compact_empty, Release, 1)
 
-      aie.use_lock(%full_compact_full, AcquireGreaterEqual, 1)
+      aie.use_lock(%full_vector_full, AcquireGreaterEqual, 1)
+      aie.use_lock(%full_replay_empty, AcquireGreaterEqual, {C1R2_QKV_REPLAYS})
+      func.call @full_c1r2_make_post_norm_replay(%full_hidden, %full_vector, %full_replay, %payload_i32)
+        : (memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{C1R2_PACKET_DWORDS}xi32>, i32) -> ()
+      aie.use_lock(%full_replay_full, Release, {C1R2_UPGATE_REPLAYS})
+      aie.use_lock(%full_vector_empty, Release, 1)
+
       aie.use_lock(%full_output_empty, AcquireGreaterEqual, 1)
-      func.call @full_c1r2_output_from_down_compacts(%full_compact, %full_output, %compact_i32, %blocks_i32)
-        : (memref<{compact_dwords}xi32>, memref<{OUTPUT_DWORDS}xi32>, i32, i32) -> ()
-      aie.use_lock(%full_compact_empty, Release, 1)
+      scf.for %block = %c0 to %down_blocks step %c1 {{
+        %block_i32 = arith.index_cast %block : index to i32
+        aie.use_lock(%full_compact_full, AcquireGreaterEqual, 1)
+        func.call @full_c1r2_write_down_block(%full_hidden, %full_compact, %full_output, %block_i32)
+          : (memref<{HIDDEN_DWORDS}xi32>, memref<{COMPACT_PACKET_DWORDS}xi32>, memref<{OUTPUT_DWORDS}xi32>, i32) -> ()
+        aie.use_lock(%full_compact_empty, Release, 1)
+      }}
       aie.use_lock(%full_output_full, Release, 1)
+      aie.use_lock(%full_hidden_empty, Release, 1)
       aie.end
     }}
 
@@ -703,7 +818,7 @@ def _full_vector_q4nx_output() -> str:
       %compact_dma = aie.dma_start(S2MM, 0, ^compact_in, ^hidden_in_start)
     ^compact_in:
       aie.use_lock(%full_compact_empty, AcquireGreaterEqual, 1)
-      aie.dma_bd(%full_compact : memref<{compact_dwords}xi32>, 0, {compact_dwords}) {{bd_id = 0 : i32}}
+      aie.dma_bd(%full_compact : memref<{COMPACT_PACKET_DWORDS}xi32>, 0, {COMPACT_PACKET_DWORDS}) {{bd_id = 0 : i32}}
       aie.use_lock(%full_compact_full, Release, 1)
       aie.next_bd ^compact_in
 
@@ -713,7 +828,19 @@ def _full_vector_q4nx_output() -> str:
       aie.use_lock(%full_hidden_empty, AcquireGreaterEqual, 1)
       aie.dma_bd(%full_hidden : memref<{HIDDEN_DWORDS}xi32>, 0, {HIDDEN_DWORDS}) {{bd_id = 3 : i32}}
       aie.use_lock(%full_hidden_full, Release, 1)
-      aie.next_bd ^hidden_in
+      aie.next_bd ^input_norm_in
+    ^input_norm_in:
+      aie.use_lock(%full_vector_empty, AcquireGreaterEqual, 1)
+      aie.dma_bd(%full_vector : memref<{HIDDEN_DWORDS}xi32>, 0, {HIDDEN_DWORDS}) {{bd_id = 4 : i32}}
+      aie.use_lock(%full_vector_full, Release, 1)
+      aie.next_bd ^post_norm_in
+    ^post_norm_in:
+      aie.use_lock(%full_vector_empty, AcquireGreaterEqual, 1)
+      aie.dma_bd(%full_vector : memref<{HIDDEN_DWORDS}xi32>, 0, {HIDDEN_DWORDS}) {{bd_id = 5 : i32}}
+      aie.use_lock(%full_vector_full, Release, 1)
+      aie.next_bd ^input_end
+    ^input_end:
+      aie.end
 
     ^replay_out_start:
       %replay_dma = aie.dma_start(MM2S, 1, ^replay_out, ^output_out_start)
@@ -828,7 +955,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
             packet_flow(CURRENT_PACKET_K, "post", 1, "shim_left", 1),
             packet_flow(CURRENT_PACKET_V, "post", 1, "shim_right", 1),
             packet_flow(O_GLOBAL_PACKET_ID, "bridge", 5, "full", 0),
-            flow("post", 0, "hub", 0),
+            flow("post", 0, "hub", HUB_Q_IN_CHANNEL),
             flow("shim_left", 0, "kv_left", 0),
             flow("shim_left", 1, "kv_left", 1),
             flow("shim_right", 0, "kv_right", 0),
@@ -839,20 +966,21 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
         kv_tile = "kv_left" if window < 2 else "kv_right"
         kv_k_channel = 0 if window in (0, 2) else 2
         kv_v_channel = 1 if window in (0, 2) else 3
-        flows.append(flow("hub", window, shape_a_symbol(window), 0))
+        flows.append(flow("hub", HUB_Q_OUT_CHANNELS[window], shape_a_symbol(window), 0))
         flows.append(flow(kv_tile, kv_k_channel, shape_a_symbol(window), 1))
         flows.append(flow(kv_tile, kv_v_channel, shape_b_symbol(window), 0))
         flows.append(flow(shape_a_symbol(window), 0, shape_b_symbol(window), 1))
-        flows.append(flow(shape_b_symbol(window), 0, "hub", window + 1))
+        flows.append(flow(shape_b_symbol(window), 0, "hub", HUB_RETURN_IN_CHANNELS[window]))
     flows.extend(
         (
             packet_flow(PACKET_ID_ATTENTION, "hub", 5, "bridge", 4),
             packet_flow(FULL_REPLAY_PACKET_ID, "full", 1, "bridge", 4),
             packet_flow(FFN_GLOBAL_PACKET_ID, "bridge", 5, "swiglu", 0),
-            flow("swiglu", 1, "hub", 5),
+            flow("swiglu", 1, "hub", HUB_FFN_IN_CHANNEL),
             packet_flow(DOWN_ACT_PACKET_ID, "hub", 5, "bridge", 4),
             packet_flow(DOWN_GLOBAL_PACKET_ID, "bridge", 5, "full", 0),
             flow("shim_out", 0, "full", 1),
+            flow("shim_out", 1, "post", 1),
             flow("full", 0, "shim_out", 1),
         )
     )
@@ -867,7 +995,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
         _swiglu_bf16(),
     ]
     for window in range(4):
-        blocks.append(_shape_a_multiblock(window))
+        blocks.append(_shape_a_multiblock_bf16(window))
         blocks.append(_shape_b_multiblock_bf16(window))
     for group in range(len(MAIN_COLUMNS)):
         blocks.append(q4nx_weight_column_memtile(group, QKV_BODY_PHASE_TRACE))
@@ -880,15 +1008,16 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
 
 {chr(10).join(flows)}
 
-    func.func private @currentkv_postprocess_q4nx_body_payload(memref<{Q_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{Q_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<1xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/postprocess_qkv.o"}}
-    func.func private @full_c1r2_make_replay_from_o_compacts(memref<{O_BODY_RECORDS * COMPACT_PACKET_DWORDS}xi32>, memref<{C1R2_PACKET_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
-    func.func private @full_c1r2_output_from_down_compacts(memref<{DOWN_BODY_RECORDS * COMPACT_PACKET_DWORDS}xi32>, memref<{OUTPUT_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
-    func.func private @full_c1r2_copy_hidden_replay(memref<{HIDDEN_DWORDS}xi32>, memref<{C1R2_PACKET_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
+    func.func private @qwen3_postprocess_q4nx_body_payload(memref<{Q_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{QK_ROPE_DWORDS}xi32>, memref<{Q_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<1xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/postprocess_qkv.o"}}
+    func.func private @full_c1r2_make_input_norm_replay(memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{C1R2_PACKET_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
+    func.func private @full_c1r2_add_o_compact_to_residual(memref<{HIDDEN_DWORDS}xi32>, memref<{COMPACT_PACKET_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
+    func.func private @full_c1r2_make_post_norm_replay(memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{C1R2_PACKET_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
+    func.func private @full_c1r2_write_down_block(memref<{HIDDEN_DWORDS}xi32>, memref<{COMPACT_PACKET_DWORDS}xi32>, memref<{OUTPUT_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
     func.func private @ffn_swiglu_slice_bf16_inputs(memref<{C6R2_INPUT_DWORDS}xi32>, memref<{C6R2_HALF_DWORDS * 2}xbf16>, i32, i32) attributes {{link_with = "{experiment_dir}/swiglu.o"}}
-    func.func private @attention_kv16_make_carrier_masked(memref<{WINDOW_DWORDS}xi32>, memref<{K_WINDOW_DWORDS}xi32>, memref<{SCALAR_DWORDS + WEIGHT_DWORDS}xi32>, i32, i32, i32, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
-    func.func private @attention_kv16_init_accum(memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
-    func.func private @attention_kv16_accum_block(memref<{V_WINDOW_DWORDS}xi32>, memref<{SCALAR_DWORDS + WEIGHT_DWORDS}xi32>, memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, i32, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
-    func.func private @attention_kv16_finish_accum_bf16(memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, memref<{ATTENTION_OUTPUT_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
+    func.func private @qwen3_attention_bf16_make_carrier_masked(memref<{WINDOW_DWORDS}xi32>, memref<{K_WINDOW_DWORDS}xi32>, memref<{SCALAR_DWORDS + WEIGHT_DWORDS}xi32>, i32, i32, i32, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
+    func.func private @qwen3_attention_bf16_init_accum(memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
+    func.func private @qwen3_attention_bf16_accum_block(memref<{V_WINDOW_DWORDS}xi32>, memref<{SCALAR_DWORDS + WEIGHT_DWORDS}xi32>, memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, i32, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
+    func.func private @qwen3_attention_bf16_finish_accum(memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, memref<{ATTENTION_OUTPUT_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
     func.func private @clear_summary(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
     func.func private @q4nx_chunk_accum_slice_i32(memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
     func.func private @q4nx_clear_block_summaries(i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
@@ -913,20 +1042,22 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     required = (
         f"case marker {CASE_NAME}",
         f"compact phase trace {_phase_trace_marker(QKV_BODY_PHASE_TRACE)}",
-        "currentkv_postprocess_q4nx_body_payload",
+        "qwen3_postprocess_q4nx_body_payload",
         f"aie.dma_bd(%post_q_compact : memref<{Q_DWORDS}xi32>, 0, {Q_DWORDS})",
         f"aie.dma_bd(%post_k_compact : memref<{CURRENT_DWORDS}xi32>, 0, {CURRENT_DWORDS})",
-        "attention_kv16_make_carrier_masked",
-        "attention_kv16_finish_accum_bf16",
-        "full_c1r2_copy_hidden_replay",
-        "full_c1r2_make_replay_from_o_compacts",
+        f"aie.dma_bd(%post_qk_rope_side : memref<{QK_ROPE_DWORDS}xi32>, 0, {QK_ROPE_DWORDS})",
+        "qwen3_attention_bf16_make_carrier_masked",
+        "qwen3_attention_bf16_finish_accum",
+        "full_c1r2_make_input_norm_replay",
+        "full_c1r2_add_o_compact_to_residual",
+        "full_c1r2_make_post_norm_replay",
         "q4nx_emit_q_body_record",
         "q4nx_emit_k_body_record",
         "q4nx_emit_v_body_record",
         "q4nx_emit_o_body_record",
         "q4nx_emit_upgate_record",
         "ffn_swiglu_slice_bf16_inputs",
-        "full_c1r2_output_from_down_compacts",
+        "full_c1r2_write_down_block",
         "q4nx_chunk_accum_slice_i32",
         "q4nx_clear_block_summaries",
         "q4nx_chunk_accum_block_slice_i32",
@@ -946,7 +1077,7 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         f"pkt_id = {CURRENT_PACKET_K}",
         f"pkt_id = {CURRENT_PACKET_V}",
         f"memref<{schedule.kv_cache_dwords}xi32>",
-        f"memref<{TOTAL_WEIGHT_I32}xi32>",
+        f"memref<{TOTAL_WEIGHT_AND_AUX_I32}xi32>",
         f"memref<{OUTPUT_DWORDS}xi32>",
         f"memref<{HIDDEN_DWORDS}xi32>",
         f"aiex.npu.rtp_write(@post_current_token, 0, {schedule.current_token})",
@@ -997,17 +1128,17 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     errors.extend(require_count(CASE_NAME, "q4nx v emit calls", mlir.count("func.call @q4nx_emit_v_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
     errors.extend(require_count(CASE_NAME, "qkv q-loop index constants", mlir.count("%c8 = arith.constant 8 : index"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
     errors.extend(require_count(CASE_NAME, "qkv chunk-loop index constants", mlir.count("%c16 = arith.constant 16 : index"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
-    errors.extend(require_count(CASE_NAME, "currentkv q4nx body postprocess", mlir.count("currentkv_postprocess_q4nx_body_payload"), 2))
-    errors.extend(require_count(CASE_NAME, "attention_kv16_make_carrier_masked", mlir.count("attention_kv16_make_carrier_masked"), 5))
-    errors.extend(require_count(CASE_NAME, "attention_kv16_init_accum", mlir.count("attention_kv16_init_accum"), 5))
-    errors.extend(require_count(CASE_NAME, "attention_kv16_accum_block", mlir.count("attention_kv16_accum_block"), 5))
-    errors.extend(require_count(CASE_NAME, "attention_kv16_finish_accum_bf16", mlir.count("attention_kv16_finish_accum_bf16"), 5))
+    errors.extend(require_count(CASE_NAME, "qwen3 q4nx body postprocess", mlir.count("qwen3_postprocess_q4nx_body_payload"), 2))
+    errors.extend(require_count(CASE_NAME, "qwen3_attention_bf16_make_carrier_masked", mlir.count("qwen3_attention_bf16_make_carrier_masked"), 5))
+    errors.extend(require_count(CASE_NAME, "qwen3_attention_bf16_init_accum", mlir.count("qwen3_attention_bf16_init_accum"), 5))
+    errors.extend(require_count(CASE_NAME, "qwen3_attention_bf16_accum_block", mlir.count("qwen3_attention_bf16_accum_block"), 5))
+    errors.extend(require_count(CASE_NAME, "qwen3_attention_bf16_finish_accum", mlir.count("qwen3_attention_bf16_finish_accum"), 5))
     errors.extend(require_count(CASE_NAME, "q4nx o emit calls", mlir.count("func.call @q4nx_emit_o_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
     errors.extend(require_count(CASE_NAME, "q4nx upgate emit calls", mlir.count("func.call @q4nx_emit_upgate_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
     errors.extend(require_count(CASE_NAME, "q4nx single-accum chunk call sites", mlir.count("func.call @q4nx_chunk_accum_slice_i32"), len(MAIN_COLUMNS) * len(MAIN_ROWS) * 8))
     errors.extend(require_count(CASE_NAME, "q4nx block-accum chunk call sites", mlir.count("func.call @q4nx_chunk_accum_block_slice_i32"), len(MAIN_COLUMNS) * len(MAIN_ROWS) * 8))
     errors.extend(require_count(CASE_NAME, "q4nx down emit calls", mlir.count("func.call @q4nx_emit_down_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
-    errors.extend(require_count(CASE_NAME, "weight arg2 address patches", mlir.count("arg_idx = 2 : i32"), 8))
+    errors.extend(require_count(CASE_NAME, "weight/aux arg2 address patches", mlir.count("arg_idx = 2 : i32"), 11))
     errors.extend(require_count(CASE_NAME, "output arg3 address patches", mlir.count("arg_idx = 3 : i32"), 1))
     errors.extend(require_count(CASE_NAME, "hidden arg4 address patches", mlir.count("arg_idx = 4 : i32"), 1))
     errors.extend(require_dma_bd_lock_balance(CASE_NAME, mlir))
@@ -1047,6 +1178,9 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
                 "qkv_split_kv_payload",
                 "currentkv_postprocess_payload",
                 "currentkv_postprocess_body_payload",
+                "currentkv_postprocess_q4nx_body_payload",
+                "attention_kv16_make_carrier_masked",
+                "attention_kv16_finish_accum_bf16",
                 "qkv_emit_qkv_body_records",
                 "qkv_emit_qkv_records",
                 "c1r2_main_accum_chunk",
@@ -1080,7 +1214,13 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         errors.append("full-layer Q4NX weight chunk schedule mismatch")
     if BODY_RECORD_SLOTS != (0, 1, 2, 3, -1, 6):
         errors.append("full-layer q4nx body record slots changed unexpectedly")
-    if HUB_Q_OUT_BDS != (2, 24, 4, 26) or HUB_RETURN_IN_BDS != (25, 6, 27, 8):
+    if (
+        HUB_Q_IN_CHANNEL != 1
+        or HUB_Q_OUT_CHANNELS != (1, 2, 3, 4)
+        or HUB_Q_OUT_BDS != (25, 2, 26, 3)
+        or HUB_RETURN_IN_CHANNELS != (2, 3, 4, 5)
+        or HUB_RETURN_IN_BDS != (4, 28, 6, 30)
+    ):
         errors.append("hub BD contract mismatch")
     return errors
 

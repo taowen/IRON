@@ -9,23 +9,24 @@ import npu_build
 import numpy as np
 import torch
 from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor
-from ml_dtypes import bfloat16
 
 from cases import currentkv_full_layer_q4nx_down_generate as generate
 from cases.currentkv_full_layer_q4nx_down_reference import (
+    AUX_DWORDS,
     HIDDEN_DWORDS,
     OUTPUT_DWORDS,
-    TOTAL_WEIGHT_I32,
-    expected_output as physical_expected_output,
-    packed_as_i32,
+    TOTAL_WEIGHT_AND_AUX_I32,
+    aux_as_i32,
+    bf16_cache_payload,
+    hidden_input_as_i32,
+    input_norm_activation as physical_input_norm_activation,
     validate_cache_writeback,
     validate_expected_output,
+    weights_with_aux_i32,
 )
 from cases.currentkv_kvscan_attention_kv16_reference import (
     DecodeSchedule,
     make_decode_schedule,
-    make_history_k_cache_payload,
-    make_history_v_cache_payload,
     validate_cache_layout_contract,
 )
 from qwen3_download import ensure_qwen3_8b_model
@@ -44,12 +45,17 @@ EXPERIMENT_DIR = Path(__file__).parent.parent
 
 @dataclass(frozen=True)
 class Qwen3PhysicalFixture:
+    k_cache_i32: np.ndarray
+    v_cache_i32: np.ndarray
     hidden_i32: np.ndarray
-    hidden_bf16: np.ndarray
+    aux_i32: np.ndarray
+    qkv_activation_bf16: np.ndarray
+    k_norm_bf16: np.ndarray
     packed_weights: np.ndarray
     weights_i32: np.ndarray
     weight_bytes: int
     expected: np.ndarray
+    rope_theta: float
 
 
 def _model_path(model_path: Path | None) -> Path:
@@ -67,16 +73,16 @@ def _reject_patch_from_token(patch_from_token: int | None) -> None:
         raise ValueError("--patch-from-token is not wired for the real Qwen3-8B full-layer case yet")
 
 
-def _pack_bf16_i32(values: np.ndarray) -> np.ndarray:
-    if values.shape != (HIDDEN_DWORDS * 2,):
-        raise ValueError(f"hidden bf16 shape mismatch: {values.shape}")
-    return np.frombuffer(values.astype(bfloat16).tobytes(), dtype=np.int32).copy()
-
-
 def _cache_buffer_payload(payload: np.ndarray, schedule: DecodeSchedule) -> np.ndarray:
     if payload.shape != (schedule.kv_cache_dwords,):
         raise ValueError(f"KV cache shape mismatch: {payload.shape} != {(schedule.kv_cache_dwords,)}")
     return payload
+
+
+def _poison_current_cache(values: np.ndarray, current_token: int, poison: float) -> np.ndarray:
+    poisoned = values.copy()
+    poisoned[current_token, :, :] = np.array(poison, dtype=values.dtype)
+    return poisoned
 
 
 def _make_physical_fixture(
@@ -84,34 +90,69 @@ def _make_physical_fixture(
     layer: int,
     schedule: DecodeSchedule,
 ) -> Qwen3PhysicalFixture:
-    reference = Qwen3LayerReference(model, layer)
-    hidden = make_reference_inputs(schedule.current_token).hidden
-    normalized_hidden = reference.input_norm_activation(hidden)
+    inputs = make_reference_inputs(schedule.current_token)
+    input_norm, post_norm, q_norm, k_norm = model.layer_norm_weights(layer)
+    qkv_activation = physical_input_norm_activation(inputs.hidden, input_norm)
     packed = model.layer_weight_stream(layer)
-    weights_i32 = packed_as_i32(packed)
-    expected = physical_expected_output(schedule, packed, normalized_hidden)
+    weights_i32 = weights_with_aux_i32(
+        packed,
+        schedule.current_token,
+        input_norm,
+        post_norm,
+        q_norm,
+        k_norm,
+        model.config.rope_theta,
+    )
+    reference = Qwen3LayerReference(model, layer)
+    result = reference.forward(inputs)
+    initial_k_cache = bf16_cache_payload(schedule, _poison_current_cache(inputs.k_cache, schedule.current_token, 19.0))
+    initial_v_cache = bf16_cache_payload(schedule, _poison_current_cache(inputs.v_cache, schedule.current_token, -19.0))
     return Qwen3PhysicalFixture(
-        hidden_i32=_pack_bf16_i32(normalized_hidden),
-        hidden_bf16=normalized_hidden,
+        k_cache_i32=initial_k_cache,
+        v_cache_i32=initial_v_cache,
+        hidden_i32=hidden_input_as_i32(inputs.hidden),
+        aux_i32=aux_as_i32(
+            schedule.current_token,
+            input_norm,
+            post_norm,
+            q_norm,
+            k_norm,
+            model.config.rope_theta,
+        ),
+        qkv_activation_bf16=qkv_activation,
+        k_norm_bf16=k_norm,
         packed_weights=packed,
         weights_i32=weights_i32,
         weight_bytes=packed.shape[0],
-        expected=expected,
+        expected=result.hidden_out_i32,
+        rope_theta=model.config.rope_theta,
     )
 
 
-def _validate_real_physical_inputs(model: Qwen3Q4NXModel, layer: int, schedule: DecodeSchedule) -> tuple[int, int]:
-    reference = Qwen3LayerReference(model, layer)
+def _validate_real_physical_inputs(model: Qwen3Q4NXModel, layer: int, schedule: DecodeSchedule) -> tuple[int, int, int]:
     hidden = make_reference_inputs(schedule.current_token).hidden
-    normalized_hidden = reference.input_norm_activation(hidden)
-    hidden_i32 = _pack_bf16_i32(normalized_hidden)
+    input_norm, post_norm, q_norm, k_norm = model.layer_norm_weights(layer)
+    hidden_i32 = hidden_input_as_i32(hidden)
+    aux_i32 = aux_as_i32(schedule.current_token, input_norm, post_norm, q_norm, k_norm, model.config.rope_theta)
     weight_stream = model.layer_weight_stream(layer)
-    weights_i32 = packed_as_i32(weight_stream)
+    weights_i32 = weights_with_aux_i32(
+        weight_stream,
+        schedule.current_token,
+        input_norm,
+        post_norm,
+        q_norm,
+        k_norm,
+        model.config.rope_theta,
+    )
     if hidden_i32.shape != (HIDDEN_DWORDS,):
         raise RuntimeError(f"hidden i32 shape mismatch: {hidden_i32.shape} != {(HIDDEN_DWORDS,)}")
-    if weights_i32.shape != (TOTAL_WEIGHT_I32,):
-        raise RuntimeError(f"weight i32 shape mismatch: {weights_i32.shape} != {(TOTAL_WEIGHT_I32,)}")
-    return weight_stream.shape[0], hidden_i32.shape[0]
+    if aux_i32.shape != (AUX_DWORDS,):
+        raise RuntimeError(f"aux i32 shape mismatch: {aux_i32.shape} != {(AUX_DWORDS,)}")
+    if weights_i32.shape != (TOTAL_WEIGHT_AND_AUX_I32,):
+        raise RuntimeError(
+            f"weight+aux i32 shape mismatch: {weights_i32.shape} != {(TOTAL_WEIGHT_AND_AUX_I32,)}"
+        )
+    return weight_stream.shape[0], hidden_i32.shape[0], aux_i32.shape[0]
 
 
 def build_kernel(schedule: DecodeSchedule, build_name: str = CASE_NAME) -> tuple[Path, Path]:
@@ -149,10 +190,11 @@ def check_only(
         for error in errors:
             print(f"  QWEN3-8B FULL-LAYER FAIL: {error}")
         return False
-    weight_bytes, hidden_dwords = _validate_real_physical_inputs(model, layer, schedule)
+    weight_bytes, hidden_dwords, aux_dwords = _validate_real_physical_inputs(model, layer, schedule)
     print(f"  PASS: {CASE_NAME} assets valid for layer {layer}")
     print(f"  weight_stream_bytes={weight_bytes}")
-    print(f"  input_norm_hidden_dwords={hidden_dwords}")
+    print(f"  hidden_dwords={hidden_dwords}")
+    print(f"  aux_dwords={aux_dwords}")
     print(f"  current_token={schedule.current_token}")
     print("  PASS: real Qwen3 weights fit the current full-layer NPU topology")
     return True
@@ -203,22 +245,26 @@ def run(
     print(f"  model={_model_path(model_path)}")
     print(f"  layer={layer}")
     print(f"  current_token={schedule.current_token}")
-    print("  topology=current full-layer NPU physical frontier with real Qwen3 Q4NX weights")
-    print("  NOTE: c1r2/c1r3/attention still use the current physical oracle; c6r2 uses bf16 SiLU with the NPU bounded table sigmoid")
+    print("  topology=current full-layer NPU frontier with real Qwen3 Q4NX weights")
+    print("  numerics=c1r2 RMSNorm/residual + c1r3 Q/K norm/RoPE + bf16 KV scan attention")
     print()
 
     xclbin_path, insts_path = build_kernel(schedule)
     print("  Loading NPU kernel...")
     handle = npu_build.load_kernel(xclbin_path, insts_path)
 
-    print("  Preparing input RMSNorm hidden, K/V cache, real Q4NX weights, and physical CPU oracle...")
+    print("  Preparing raw hidden, aux weights, K/V cache, real Q4NX weights, and CPU oracle...")
     fixture = _make_physical_fixture(model, layer, schedule)
-    k_cache = _cache_buffer_payload(make_history_k_cache_payload(schedule), schedule)
-    v_cache = _cache_buffer_payload(make_history_v_cache_payload(schedule), schedule)
+    k_cache = _cache_buffer_payload(fixture.k_cache_i32, schedule)
+    v_cache = _cache_buffer_payload(fixture.v_cache_i32, schedule)
     if fixture.hidden_i32.shape[0] != HIDDEN_DWORDS:
         raise RuntimeError(f"hidden i32 mismatch: {fixture.hidden_i32.shape[0]} != {HIDDEN_DWORDS}")
-    if fixture.weights_i32.shape[0] != TOTAL_WEIGHT_I32:
-        raise RuntimeError(f"weight i32 mismatch: {fixture.weights_i32.shape[0]} != {TOTAL_WEIGHT_I32}")
+    if fixture.aux_i32.shape[0] != AUX_DWORDS:
+        raise RuntimeError(f"aux i32 mismatch: {fixture.aux_i32.shape[0]} != {AUX_DWORDS}")
+    if fixture.weights_i32.shape[0] != TOTAL_WEIGHT_AND_AUX_I32:
+        raise RuntimeError(
+            f"weight+aux i32 mismatch: {fixture.weights_i32.shape[0]} != {TOTAL_WEIGHT_AND_AUX_I32}"
+        )
 
     k_cache_buf = XRTTensor.from_torch(torch.from_numpy(k_cache.copy()).to(torch.int32))
     v_cache_buf = XRTTensor.from_torch(torch.from_numpy(v_cache.copy()).to(torch.int32))
@@ -242,15 +288,18 @@ def run(
         got_k[: schedule.kv_cache_dwords],
         got_v[: schedule.kv_cache_dwords],
         fixture.packed_weights,
-        fixture.hidden_bf16,
+        fixture.qkv_activation_bf16,
+        fixture.k_norm_bf16,
+        fixture.rope_theta,
+        k_cache,
+        v_cache,
     )
     errors.extend(validate_expected_output(fixture.expected, got))
     if errors:
-        print(f"  FAIL: {len(errors)} real-qwen3 physical full-layer mismatches")
+        print(f"  FAIL: {len(errors)} real-qwen3 full-layer mismatches")
         for error in errors:
             print(f"    {error}")
         return False
 
-    print("  PASS: real Qwen3 Q4NX weights run through the full-layer NPU physical frontier")
-    print("  NEXT: replace the remaining physical oracle kernels with production Qwen3 numerics")
+    print("  PASS: real Qwen3 Q4NX weights run through the full-layer NPU frontier")
     return True
