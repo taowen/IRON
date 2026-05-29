@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--case",
         choices=registry.CASE_NAMES,
-        default="current",
+        default=registry.DEFAULT_CASE_NAME,
         help="NPU integration case to run",
     )
     parser.add_argument(
@@ -36,6 +36,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="compile kernel, MLIR, NPU instructions, and xclbin without running",
     )
+    parser.add_argument(
+        "--current-token",
+        type=int,
+        default=None,
+        help="current decode token for the currentkv case",
+    )
+    parser.add_argument(
+        "--patch-from-token",
+        type=int,
+        default=None,
+        help="compile currentkv xclbin/PDI for this cache-capacity token and patch design.bin to --current-token",
+    )
     return parser.parse_args()
 
 
@@ -44,10 +56,10 @@ def run_case(args: argparse.Namespace) -> bool:
         raise ValueError("--check-only and --build-only are mutually exclusive")
 
     if args.check_only:
-        return registry.check_only(args.case)
+        return registry.check_only(args.case, args.current_token, args.patch_from_token)
     if args.build_only:
-        return registry.build_only(args.case)
-    return registry.run(args.case)
+        return registry.build_only(args.case, args.current_token, args.patch_from_token)
+    return registry.run(args.case, args.current_token, args.patch_from_token)
 
 
 if __name__ == "__main__":

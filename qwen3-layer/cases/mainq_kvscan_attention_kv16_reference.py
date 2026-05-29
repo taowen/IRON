@@ -7,7 +7,7 @@ import numpy as np
 from contract import MAIN_COLUMNS, MAIN_ROWS, RECORD_DWORDS, RECORD_PAYLOAD_DWORDS, ROWS_PER_COLUMN
 from cases import attention_kv16_reference as attention
 from cases import kvscan_attention_kv16_reference as kvscan
-from cases.qkv_shape_o_c1r2_reference import (
+from qkv_compact_reference import (
     Q_PHASE,
     column_compact_from_records,
     global_compact_from_columns,
@@ -168,8 +168,7 @@ def _summary_hash(payload: np.ndarray) -> tuple[int, int]:
     return _u32_to_i32(sum_u32), _u32_to_i32(hash_u32)
 
 
-def main_summary_from_attention() -> tuple[int, int, int, int, int, int]:
-    payload = attention_payload()
+def main_summary_from_payload(payload: np.ndarray) -> tuple[int, int, int, int, int, int]:
     payload_sum, payload_hash = _summary_hash(payload)
     return (
         payload.shape[0] // attention.MAIN_CHUNK_DWORDS,
@@ -181,8 +180,16 @@ def main_summary_from_attention() -> tuple[int, int, int, int, int, int]:
     )
 
 
-def make_o_record(group: int, row: int) -> np.ndarray:
-    chunks, first, last, payload_sum, payload_hash, total = main_summary_from_attention()
+def main_summary_from_attention() -> tuple[int, int, int, int, int, int]:
+    return main_summary_from_payload(attention_payload())
+
+
+def make_o_record_from_summary(
+    group: int,
+    row: int,
+    summary: tuple[int, int, int, int, int, int],
+) -> np.ndarray:
+    chunks, first, last, payload_sum, payload_hash, total = summary
     record = np.empty(RECORD_DWORDS, dtype=np.int32)
     record[0] = record_header(O_PHASE, group, row)
     record[1:] = (
@@ -206,16 +213,24 @@ def make_o_record(group: int, row: int) -> np.ndarray:
     return record
 
 
-def o_global_compact() -> np.ndarray:
+def make_o_record(group: int, row: int) -> np.ndarray:
+    return make_o_record_from_summary(group, row, main_summary_from_attention())
+
+
+def o_global_compact_from_summary(summary: tuple[int, int, int, int, int, int]) -> np.ndarray:
     columns = []
     for group in range(len(MAIN_COLUMNS)):
-        records = [make_o_record(group, row) for row in range(ROWS_PER_COLUMN)]
+        records = [make_o_record_from_summary(group, row, summary) for row in range(ROWS_PER_COLUMN)]
         columns.append(column_compact_from_records(records))
     return global_compact_from_columns(columns)
 
 
-def expected_output() -> np.ndarray:
-    compact = o_global_compact()
+def o_global_compact() -> np.ndarray:
+    return o_global_compact_from_summary(main_summary_from_attention())
+
+
+def expected_output_from_attention(payload: np.ndarray) -> np.ndarray:
+    compact = o_global_compact_from_summary(main_summary_from_payload(payload))
     sum_u32 = 0
     hash_u32 = 0
     for idx, value in enumerate(compact):
@@ -235,6 +250,10 @@ def expected_output() -> np.ndarray:
         ),
         dtype=np.int32,
     )
+
+
+def expected_output() -> np.ndarray:
+    return expected_output_from_attention(attention_payload())
 
 
 def validate_output(got: np.ndarray) -> list[str]:

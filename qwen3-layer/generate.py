@@ -74,9 +74,9 @@ def main_mem_symbol(column: int) -> str:
 
 def tile_defs() -> tuple[TileDef, ...]:
     defs = [
-        TileDef("shim_k", 0, 0, "current K writeback / KV scan ingress"),
+        TileDef("shim_k", 0, 0, "current K writeback / split KV scan ingress"),
         TileDef("shim_hidden", 1, 0, "hidden-in / hidden-out runtime boundary"),
-        TileDef("shim_v", 7, 0, "current V writeback / KV scan ingress"),
+        TileDef("shim_v", 7, 0, "current V writeback / split KV scan ingress"),
         TileDef("kv_left", 0, 1, "left KV history splitter"),
         TileDef("activation_bridge", 1, 1, "c1r1 shared activation bridge"),
         TileDef("hub", 6, 1, "c6r1 Q fanout + attention/FFN gather"),
@@ -93,6 +93,10 @@ def tile_defs() -> tuple[TileDef, ...]:
         TileDef("shape_a_3", 7, 4, "shape-A heads 24..31 score/softmax"),
         TileDef("shape_b_3", 7, 5, "shape-B heads 24..31 weighted V"),
     ]
+    defs.extend(
+        TileDef(f"weight_shim_{column}", column, 0, "Q4NX weight shim ingress")
+        for column in MAIN_COLUMNS
+    )
     defs.extend(
         TileDef(main_mem_symbol(column), column, 1, "main16 row1 weight/compact memtile")
         for column in MAIN_COLUMNS
@@ -159,6 +163,28 @@ def circuit_flows() -> tuple[CircuitFlow, ...]:
         )
         for column in MAIN_COLUMNS
         for row in MAIN_ROWS
+    )
+    flows.extend(
+        CircuitFlow(
+            f"weight_shim_{column}_patch0_to_{main_mem_symbol(column)}",
+            f"weight_shim_{column}",
+            0,
+            main_mem_symbol(column),
+            4,
+            "patch0 Q4NX weight stream into row1 S2MM4",
+        )
+        for column in MAIN_COLUMNS
+    )
+    flows.extend(
+        CircuitFlow(
+            f"weight_shim_{column}_patch1_to_{main_mem_symbol(column)}",
+            f"weight_shim_{column}",
+            1,
+            main_mem_symbol(column),
+            5,
+            "patch1 Q4NX weight stream into row1 S2MM5",
+        )
+        for column in MAIN_COLUMNS
     )
     flows.extend(
         CircuitFlow(
@@ -232,8 +258,10 @@ def circuit_flows() -> tuple[CircuitFlow, ...]:
     )
     flows.extend(
         (
-            CircuitFlow("kv_scan_left", "shim_k", 0, "kv_left", 0, "K/V groups 0..3 scan"),
-            CircuitFlow("kv_scan_right", "shim_v", 0, "kv_right", 0, "K/V groups 4..7 scan"),
+            CircuitFlow("k_scan_left", "shim_k", 0, "kv_left", 0, "K groups 0..3 scan"),
+            CircuitFlow("v_scan_left", "shim_k", 1, "kv_left", 1, "V groups 0..3 scan"),
+            CircuitFlow("k_scan_right", "shim_v", 0, "kv_right", 0, "K groups 4..7 scan"),
+            CircuitFlow("v_scan_right", "shim_v", 1, "kv_right", 1, "V groups 4..7 scan"),
         )
     )
     flows.extend(
@@ -286,8 +314,8 @@ def packet_routes() -> tuple[PacketRoute, ...]:
             C1R2_PACKET_DWORDS,
         ),
         PacketRoute(
-            "c1r3_current_k_packet14",
-            14,
+            "c1r3_current_k_packet8",
+            8,
             "postprocess",
             1,
             "shim_k",
@@ -296,8 +324,8 @@ def packet_routes() -> tuple[PacketRoute, ...]:
             512,
         ),
         PacketRoute(
-            "c1r3_current_v_packet15",
-            15,
+            "c1r3_current_v_packet9",
+            9,
             "postprocess",
             2,
             "shim_v",
@@ -316,8 +344,8 @@ def packet_routes() -> tuple[PacketRoute, ...]:
             ATTENTION_PACKET_DWORDS,
         ),
         PacketRoute(
-            "c6r1_down_packet0",
-            0,
+            "c6r1_down_packet1",
+            1,
             "hub",
             12,
             "activation_bridge",
@@ -418,9 +446,9 @@ def validate_generated_mlir(mlir: str) -> list[str]:
         "aie.tile(6, 1) // c6r1 Q fanout + attention/FFN gather",
         "aie.tile(6, 2) // c6r2 up/gate SwiGLU slice station",
         "qwen3-packet c6r1_attention_packet2: packet2",
-        "qwen3-packet c6r1_down_packet0: packet0",
-        "qwen3-packet c1r3_current_k_packet14: packet14",
-        "qwen3-packet c1r3_current_v_packet15: packet15",
+        "qwen3-packet c6r1_down_packet1: packet1",
+        "qwen3-packet c1r3_current_k_packet8: packet8",
+        "qwen3-packet c1r3_current_v_packet9: packet9",
         "qwen3-flow c1r3_q_to_c6r1",
         "qwen3-flow c6r2_swiglu_to_c6r1",
         "qwen3-flow shape_a0_carrier_to_shape_b0",

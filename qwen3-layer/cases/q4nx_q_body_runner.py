@@ -1,18 +1,24 @@
-"""NPU runner for qkv-shape-o-c1r2-bridge."""
+"""NPU runner for q4nx-q-body-bridge."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import numpy as np
+import torch
 from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor
 
 import npu_build
-from cases import qkv_shape_o_c1r2_generate as generate
-from cases.qkv_shape_o_c1r2_reference import (
+from cases import q4nx_q_body_generate as generate
+from cases.q4nx_q_body_reference import (
     CASE_NAME,
+    HIDDEN_DWORDS,
     OUTPUT_DWORDS,
-    expected_output,
+    TOTAL_WEIGHT_I32,
+    hidden_as_i32,
+    make_packed_weights,
+    packed_as_i32,
+    q_body_payload,
     route_summary,
     validate_output,
 )
@@ -31,7 +37,7 @@ def build_kernel() -> tuple[Path, Path]:
     mlir_path.write_text(mlir_text)
     errors = generate.validate_generated_mlir(mlir_text)
     if errors:
-        raise RuntimeError("\n".join(f"  QKV STRUCTURE FAIL: {error}" for error in errors))
+        raise RuntimeError("\n".join(f"  Q4NX Q BODY STRUCTURE FAIL: {error}" for error in errors))
 
     npu_build.compile_mlir(mlir_path, xclbin_path, insts_path)
     return xclbin_path, insts_path
@@ -42,17 +48,13 @@ def check_only() -> bool:
     errors = generate.validate_generated_mlir(mlir_text)
     if errors:
         for error in errors:
-            print(f"  QKV STRUCTURE FAIL: {error}")
+            print(f"  Q4NX Q BODY STRUCTURE FAIL: {error}")
         return False
-    print(
-        "  PASS: qkv-shape-o-c1r2-bridge MLIR contains "
-        "main16 Q/K/V compact -> c1r3 -> Shape-A/B -> packet2 -> O compact -> c1r2"
-    )
+    print("  PASS: q4nx-q-body-bridge MLIR replaces deterministic Q producer with c1r2 replay + Q4NX")
     return True
 
 
 def build_only() -> bool:
-    npu_build.compile_bridge_kernel()
     xclbin_path, insts_path = build_kernel()
     print(f"  PASS: built {xclbin_path}")
     print(f"  PASS: built {insts_path}")
@@ -67,28 +69,39 @@ def run() -> bool:
         print(f"  {line}")
     print()
 
-    npu_build.compile_bridge_kernel()
     xclbin_path, insts_path = build_kernel()
 
     print("  Loading NPU kernel...")
     handle = npu_build.load_kernel(xclbin_path, insts_path)
 
-    expected = expected_output()
+    packed = make_packed_weights()
+    hidden = hidden_as_i32()
+    weights = packed_as_i32(packed)
+    expected = q_body_payload(packed)
+    if hidden.shape[0] != HIDDEN_DWORDS:
+        raise RuntimeError(f"bad hidden shape: {hidden.shape[0]}")
+    if weights.shape[0] != TOTAL_WEIGHT_I32:
+        raise RuntimeError(f"bad weight shape: {weights.shape[0]}")
+
+    hidden_buf = XRTTensor.from_torch(torch.from_numpy(hidden.copy()).to(torch.int32))
+    weight_buf = XRTTensor.from_torch(torch.from_numpy(weights.copy()).to(torch.int32))
     output_buf = XRTTensor((OUTPUT_DWORDS,), dtype=np.int32)
 
     print("  Running on NPU...")
-    result = npu_build.run(handle, [output_buf])
+    result = npu_build.run(handle, [hidden_buf, weight_buf, output_buf])
     got = output_buf.to_torch().numpy().astype(np.int32)
     print(f"  NPU time: {result.npu_time / 1e3:.1f} us")
-    print(f"  expected: {expected.tolist()}")
-    print(f"  got:      {got.tolist()}")
+    print(f"  expected[0:8]: {expected[:8].tolist()}")
+    print(f"  got[0:8]:      {got[:8].tolist()}")
+    print(f"  expected[-8:]: {expected[-8:].tolist()}")
+    print(f"  got[-8:]:      {got[-8:].tolist()}")
 
-    errors = validate_output(got)
+    errors = validate_output(expected, got)
     if errors:
-        print(f"  FAIL: {len(errors)} qkv bridge mismatches")
+        print(f"  FAIL: {len(errors)} q4nx q-body mismatches")
         for error in errors:
             print(f"    {error}")
         return False
 
-    print("  PASS: main16 Q/K/V producer reached c1r2 through Shape-A/B and O compact")
+    print("  PASS: host hidden replay reached main16 Q4NX Q body on NPU")
     return True

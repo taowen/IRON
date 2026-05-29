@@ -183,7 +183,7 @@ def summary_lines() -> list[str]:
         f"  c1r2_replays=+{C1R2_QKV_REPLAYS}/+{C1R2_UPGATE_REPLAYS}/+{C1R2_FINAL_REPLAYS}",
         f"  attention_packet2={ATTENTION_PACKET_DWORDS} dwords -> {O_CHUNKS} O chunks",
         f"  c6r2_input={C6R2_INPUT_DWORDS} dwords, swiglu_slices={SWIGLU_SLICES}",
-        f"  down_packet0={DOWN_PACKET_DWORDS} dwords",
+        f"  down_packet1={DOWN_PACKET_DWORDS} dwords",
     ]
     lines.extend(
         f"  phase {spec.name}: input={spec.input_dim} output={spec.output_dim} "

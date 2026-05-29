@@ -492,10 +492,10 @@ def generate_mlir() -> str:
 
 {chr(10).join(flows)}
 
-    func.func private @shape_make_carrier(memref<{WINDOW_DWORDS}xi32>, memref<{WINDOW_DWORDS}xi32>, memref<{SHAPE_CARRIER_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/qwen3_bridge.o"}}
-    func.func private @shape_make_return(memref<{WINDOW_DWORDS}xi32>, memref<{SHAPE_CARRIER_DWORDS}xi32>, memref<{WINDOW_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/qwen3_bridge.o"}}
-    func.func private @shape_init_summary(memref<{SUMMARY_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/qwen3_bridge.o"}}
-    func.func private @shape_accum_chunk(memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{SUMMARY_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/qwen3_bridge.o"}}
+    func.func private @shape_make_carrier(memref<{WINDOW_DWORDS}xi32>, memref<{WINDOW_DWORDS}xi32>, memref<{SHAPE_CARRIER_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/debug_contract.o"}}
+    func.func private @shape_make_return(memref<{WINDOW_DWORDS}xi32>, memref<{SHAPE_CARRIER_DWORDS}xi32>, memref<{WINDOW_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/debug_contract.o"}}
+    func.func private @shape_init_summary(memref<{SUMMARY_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/debug_contract.o"}}
+    func.func private @shape_accum_chunk(memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{SUMMARY_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/debug_contract.o"}}
 
 {chr(10).join(blocks)}
 {_runtime_sequence()}
@@ -520,7 +520,7 @@ def validate_generated_mlir(mlir: str) -> list[str]:
         "shape_make_carrier",
         "shape_make_return",
         "shape_accum_chunk",
-        "qwen3_bridge.o",
+        "debug_contract.o",
     )
     errors = [f"missing shape marker: {marker}" for marker in required if marker not in mlir]
     if mlir.count("shape_make_carrier") != 5:

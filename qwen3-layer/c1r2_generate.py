@@ -9,10 +9,13 @@ from c1r2_reference import (
     COLUMN_PACKET_BASE,
     FFN_GLOBAL_PACKET_ID,
     MAIN_ACCUM_DWORDS,
+    MAIN_CHUNKS_PER_REPLAY,
     MAIN_CHUNK_DWORDS,
     MAIN_RECORD_DWORDS,
     O_GLOBAL_PACKET_ID,
+    OUTPUT_DWORDS,
     SWIGLU_OUTPUT_DWORDS,
+    SWIGLU_SLICES,
     TOTAL_MAIN_CHUNKS,
     column_packet,
     main_packet,
@@ -81,45 +84,61 @@ def _main_tile(group: int, row: int) -> str:
     %{tile}_chunk_ping = aie.buffer(%{tile}) {{sym_name = "{tile}_chunk_ping"}} : memref<{MAIN_CHUNK_DWORDS}xi32>
     %{tile}_chunk_pong = aie.buffer(%{tile}) {{sym_name = "{tile}_chunk_pong"}} : memref<{MAIN_CHUNK_DWORDS}xi32>
     %{tile}_accum = aie.buffer(%{tile}) {{sym_name = "{tile}_accum"}} : memref<{MAIN_ACCUM_DWORDS}xi32>
-{_lock_pair(tile, "records", 0, init_empty=3)}
-{_lock_pair(tile, "chunk", 2, init_empty=2)}
+{_lock_pair(tile, "o", 0)}
+{_lock_pair(tile, "up", 2)}
+{_lock_pair(tile, "gate", 4)}
+{_lock_pair(tile, "chunk", 6, init_empty=2)}
 
     %{tile}_core = aie.core(%{tile}) {{
       %c0 = arith.constant 0 : index
       %c1 = arith.constant 1 : index
       %c1_i32 = arith.constant 1 : i32
       %c2_i32 = arith.constant 2 : i32
-      %chunks = arith.constant {TOTAL_MAIN_CHUNKS} : index
+      %replays = arith.constant {C1R2_UPGATE_REPLAYS} : index
+      %chunks_per_replay = arith.constant {MAIN_CHUNKS_PER_REPLAY} : index
       %dwords_i32 = arith.constant {MAIN_CHUNK_DWORDS} : i32
       %group_i32 = arith.constant {group} : i32
       %row_i32 = arith.constant {row} : i32
 
-      func.call @c1r2_main_init_accum(%{tile}_accum, %group_i32, %row_i32)
-        : (memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32) -> ()
-      aie.use_lock(%{tile}_records_empty, AcquireGreaterEqual, 1)
+      aie.use_lock(%{tile}_o_empty, AcquireGreaterEqual, 1)
       func.call @c1r2_emit_o_record(%{tile}_records, %group_i32, %row_i32)
         : (memref<{MAIN_RECORD_DWORDS}xi32>, i32, i32) -> ()
-      aie.use_lock(%{tile}_records_full, Release, 1)
+      aie.use_lock(%{tile}_o_full, Release, 1)
 
-      scf.for %chunk = %c0 to %chunks step %c1 {{
-        %chunk_i32 = arith.index_cast %chunk : index to i32
-        %rem = arith.remsi %chunk_i32, %c2_i32 : i32
-        %is_pong = arith.cmpi eq, %rem, %c1_i32 : i32
-        aie.use_lock(%{tile}_chunk_full, AcquireGreaterEqual, 1)
-        scf.if %is_pong {{
-          func.call @c1r2_main_accum_chunk(%{tile}_chunk_pong, %{tile}_accum, %chunk_i32, %group_i32, %row_i32, %dwords_i32)
-            : (memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32, i32, i32) -> ()
-        }} else {{
-          func.call @c1r2_main_accum_chunk(%{tile}_chunk_ping, %{tile}_accum, %chunk_i32, %group_i32, %row_i32, %dwords_i32)
-            : (memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32, i32, i32) -> ()
+      scf.for %replay = %c0 to %replays step %c1 {{
+        %replay_i32 = arith.index_cast %replay : index to i32
+        %is_gate_value = arith.remsi %replay_i32, %c2_i32 : i32
+        %is_gate = arith.cmpi eq, %is_gate_value, %c1_i32 : i32
+        func.call @c1r2_main_init_accum(%{tile}_accum, %group_i32, %row_i32)
+          : (memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32) -> ()
+        scf.for %chunk = %c0 to %chunks_per_replay step %c1 {{
+          %base_chunk = arith.muli %replay, %chunks_per_replay : index
+          %global_chunk = arith.addi %base_chunk, %chunk : index
+          %global_chunk_i32 = arith.index_cast %global_chunk : index to i32
+          %rem = arith.remsi %global_chunk_i32, %c2_i32 : i32
+          %is_pong = arith.cmpi eq, %rem, %c1_i32 : i32
+          aie.use_lock(%{tile}_chunk_full, AcquireGreaterEqual, 1)
+          scf.if %is_pong {{
+            func.call @c1r2_main_accum_chunk(%{tile}_chunk_pong, %{tile}_accum, %global_chunk_i32, %group_i32, %row_i32, %dwords_i32)
+              : (memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32, i32, i32) -> ()
+          }} else {{
+            func.call @c1r2_main_accum_chunk(%{tile}_chunk_ping, %{tile}_accum, %global_chunk_i32, %group_i32, %row_i32, %dwords_i32)
+              : (memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32, i32, i32) -> ()
+          }}
+          aie.use_lock(%{tile}_chunk_empty, Release, 1)
         }}
-        aie.use_lock(%{tile}_chunk_empty, Release, 1)
+        scf.if %is_gate {{
+          aie.use_lock(%{tile}_gate_empty, AcquireGreaterEqual, 1)
+          func.call @c1r2_main_emit_gate_record(%{tile}_records, %{tile}_accum, %group_i32, %row_i32, %replay_i32)
+            : (memref<{MAIN_RECORD_DWORDS}xi32>, memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32, i32) -> ()
+          aie.use_lock(%{tile}_gate_full, Release, 1)
+        }} else {{
+          aie.use_lock(%{tile}_up_empty, AcquireGreaterEqual, 1)
+          func.call @c1r2_main_emit_up_record(%{tile}_records, %{tile}_accum, %group_i32, %row_i32, %replay_i32)
+            : (memref<{MAIN_RECORD_DWORDS}xi32>, memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32, i32) -> ()
+          aie.use_lock(%{tile}_up_full, Release, 1)
+        }}
       }}
-
-      aie.use_lock(%{tile}_records_empty, AcquireGreaterEqual, 2)
-      func.call @c1r2_main_emit_upgate_records(%{tile}_records, %{tile}_accum, %group_i32, %row_i32)
-        : (memref<{MAIN_RECORD_DWORDS}xi32>, memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32) -> ()
-      aie.use_lock(%{tile}_records_full, Release, 2)
       aie.end
     }}
 
@@ -139,19 +158,19 @@ def _main_tile(group: int, row: int) -> str:
     ^record_start:
       %record_dma = aie.dma_start(MM2S, 1, ^o_out, ^end)
     ^o_out:
-      aie.use_lock(%{tile}_records_full, AcquireGreaterEqual, 1)
+      aie.use_lock(%{tile}_o_full, AcquireGreaterEqual, 1)
       aie.dma_bd(%{tile}_records : memref<{MAIN_RECORD_DWORDS}xi32>, {o_offset}, {o_length}) {{bd_id = 2 : i32, next_bd_id = 3 : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {packet}>}}
-      aie.use_lock(%{tile}_records_empty, Release, 1)
+      aie.use_lock(%{tile}_o_empty, Release, 1)
       aie.next_bd ^up_out
     ^up_out:
-      aie.use_lock(%{tile}_records_full, AcquireGreaterEqual, 1)
+      aie.use_lock(%{tile}_up_full, AcquireGreaterEqual, 1)
       aie.dma_bd(%{tile}_records : memref<{MAIN_RECORD_DWORDS}xi32>, {up_offset}, {up_length}) {{bd_id = 3 : i32, next_bd_id = 4 : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {packet}>}}
-      aie.use_lock(%{tile}_records_empty, Release, 1)
+      aie.use_lock(%{tile}_up_empty, Release, 1)
       aie.next_bd ^gate_out
     ^gate_out:
-      aie.use_lock(%{tile}_records_full, AcquireGreaterEqual, 1)
+      aie.use_lock(%{tile}_gate_full, AcquireGreaterEqual, 1)
       aie.dma_bd(%{tile}_records : memref<{MAIN_RECORD_DWORDS}xi32>, {gate_offset}, {gate_length}) {{bd_id = 4 : i32, next_bd_id = 3 : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {packet}>}}
-      aie.use_lock(%{tile}_records_empty, Release, 1)
+      aie.use_lock(%{tile}_gate_empty, Release, 1)
       aie.next_bd ^up_out
     ^end:
       aie.end
@@ -164,16 +183,15 @@ def _column_lock_defs(tile: str) -> str:
         f'    %{tile}_o_full = aie.lock(%{tile}, 0) {{init = 0 : i32, sym_name = "{tile}_o_full"}}\n',
         f'    %{tile}_up_full = aie.lock(%{tile}, 1) {{init = 0 : i32, sym_name = "{tile}_up_full"}}\n',
         f'    %{tile}_gate_full = aie.lock(%{tile}, 2) {{init = 0 : i32, sym_name = "{tile}_gate_full"}}\n',
-        f'    %{tile}_drain_token = aie.lock(%{tile}, 3) {{init = 0 : i32, sym_name = "{tile}_drain_token"}}\n',
+        f'    %{tile}_o_empty = aie.lock(%{tile}, 3) {{init = {ROWS_PER_COLUMN} : i32, sym_name = "{tile}_o_empty"}}\n',
+        f'    %{tile}_up_empty = aie.lock(%{tile}, 4) {{init = {ROWS_PER_COLUMN} : i32, sym_name = "{tile}_up_empty"}}\n',
+        f'    %{tile}_gate_empty = aie.lock(%{tile}, 5) {{init = {ROWS_PER_COLUMN} : i32, sym_name = "{tile}_gate_empty"}}\n',
     ]
-    for row in range(ROWS_PER_COLUMN):
-        base = 4 + row * 3
-        for stage_idx, stage in enumerate(("o", "up", "gate")):
-            lines.append(
-                f'    %{tile}_{stage}{row}_empty = aie.lock(%{tile}, {base + stage_idx}) '
-                f'{{init = 1 : i32, sym_name = "{tile}_{stage}{row}_empty"}}\n'
-            )
     return "".join(lines)
+
+
+def _column_stage_empty_releases(tile: str, stage: str) -> str:
+    return f"      aie.use_lock(%{tile}_{stage}_empty, Release, {ROWS_PER_COLUMN})"
 
 
 def _column_memtile(group: int) -> str:
@@ -190,17 +208,17 @@ def _column_memtile(group: int) -> str:
         receive_starts.append(
             f"""{start_label}      %row{row}_dma = aie.dma_start(S2MM, {row}, ^row{row}_o, {next_start})
     ^row{row}_o:
-      aie.use_lock(%{tile}_o{row}_empty, AcquireGreaterEqual, 1)
+      aie.use_lock(%{tile}_o_empty, AcquireGreaterEqual, 1)
       aie.dma_bd(%{tile}_o : memref<{COLUMN_COMPACT_DWORDS}xi32>, {dest_offset}, {length}) {{bd_id = {o_bd} : i32, next_bd_id = {up_bd} : i32}}
       aie.use_lock(%{tile}_o_full, Release, 1)
       aie.next_bd ^row{row}_up
     ^row{row}_up:
-      aie.use_lock(%{tile}_up{row}_empty, AcquireGreaterEqual, 1)
+      aie.use_lock(%{tile}_up_empty, AcquireGreaterEqual, 1)
       aie.dma_bd(%{tile}_up : memref<{COLUMN_COMPACT_DWORDS}xi32>, {dest_offset}, {length}) {{bd_id = {up_bd} : i32, next_bd_id = {gate_bd} : i32}}
       aie.use_lock(%{tile}_up_full, Release, 1)
       aie.next_bd ^row{row}_gate
     ^row{row}_gate:
-      aie.use_lock(%{tile}_gate{row}_empty, AcquireGreaterEqual, 1)
+      aie.use_lock(%{tile}_gate_empty, AcquireGreaterEqual, 1)
       aie.dma_bd(%{tile}_gate : memref<{COLUMN_COMPACT_DWORDS}xi32>, {dest_offset}, {length}) {{bd_id = {gate_bd} : i32, next_bd_id = {up_bd} : i32}}
       aie.use_lock(%{tile}_gate_full, Release, 1)
       aie.next_bd ^row{row}_up"""
@@ -220,17 +238,17 @@ def _column_memtile(group: int) -> str:
     ^o_out:
       aie.use_lock(%{tile}_o_full, AcquireGreaterEqual, {ROWS_PER_COLUMN})
       aie.dma_bd(%{tile}_o : memref<{COLUMN_COMPACT_DWORDS}xi32>, {source_offset}, {source_length}) {{bd_id = {COMPACT_OUT_BDS[0]} : i32, next_bd_id = {COMPACT_OUT_BDS[1]} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {packet}>}}
-      aie.use_lock(%{tile}_drain_token, Release, 1)
+{_column_stage_empty_releases(tile, "o")}
       aie.next_bd ^up_out
     ^up_out:
       aie.use_lock(%{tile}_up_full, AcquireGreaterEqual, {ROWS_PER_COLUMN})
       aie.dma_bd(%{tile}_up : memref<{COLUMN_COMPACT_DWORDS}xi32>, {source_offset}, {source_length}) {{bd_id = {COMPACT_OUT_BDS[1]} : i32, next_bd_id = {COMPACT_OUT_BDS[2]} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {packet}>}}
-      aie.use_lock(%{tile}_drain_token, Release, 1)
+{_column_stage_empty_releases(tile, "up")}
       aie.next_bd ^gate_out
     ^gate_out:
       aie.use_lock(%{tile}_gate_full, AcquireGreaterEqual, {ROWS_PER_COLUMN})
       aie.dma_bd(%{tile}_gate : memref<{COLUMN_COMPACT_DWORDS}xi32>, {source_offset}, {source_length}) {{bd_id = {COMPACT_OUT_BDS[2]} : i32, next_bd_id = {COMPACT_OUT_BDS[1]} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {packet}>}}
-      aie.use_lock(%{tile}_drain_token, Release, 1)
+{_column_stage_empty_releases(tile, "gate")}
       aie.next_bd ^up_out
     ^end:
       aie.end
@@ -243,17 +261,20 @@ def _bridge_lock_defs() -> str:
         '    %bridge_o_full = aie.lock(%bridge, 0) {init = 0 : i32, sym_name = "bridge_o_full"}\n',
         '    %bridge_up_full = aie.lock(%bridge, 1) {init = 0 : i32, sym_name = "bridge_up_full"}\n',
         '    %bridge_gate_full = aie.lock(%bridge, 2) {init = 0 : i32, sym_name = "bridge_gate_full"}\n',
-        '    %bridge_drain_token = aie.lock(%bridge, 3) {init = 0 : i32, sym_name = "bridge_drain_token"}\n',
     ]
-    lines.append(_lock_pair("bridge", "packet", 4, init_empty=2))
-    for group in range(len(MAIN_COLUMNS)):
-        base = 6 + group * 3
-        for stage_idx, stage in enumerate(("o", "up", "gate")):
-            lines.append(
-                f'    %bridge_{stage}{group}_empty = aie.lock(%bridge, {base + stage_idx}) '
-                f'{{init = 1 : i32, sym_name = "bridge_{stage}{group}_empty"}}\n'
-            )
+    lines.append(_lock_pair("bridge", "packet", 3, init_empty=2))
+    lines.extend(
+        (
+            f'    %bridge_o_empty = aie.lock(%bridge, 5) {{init = {len(MAIN_COLUMNS)} : i32, sym_name = "bridge_o_empty"}}\n',
+            f'    %bridge_up_empty = aie.lock(%bridge, 6) {{init = {len(MAIN_COLUMNS)} : i32, sym_name = "bridge_up_empty"}}\n',
+            f'    %bridge_gate_empty = aie.lock(%bridge, 7) {{init = {len(MAIN_COLUMNS)} : i32, sym_name = "bridge_gate_empty"}}\n',
+        )
+    )
     return "".join(lines)
+
+
+def _bridge_stage_empty_releases(stage: str) -> str:
+    return f"      aie.use_lock(%bridge_{stage}_empty, Release, {len(MAIN_COLUMNS)})"
 
 
 def _bridge_receive_starts() -> str:
@@ -271,17 +292,17 @@ def _bridge_receive_starts() -> str:
         starts.append(
             f"""{start_label}      %g{group}_dma = aie.dma_start(S2MM, {group}, ^g{group}_o, {next_start})
     ^g{group}_o:
-      aie.use_lock(%bridge_o{group}_empty, AcquireGreaterEqual, 1)
+      aie.use_lock(%bridge_o_empty, AcquireGreaterEqual, 1)
       aie.dma_bd(%bridge_o : memref<{COMPACT_PACKET_DWORDS}xi32>, {dest_offset}, {length}) {{bd_id = {o_bd} : i32, next_bd_id = {up_bd} : i32}}
       aie.use_lock(%bridge_o_full, Release, 1)
       aie.next_bd ^g{group}_up
     ^g{group}_up:
-      aie.use_lock(%bridge_up{group}_empty, AcquireGreaterEqual, 1)
+      aie.use_lock(%bridge_up_empty, AcquireGreaterEqual, 1)
       aie.dma_bd(%bridge_up : memref<{COMPACT_PACKET_DWORDS}xi32>, {dest_offset}, {length}) {{bd_id = {up_bd} : i32, next_bd_id = {gate_bd} : i32}}
       aie.use_lock(%bridge_up_full, Release, 1)
       aie.next_bd ^g{group}_gate
     ^g{group}_gate:
-      aie.use_lock(%bridge_gate{group}_empty, AcquireGreaterEqual, 1)
+      aie.use_lock(%bridge_gate_empty, AcquireGreaterEqual, 1)
       aie.dma_bd(%bridge_gate : memref<{COMPACT_PACKET_DWORDS}xi32>, {dest_offset}, {length}) {{bd_id = {gate_bd} : i32, next_bd_id = {up_bd} : i32}}
       aie.use_lock(%bridge_gate_full, Release, 1)
       aie.next_bd ^g{group}_up"""
@@ -306,17 +327,17 @@ def _bridge() -> str:
     ^o_out:
       aie.use_lock(%bridge_o_full, AcquireGreaterEqual, {len(MAIN_COLUMNS)})
       aie.dma_bd(%bridge_o : memref<{COMPACT_PACKET_DWORDS}xi32>, 0, {COMPACT_PACKET_DWORDS}) {{bd_id = {COMPACT_OUT_BDS[0]} : i32, next_bd_id = {COMPACT_OUT_BDS[1]} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {O_GLOBAL_PACKET_ID}>}}
-      aie.use_lock(%bridge_drain_token, Release, 1)
+{_bridge_stage_empty_releases("o")}
       aie.next_bd ^up_out
     ^up_out:
       aie.use_lock(%bridge_up_full, AcquireGreaterEqual, {len(MAIN_COLUMNS)})
       aie.dma_bd(%bridge_up : memref<{COMPACT_PACKET_DWORDS}xi32>, 1, {C6R2_HALF_DWORDS}) {{bd_id = {COMPACT_OUT_BDS[1]} : i32, next_bd_id = {COMPACT_OUT_BDS[2]} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {FFN_GLOBAL_PACKET_ID}>}}
-      aie.use_lock(%bridge_drain_token, Release, 1)
+{_bridge_stage_empty_releases("up")}
       aie.next_bd ^gate_out
     ^gate_out:
       aie.use_lock(%bridge_gate_full, AcquireGreaterEqual, {len(MAIN_COLUMNS)})
       aie.dma_bd(%bridge_gate : memref<{COMPACT_PACKET_DWORDS}xi32>, 1, {C6R2_HALF_DWORDS}) {{bd_id = {COMPACT_OUT_BDS[2]} : i32, next_bd_id = {COMPACT_OUT_BDS[1]} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {FFN_GLOBAL_PACKET_ID}>}}
-      aie.use_lock(%bridge_drain_token, Release, 1)
+{_bridge_stage_empty_releases("gate")}
       aie.next_bd ^up_out
 
     ^packet_in_start:
@@ -395,7 +416,11 @@ def _full_vector() -> str:
 """
 
 
-def _swiglu() -> str:
+def _swiglu(repeats: int = 1, consume_input_per_repeat: bool = False) -> str:
+    input_acquire_before_loop = "" if consume_input_per_repeat else "      aie.use_lock(%swiglu_input_full, AcquireGreaterEqual, 2)"
+    input_acquire_in_loop = "        aie.use_lock(%swiglu_input_full, AcquireGreaterEqual, 2)" if consume_input_per_repeat else ""
+    input_release_in_loop = "        aie.use_lock(%swiglu_input_empty, Release, 2)" if consume_input_per_repeat else ""
+    input_release_after_loop = "" if consume_input_per_repeat else "      aie.use_lock(%swiglu_input_empty, Release, 2)"
     return f"""
     %swiglu_input = aie.buffer(%swiglu) {{sym_name = "swiglu_input"}} : memref<{C6R2_INPUT_DWORDS}xi32>
     %swiglu_output = aie.buffer(%swiglu) {{sym_name = "swiglu_output"}} : memref<{SWIGLU_OUTPUT_DWORDS}xi32>
@@ -403,13 +428,21 @@ def _swiglu() -> str:
 {_lock_pair("swiglu", "output", 2)}
 
     %swiglu_core = aie.core(%swiglu) {{
+      %c0 = arith.constant 0 : index
+      %c1 = arith.constant 1 : index
+      %repeats = arith.constant {repeats} : index
       %dwords_i32 = arith.constant {C6R2_INPUT_DWORDS} : i32
-      aie.use_lock(%swiglu_input_full, AcquireGreaterEqual, 2)
-      aie.use_lock(%swiglu_output_empty, AcquireGreaterEqual, 1)
-      func.call @ffn_swiglu_contract(%swiglu_input, %swiglu_output, %dwords_i32)
-        : (memref<{C6R2_INPUT_DWORDS}xi32>, memref<{SWIGLU_OUTPUT_DWORDS}xi32>, i32) -> ()
-      aie.use_lock(%swiglu_input_empty, Release, 2)
-      aie.use_lock(%swiglu_output_full, Release, 1)
+{input_acquire_before_loop}
+      scf.for %repeat = %c0 to %repeats step %c1 {{
+        %slice_i32 = arith.index_cast %repeat : index to i32
+{input_acquire_in_loop}
+        aie.use_lock(%swiglu_output_empty, AcquireGreaterEqual, 1)
+        func.call @ffn_swiglu_slice_contract(%swiglu_input, %swiglu_output, %dwords_i32, %slice_i32)
+          : (memref<{C6R2_INPUT_DWORDS}xi32>, memref<{SWIGLU_OUTPUT_DWORDS}xi32>, i32, i32) -> ()
+        aie.use_lock(%swiglu_output_full, Release, 1)
+{input_release_in_loop}
+      }}
+{input_release_after_loop}
       aie.end
     }}
 
@@ -468,8 +501,8 @@ def _hub() -> str:
 def _runtime_sequence() -> str:
     return "\n".join(
         (
-            f"    aie.runtime_sequence(%output: memref<{SWIGLU_OUTPUT_DWORDS}xi32>) {{",
-            npu_writebd(6, 13, SWIGLU_OUTPUT_DWORDS, 0),
+            f"    aie.runtime_sequence(%output: memref<{OUTPUT_DWORDS}xi32>) {{",
+            npu_writebd(6, 13, OUTPUT_DWORDS, 0),
             npu_address_patch(6, 13, 0, 0),
             npu_push_queue(6, "S2MM", 1, 13),
             npu_sync(6, 1),
@@ -523,7 +556,7 @@ def generate_mlir() -> str:
         )
     )
 
-    blocks = [_bridge(), _full_vector(), _swiglu(), _hub()]
+    blocks = [_bridge(), _full_vector(), _swiglu(SWIGLU_SLICES, consume_input_per_repeat=True), _hub()]
     for group in range(len(MAIN_COLUMNS)):
         blocks.append(_column_memtile(group))
         for row in range(ROWS_PER_COLUMN):
@@ -535,12 +568,13 @@ def generate_mlir() -> str:
 
 {chr(10).join(flows)}
 
-    func.func private @c1r2_emit_o_record(memref<{MAIN_RECORD_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/qwen3_bridge.o"}}
-    func.func private @c1r2_make_replay(memref<{COMPACT_PACKET_DWORDS}xi32>, memref<{C1R2_PACKET_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/qwen3_bridge.o"}}
-    func.func private @c1r2_main_init_accum(memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/qwen3_bridge.o"}}
-    func.func private @c1r2_main_accum_chunk(memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/qwen3_bridge.o"}}
-    func.func private @c1r2_main_emit_upgate_records(memref<{MAIN_RECORD_DWORDS}xi32>, memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/qwen3_bridge.o"}}
-    func.func private @ffn_swiglu_contract(memref<{C6R2_INPUT_DWORDS}xi32>, memref<{SWIGLU_OUTPUT_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/qwen3_bridge.o"}}
+    func.func private @c1r2_emit_o_record(memref<{MAIN_RECORD_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/debug_contract.o"}}
+    func.func private @c1r2_make_replay(memref<{COMPACT_PACKET_DWORDS}xi32>, memref<{C1R2_PACKET_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
+    func.func private @c1r2_main_init_accum(memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/debug_contract.o"}}
+    func.func private @c1r2_main_accum_chunk(memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/debug_contract.o"}}
+    func.func private @c1r2_main_emit_up_record(memref<{MAIN_RECORD_DWORDS}xi32>, memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/debug_contract.o"}}
+    func.func private @c1r2_main_emit_gate_record(memref<{MAIN_RECORD_DWORDS}xi32>, memref<{MAIN_ACCUM_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/debug_contract.o"}}
+    func.func private @ffn_swiglu_slice_contract(memref<{C6R2_INPUT_DWORDS}xi32>, memref<{SWIGLU_OUTPUT_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/swiglu.o"}}
 
 {chr(10).join(blocks)}
 {_runtime_sequence()}
@@ -562,10 +596,13 @@ def validate_generated_mlir(mlir: str) -> list[str]:
         f"memref<{C1R2_PACKET_DWORDS}xi32>",
         f"memref<{C6R2_INPUT_DWORDS}xi32>",
         f"memref<{SWIGLU_OUTPUT_DWORDS}xi32>",
+        f"memref<{OUTPUT_DWORDS}xi32>",
         "c1r2_make_replay",
         "c1r2_main_accum_chunk",
-        "ffn_swiglu_contract",
-        "qwen3_bridge.o",
+        "c1r2_main_emit_up_record",
+        "c1r2_main_emit_gate_record",
+        "ffn_swiglu_slice_contract",
+        "debug_contract.o",
     )
     markers = tuple(marker for marker in required if not marker.startswith("case marker"))
     errors = [f"missing c1r2 marker: {marker}" for marker in markers if marker not in mlir]
@@ -576,6 +613,10 @@ def validate_generated_mlir(mlir: str) -> list[str]:
         errors.append("main activation bridge flow count mismatch")
     if f"%replays = arith.constant {C1R2_UPGATE_REPLAYS} : index" not in mlir:
         errors.append("c1r2 replay count marker missing")
+    if f"%chunks_per_replay = arith.constant {MAIN_CHUNKS_PER_REPLAY} : index" not in mlir:
+        errors.append("c1r2 per-replay chunk count marker missing")
+    if f"%repeats = arith.constant {SWIGLU_SLICES} : index" not in mlir:
+        errors.append("c1r2 swiglu slice count marker missing")
     if COLUMN_PACKET_BASE != 4:
         errors.append("unreachable packet base mismatch")
     return errors

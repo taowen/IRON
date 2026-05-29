@@ -9,24 +9,41 @@ def shim_bd_address(column: int, bd_id: int) -> int:
     return column * 0x02000000 + 0x1D004 + bd_id * 0x20
 
 
-def npu_writebd(column: int, bd_id: int, buffer_length: int, buffer_offset: int) -> str:
+def npu_writebd(
+    column: int,
+    bd_id: int,
+    buffer_length: int,
+    buffer_offset: int,
+    next_bd: int = 0,
+    use_next_bd: bool = False,
+    d0_size: int = 0,
+    d0_stride: int = 0,
+    d1_size: int = 0,
+    d1_stride: int = 0,
+    d2_size: int = 0,
+    d2_stride: int = 0,
+    iteration_size: int = 0,
+    iteration_stride: int = 0,
+) -> str:
+    """Emit raw AIEX NPU BD setup. Stride fields use the encoded step value."""
+    use_next = 1 if use_next_bd else 0
     return (
         f"      aiex.npu.writebd {{bd_id = {bd_id} : i32, "
         f"buffer_length = {buffer_length} : i32, buffer_offset = {buffer_offset} : i32, "
         f"burst_length = 64 : i32, column = {column} : i32, "
-        f"d0_size = 0 : i32, d0_stride = 0 : i32, "
+        f"d0_size = {d0_size} : i32, d0_stride = {d0_stride} : i32, "
         f"d0_zero_after = 0 : i32, d0_zero_before = 0 : i32, "
-        f"d1_size = 0 : i32, d1_stride = 0 : i32, "
+        f"d1_size = {d1_size} : i32, d1_stride = {d1_stride} : i32, "
         f"d1_zero_after = 0 : i32, d1_zero_before = 0 : i32, "
-        f"d2_size = 0 : i32, d2_stride = 0 : i32, "
+        f"d2_size = {d2_size} : i32, d2_stride = {d2_stride} : i32, "
         f"d2_zero_after = 0 : i32, d2_zero_before = 0 : i32, "
         f"enable_packet = 0 : i32, iteration_current = 0 : i32, "
-        f"iteration_size = 0 : i32, iteration_stride = 0 : i32, "
+        f"iteration_size = {iteration_size} : i32, iteration_stride = {iteration_stride} : i32, "
         f"lock_acq_enable = 0 : i32, lock_acq_id = 0 : i32, lock_acq_val = 0 : i32, "
         f"lock_rel_id = 0 : i32, lock_rel_val = 0 : i32, "
-        f"next_bd = 0 : i32, out_of_order_id = 0 : i32, "
+        f"next_bd = {next_bd} : i32, out_of_order_id = 0 : i32, "
         f"packet_id = 0 : i32, packet_type = 0 : i32, "
-        f"row = 0 : i32, use_next_bd = 0 : i32, valid_bd = 1 : i32}}"
+        f"row = 0 : i32, use_next_bd = {use_next} : i32, valid_bd = 1 : i32}}"
     )
 
 
@@ -43,11 +60,12 @@ def npu_push_queue(
     channel: int,
     bd_id: int,
     issue_token: bool = True,
+    repeat_count: int = 0,
 ) -> str:
     token = "true" if issue_token else "false"
     return (
         f"      aiex.npu.push_queue({column}, 0, {direction} : {channel}) "
-        f"{{bd_id = {bd_id} : i32, issue_token = {token}, repeat_count = 0 : i32}}"
+        f"{{bd_id = {bd_id} : i32, issue_token = {token}, repeat_count = {repeat_count} : i32}}"
     )
 
 
@@ -56,6 +74,14 @@ def npu_sync(column: int, channel: int, direction: int = 0) -> str:
         f"      aiex.npu.sync {{channel = {channel} : i32, column = {column} : i32, "
         f"column_num = 1 : i32, direction = {direction} : i32, row = 0 : i32, row_num = 1 : i32}}"
     )
+
+
+def npu_rtp_write(buffer_name: str, index: int, value: int) -> str:
+    return f"      aiex.npu.rtp_write(@{buffer_name}, {index}, {value})"
+
+
+def npu_set_lock(lock_name: str, value: int) -> str:
+    return f"      aiex.set_lock(%{lock_name}, {value})"
 
 
 def lock_pair(tile: str, prefix: str, base: int, init_empty: int = 1) -> str:
@@ -128,6 +154,122 @@ def require_absent_markers(scope: str, mlir: str, markers: tuple[str, ...]) -> l
     return [f"{scope}: forbidden marker present: {marker}" for marker in markers if marker in mlir]
 
 
+def require_marker_order(scope: str, mlir: str, markers: tuple[str, ...]) -> list[str]:
+    errors: list[str] = []
+    previous = -1
+    for marker in markers:
+        position = mlir.find(marker, previous + 1)
+        if position == -1:
+            errors.append(f"{scope}: ordered marker missing: {marker}")
+            continue
+        previous = position
+    return errors
+
+
+def require_dma_bd_lock_balance(scope: str, mlir: str) -> list[str]:
+    errors: list[str] = []
+    block_name = "entry"
+    block_lines: list[str] = []
+
+    def flush_block() -> None:
+        if not block_lines:
+            return
+        block = "\n".join(block_lines)
+        if "aie.dma_bd(" not in block:
+            return
+        has_acquire = re.search(r"aie\.use_lock\([^)]*,\s*Acquire", block) is not None
+        has_release = re.search(r"aie\.use_lock\([^)]*,\s*Release", block) is not None
+        if has_acquire != has_release:
+            errors.append(f"{scope}: {block_name} has unbalanced DMA BD locks")
+
+    for line in mlir.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("^"):
+            flush_block()
+            block_name = stripped.split(":", 1)[0]
+            block_lines = []
+        else:
+            block_lines.append(line)
+    flush_block()
+    return errors
+
+
+def require_memtile_dma_bd_bank(scope: str, mlir: str) -> list[str]:
+    errors: list[str] = []
+    region_name = ""
+    region_lines: list[str] = []
+    in_region = False
+
+    def flush_region() -> None:
+        if not region_lines:
+            return
+        channels_by_label: dict[str, tuple[str, int]] = {}
+        blocks_by_label: dict[str, str] = {}
+        current_label = ""
+        current_lines: list[str] = []
+
+        def flush_block() -> None:
+            if current_label:
+                blocks_by_label[current_label] = "\n".join(current_lines)
+
+        for region_line in region_lines:
+            start = re.search(r"aie\.dma_start\((S2MM|MM2S),\s*([0-9]+),\s*\^([A-Za-z0-9_]+)", region_line)
+            if start:
+                channels_by_label[start.group(3)] = (start.group(1), int(start.group(2)))
+            stripped = region_line.strip()
+            if stripped.startswith("^"):
+                flush_block()
+                current_label = stripped.split(":", 1)[0][1:]
+                current_lines = []
+            else:
+                current_lines.append(region_line)
+        flush_block()
+
+        changed = True
+        while changed:
+            changed = False
+            for label, block in blocks_by_label.items():
+                channel = channels_by_label.get(label)
+                if channel is None:
+                    continue
+                for next_label in re.findall(r"aie\.next_bd\s+\^([A-Za-z0-9_]+)", block):
+                    if next_label in blocks_by_label and next_label not in channels_by_label:
+                        channels_by_label[next_label] = channel
+                        changed = True
+
+        for label, block in blocks_by_label.items():
+            channel = channels_by_label.get(label)
+            if channel is None:
+                continue
+            direction, channel_id = channel
+            for bd_id_text in re.findall(r"aie\.dma_bd\([^\n]*\{bd_id = ([0-9]+) : i32", block):
+                bd_id = int(bd_id_text)
+                high_bank = bd_id > 23
+                odd_channel = channel_id % 2 == 1
+                if high_bank != odd_channel:
+                    errors.append(
+                        f"{scope}: {region_name} {direction}{channel_id} block ^{label} "
+                        f"uses memtile BD {bd_id} from the wrong bank"
+                    )
+
+    for line in mlir.splitlines():
+        if not in_region:
+            match = re.search(r"%([A-Za-z0-9_]+)\s*=\s*aie\.memtile_dma", line)
+            if match:
+                in_region = True
+                region_name = match.group(1)
+                region_lines = []
+            continue
+        if line.strip() == "}":
+            flush_region()
+            in_region = False
+            region_name = ""
+            region_lines = []
+        else:
+            region_lines.append(line)
+    return errors
+
+
 def require_no_compute_kv_materialization(
     scope: str,
     mlir: str,
@@ -189,4 +331,47 @@ def require_max_address_patch_arg(scope: str, mlir: str, max_arg_idx: int) -> li
         f"{scope}: address_patch arg_idx {arg_idx} exceeds supported max {max_arg_idx}"
         for arg_idx in sorted(set(arg_indices))
         if arg_idx > max_arg_idx
+    ]
+
+
+def require_npu_writebd_id_limit(scope: str, mlir: str, max_bd_id: int) -> list[str]:
+    bd_ids = [int(match) for match in re.findall(r"aiex\.npu\.writebd \{bd_id = ([0-9]+) : i32", mlir)]
+    return [
+        f"{scope}: npu.writebd BD id {bd_id} exceeds supported max {max_bd_id}"
+        for bd_id in sorted(set(bd_ids))
+        if bd_id > max_bd_id
+    ]
+
+
+def require_npu_writebd_field_ranges(scope: str, mlir: str) -> list[str]:
+    ranges = {
+        "d0_size": 1023,
+        "d0_stride": (1 << 20) - 1,
+        "d1_size": 1023,
+        "d1_stride": (1 << 20) - 1,
+        "d2_stride": (1 << 20) - 1,
+        "iteration_size": 63,
+        "iteration_stride": (1 << 20) - 1,
+    }
+    errors: list[str] = []
+    for bd_match in re.finditer(r"aiex\.npu\.writebd \{([^}]*)\}", mlir):
+        attrs = bd_match.group(1)
+        bd_id_match = re.search(r"bd_id = ([0-9]+) : i32", attrs)
+        bd_id = bd_id_match.group(1) if bd_id_match else "?"
+        for field, max_value in ranges.items():
+            value_match = re.search(rf"{field} = ([0-9]+) : i32", attrs)
+            if value_match and int(value_match.group(1)) > max_value:
+                errors.append(
+                    f"{scope}: npu.writebd BD {bd_id} {field}={value_match.group(1)} "
+                    f"exceeds max {max_value}"
+                )
+    return errors
+
+
+def require_npu_push_queue_repeat_range(scope: str, mlir: str) -> list[str]:
+    repeat_counts = [int(match) for match in re.findall(r"repeat_count = ([0-9]+) : i32", mlir)]
+    return [
+        f"{scope}: npu.push_queue repeat_count {repeat_count} exceeds supported max 255"
+        for repeat_count in sorted(set(repeat_counts))
+        if repeat_count > 255
     ]

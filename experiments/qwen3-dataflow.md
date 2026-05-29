@@ -188,15 +188,17 @@ Tile 之间有固定的物理连线。数据沿着这些线从一个 tile 流向
 这类似于一条公路上跑着不同颜色的卡车，每个收货站只接收自己颜色的卡车。
 
 ```
-                    packet ID = 14
-tile A ──────────────[■]──────────────→ tile X（匹配 ID 14，接收）
+                    packet ID = 8
+tile A ──────────────[■]──────────────→ tile X（匹配 ID 8，接收）
                       │
-                      └── packet ID = 15
-                           ──────────→ tile Y（匹配 ID 15，接收）
+                      └── packet ID = 9
+                           ──────────→ tile Y（匹配 ID 9，接收）
 ```
 
-在我们的设计中，packet 路由大量使用在 KV 缓存写入（packet14 写 K，packet15
-写 V）和 attention 结果返回（packet2）的路径上。
+在我们的设计中，packet 路由大量使用在 KV 缓存写入（packet8 写 K，packet9
+写 V）和 attention 结果返回（packet2）的路径上。早期 currentkv 独立实验曾用
+packet14/15；full-layer 闭环里 packet14/15 已被 up/gate/down compact 占用，
+所以生产 fused layer 不能继续用 14/15 承载 current K/V。
 
 ---
 
@@ -278,7 +280,7 @@ row0  [K写回]    [────────── shim ────────
 - 对 Q 和 K 做 RMS 归一化（让数值范围稳定）
 - 对 Q 和 K 做 RoPE 旋转位置编码（让模型知道"这是第几个词"）
 
-处理后输出：2048-dword Q 向量经片上电路发给 attention 侧，K/V 经 packet14/15
+处理后输出：2048-dword Q 向量经片上电路发给 attention 侧，K/V 经 packet8/9
 写入主存缓存。Q/K norm 在 RoPE 之前完成；V 不做 norm 也不做 RoPE。
 
 **分发枢纽（c6r1 memtile）— "分拣中心"**
@@ -295,7 +297,11 @@ row0  [K写回]    [────────── shim ────────
 - 用当前 Q 和该 block 内 16 个历史 K 做点积，得到 8 head × 16 token 的
   原始 score
 - 在 block 内计算 unnormalized exp weights，并记录每个 head 的 block-level
-  `block_max` 与 `block_sum`
+  `block_max` 与 `block_sum`。当前可运行 kernel 使用 `dot / 128` 得到 int32
+  score，并用 Q12 查表 `round(4096 * exp(-delta / 8))` 生成 16-bit 权重；
+  生产 kernel 仍需把这个固定点 scale 校准到 Qwen3 的 bf16/fp32 softmax。
+- 最后一个 rounded block 只把 `current_token % 16 + 1` 个 token 视为有效；
+  无效 padding token 的权重必须写 0，不能进入 `block_sum`
 - 把该 block 的权重和统计量通过本地 carrier 交给配对的 shape-B
 
 **求和工位（shape-B）— "加权平均员"，共 4 个（c0r3, c0r5, c7r3, c7r5）**
@@ -307,19 +313,20 @@ IRON-ABI-v0 定义，不是 MyLM binary ABI 的已校准字段顺序：
 
 ```
 base   [0x100] = 256 字节
-                 head-major 8 records × 16-token bf16 权重
-                 base[h][t] = exp(score[h][t] - block_max[h])
+                 head-major 8 records × 16-token Q12 权重
+                 base[h][t] = q12_exp(block_max[h] - score[h][t])
 scalar [0x040] =  64 字节
-                 8 × (block_max, block_sum) fp32 pair
+                 8 × (block_max, block_sum) int32 pair
                  scalar[2h+0] = block_max[h], scalar[2h+1] = block_sum[h]
 ```
 
-Shape-B 本地状态（共 0x1000 字节累加器 + 64 字节 running 状态）：
+Shape-B 本地状态（共 0x1000 字节累加器 + 64 字节 running 状态）。当前可运行
+kernel 用 int32/Q12；生产 kernel 可替换为显式 fp32 或校准后的固定点格式：
 
 ```
-accum[8][128]      fp32   每个 head 的 weighted-V 累加
-running_max[8]     fp32
-running_sum[8]     fp32
+accum[8][128]      int32   每个 head 的 weighted-V 累加
+running_max[8]     int32
+running_sum[8]     int32
 ```
 
 Shape-B 每收到一个 16-token block 的 carrier：
@@ -377,7 +384,7 @@ c6r2 接收 512-dword 输入（512 bf16 up slice + 512 bf16 gate slice），执�
 **FFN 汇聚站（c6r1，复用枢纽 memtile）—**
 
 c6r1 在 attention 之外的另一个角色：把 24 个 SwiGLU slice 在 6144-dword
-gather buffer 中拼成完整的 12288-bf16 FFN intermediate，再用 packet0 发布给
+gather buffer 中拼成完整的 12288-bf16 FFN intermediate，再用 packet1 发布给
 down 投影。
 
 ### 3.3 为什么要分成两组
@@ -516,12 +523,12 @@ c1r3 → 片上电路 → c6r1 枢纽
 **路线 B — 当前 K/V 写入缓存（走 packet 路由到主存）：**
 
 ```
-K: c1r3 → packet14 → 向南穿过多个 tile → c0r0 shim → 写入主存 KV 缓存
-V: c1r3 → packet15 → 向东穿过多个 tile → c7r0 shim → 写入主存 KV 缓存
+K: c1r3 → packet8 → 向南穿过多个 tile → c0r0 shim → 写入主存 KV 缓存
+V: c1r3 → packet9 → 向东穿过多个 tile → c7r0 shim → 写入主存 KV 缓存
 ```
 
 当前 token 的 K 和 V 被存入 KV 缓存。decode attention 需要覆盖当前 token 自己，
-所以实现时必须保证 packet14/15 当前写回与 rounded history scan 的同步关系明确：
+所以实现时必须保证 packet8/9 当前写回与 rounded history scan 的同步关系明确：
 要么先写当前 K/V 再 scan `[0..current]`，要么把 current K/V 作为等价的旁路输入
 并入 attention。
 
@@ -543,6 +550,79 @@ V: c1r3 → packet15 → 向东穿过多个 tile → c7r0 shim → 写入主存 
 Row1 memtile 内部做 K/V 分流：每侧 K 和 V 各自拆成两路 2048-dword head-pair
 stream — K 历史送 shape-A，V 历史送 shape-B。
 
+当前实机实现采用 split K/V scan，而不是把 K0/V0/K1/V1 都塞进同一条 shim
+MM2S 流。原因是 shim `npu.writebd` 可用 BD id 只有 0..15；单通道四 block scan
+会先吃掉 16 个 scan BD，当前 K/V 写回就没有 descriptor 可用。可运行的数据流是：
+
+```
+c0r0 MM2S ch0: K0/K1 per rounded block → c0r1 S2MM ch0
+c0r0 MM2S ch1: V0/V1 per rounded block → c0r1 S2MM ch1
+c7r0 MM2S ch0: K4/K5,K6/K7 per rounded block → c7r1 S2MM ch0
+c7r0 MM2S ch1: V4/V5,V6/V7 per rounded block → c7r1 S2MM ch1
+```
+
+这样每个 rounded block 每侧只需要 2 个 shim scan BD，而不是 4 个。row1 继续用
+四个输出 channel 把 K/V 送往四个 Shape tile；只是输入侧从单流循环 slot 改成了
+K 输入流循环 K0/K1、V 输入流循环 V0/V1。current K/V 写回仍然必须在 scan 前
+`sync` 完成。最后一个 rounded block 里的无效 token 不靠 shim 少发数据解决；
+scan 仍按完整 16-token block 发送，Shape-A 用 tail-token RTP 把 padding token
+权重清零。
+
+current token 已经可以通过 `aiex.npu.rtp_write` 写入 c1r3 的
+`post_current_token` buffer，但这个 RTP 不能单独使用。因为 Q/K/V compact 是
+main16 core 在 PDI 启动后内部产生的，不依赖 host DMA；如果 c1r3 没有启动门控，
+它可能在 runtime sequence 写 RTP 之前就进入 postprocess，实际写回的 current
+slot 会稳定变成 token0。可运行顺序是：runtime sequence 先写 RTP，再
+`aiex.set_lock(%post_runtime_start, 1)`；c1r3 core 在调用
+`currentkv_postprocess_payload` 前先 acquire 这个 lock。这样 current-token
+RTP 与内部 Q/K/V dataflow 之间才有明确先后关系。
+
+当前实现已经把 current token 提升成单一 decode schedule 输入：由它派生
+rounded block 数、current token 在 block 内的 dword offset、K/V cache BO 大小、
+Shape-A/B 的 block count RTP、Shape-A 的 tail-token RTP、shim scan BD 的
+`iteration_size`，以及 `push_queue repeat_count`。这已经在真机上验证过
+token127（8 个 rounded block）和 token91（6 个 rounded block，最后一个
+block 只有 12 个有效 token）。
+
+这里有一个关键根因：如果 Shape-A/B 的 block loop 次数编进 core ELF/PDI，
+只 patch `design.bin` 会失败，因为 token127 的 core 仍会等待 8 个 block，而
+token91 的 scan 只发送 6 个 block。可复用 PDI 的做法是把 Shape-A/B block count
+也做成本地 `memref<1xi32>` RTP，并在 core 读取前用 runtime-start lock 门控。
+这样 schedule 变化只落在 instruction stream：post current-token RTP、8 个
+Shape block-count RTP、4 个 Shape-A tail-token RTP、current K/V even/odd
+写地址、scan BD `iteration_size/iteration_stride` 编码，以及 K/V
+`push_queue repeat_count`。
+token127 xclbin/PDI + patched token91 `design.bin` 已在真机通过，patched stream
+也逐 word 等于重新编译的 token91 stream。进一步验证过 token1007
+cache-capacity PDI（63 个 rounded block，覆盖 1024-token cache capacity）patch
+到 token91 后真机通过；其中 tail-token RTP 从 16 patch 到 12，证明 rounded
+padding token 已经被 mask 掉。这说明当前 transaction patch 不是只适用于
+127-token 小上下文，而是可以作为固定最大上下文 PDI + 每 token patch 的雏形。
+
+在此基础上，早期 contract frontier 已把 current K/V decode
+边界接进 full-layer tail 并在真机通过：packet8/9 写回当前 K/V → rounded KV
+scan → Shape-A/B kv16 attention → packet2 回 O → c1r2 replay → main16 up/gate →
+row1/c1r1 compact → c6r2 SwiGLU → c6r1 packet1 down handoff → main16 down →
+c1r2 final summary。这个 case 仍然使用 deterministic Q/K/V/O projection 和
+fixed-point attention calibration contract；FFN tail 已经推进到 c1r2 fixed-point
+RMSNorm-style replay、main16 up/gate tapped-int4 projection、c6r2 固定点
+`SiLU(gate) * up` slice-indexed 输出、以及 main16 down tapped-int4 projection。
+物理上已经验证 current-token cache 写回、attention-to-O layout、O-to-FFN
+replay、24 个 packet1 down slice、SwiGLU-to-down bridge 和最终 summary 可以
+在同一个 27-core NPU 数据流里闭环。
+token1007
+cache-capacity PDI patched 到 token91 的运行中，host 历史 KV cache 的 current slots
+先被 poison，最终 K/V cache 回读和 8-dword output summary 都匹配 CPU reference。
+
+静态展开 BD 的方案最多支持 7 个 rounded block：BD0..6 用于 K scan，
+BD7..13 用于 V scan，BD14/15 用于 current K/V even/odd 写回。8 个 rounded
+block 起需要 descriptor 复用。当前可运行做法是每侧只保留一个 K scan BD 和一个
+V scan BD：`buffer_length=4096` 表示一个 side 的连续 K 或 V 流，
+`iteration_size=<rounded_blocks>` / `iteration_stride=8191` 让地址生成器跨
+block 前进，同时 `push_queue repeat_count=<rounded_blocks - 1>` 让同一个 BD
+真正执行完整 scan。只写 `iteration_size` 不写 repeat count 会只发送第一个
+4096-dword segment，row1 后面的 block slot 等不到数据，真机表现为 timeout。
+
 **第二步：Shape-A 评分（c0r2, c0r4, c7r2, c7r4）**
 
 每个 Shape-A tile 拿到：
@@ -552,13 +632,13 @@ stream — K 历史送 shape-A，V 历史送 shape-B。
 工作方式：
 ```
 对每个历史 token 的 K:
-    score = Q · K / √128        // 点积除以缩放因子
-    更新 running_max            // 在线 softmax：边扫描边更新最大值
-    更新 sum_exp                // 累加 exp(score - max)
+    score = Q · K / 128         // 当前 kernel 的固定点 score scale
+    16-token block 内求 block_max
+    weight = q12_exp(block_max - score)
 ```
 
-这就是"online softmax" — 不需要先把所有 score 算完再做 softmax，
-一边扫描一边就能得到最终结果。大幅节省存储。
+完整历史维度的 online softmax merge 在 Shape-B 完成；Shape-A 只保留一个
+16-token block 的 score/weight carrier，不需要保存完整上下文的 score。
 
 每凑够 16 个历史 token，Shape-A 把该 block 的 carrier 经本地相邻存储 +
 lock immediate 同步交给 Shape-B。MyLM 已确认 carrier 由 `base[0x100]` 和
@@ -614,7 +694,7 @@ window 全部就位后，一次性发布完整的 2048-dword 块；lock 的链�
 个顺序。
 
 **c1r1 的桥不是 attention 专用** —— 它是 c6r1 packet 源（attention packet2、
-FFN packet0）→ c1r1 DMA4 → DMA1 multicast → main16 DMA0 ring 的统一通路，
+FFN packet1）→ c1r1 DMA4 → DMA1 multicast → main16 DMA0 ring 的统一通路，
 attention-to-O 和 SwiGLU-to-down 复用同一条物理桥（见 4.9）。
 
 从 Main16 的视角看：输入通道 0 上又来了 256 个 bf16 数字。跟之前做 Q/K/V 投影时
@@ -629,6 +709,23 @@ attention-to-O 和 SwiGLU-to-down 复用同一条物理桥（见 4.9）。
 - 输出：4096 维向量
 
 64 个 patch，和 Q 投影一样的规模。
+
+当前 `currentkv-full-layer-q4nx-down-bridge` 已经把这一段从 deterministic O
+summary producer 换成了真实的 O phase 物理边界：Shape-B 输出的 2048-dword
+attention payload 先在 c6r1 汇齐，再以 bf16 packet2 经 c1r1 共享激活桥进入
+main16 DMA0；main16 同时从 row1 S2MM4/5 weight ingress 经 DMA1 接收 16 个 O
+Q4NX weight chunk，调用同一个 Q4NX chunk accumulator 生成 O compact record。
+因此这里验证的是 attention-to-O packet2 handoff + O Q4NX dot，而不是旧的
+deterministic sideband replay。随后 `q4nx-qkv-body-post-bridge` 已把 Q/K/V
+producer 也切到 Q4NX：host hidden 作为 4096-bf16 full vector 送到 c1r2 位置，
+12 次 packet0 replay 经过 c1r1 multicast 回 main16 DMA0；Q/K/V 权重同时走
+row1 S2MM4/5 -> row1 MM2S0..3 -> main16 DMA1。main16 对 8 个 Q body block、
+2 个 K body block 和 2 个 V body block 逐块运行同一个 Q4NX chunk accumulator，
+直接生成 c1r3 body postprocess 期望的 Q payload 与 current K/V layout。当前
+`currentkv-full-layer-q4nx-down-bridge` 已把这条 Q4NX Q/K/V body 接入完整
+attention/O/FFN tail，因此 Q/K/V/O/up/gate/down 七个 projection phase 都已使用
+row1 S2MM4/5 weight ingress + main16 DMA1 Q4NX kernel。剩余差距不再是 Q/K/V
+物理 producer，而是 attention、c1r2 RMSNorm/replay 和 c6r2 SwiGLU 的数值校准。
 
 ### 4.8 残差连接 + 第二次 RMSNorm
 
@@ -653,6 +750,16 @@ host-visible layer boundary 上**不暴露** O / 残差 / RMSNorm 的 DDR
 descriptor，所有这些状态都留在片上由 c1r2 维护。已确认的是 c1r2 对外承担
 2048-dword（4096 bf16）full-vector packet ABI，并提供 sum-of-squares / rsqrt
 风格计算做归一化；内部 ping-pong pointer、残差缓存和值布局仍是 calibration 项。
+contract 桥里曾把 O compact → up/gate replay 从 replay-dependent contract 改成
+replay-invariant fixed-point full-vector：c1r2 从 O compact 派生 4096 个 s16 lane，
+做整数 sum-of-squares / sqrt 归一化，生成 2048-dword replay buffer。Q4NX frontier
+进一步把这个边界切成 bf16 compact expansion：c1r2 按 O compact 的 bf16 数值生成
+packet0 replay，而不是把 compact bit pattern 当 hash 种子。一次真机定位证明，O
+compact 本身和 CPU reference 只差 bf16 级别的小误差；旧 bit-hash replay 会把这些
+one-ulp 差异放大成最终 down compact mismatch。通过的版本使用 bounded numeric
+scale（当前 256）和有界 int32 sqrt，让 replay 对 bf16 LSB 抖动不敏感。后续
+MLIR/C++ 生成工具也应优先产出这种可审计的有界整数/数值形式，而不是依赖复杂 hash
+或 wide integer lowering。
 c1r2 的 phase release 计数是 full-vector packet0 replay count，而不是
 256-bf16 chunk count：
 
@@ -681,6 +788,15 @@ SwiGLU = SiLU(gate) × up 仍然成立；c6r2 在接收端按 slice 配对，每
 的 up payload 落在输入缓冲区低半区（`0x000..0x3ff`）、gate payload 落在高
 半区（`0x400..0x7ff`），合成一组完整 SwiGLU 输入。
 
+当前 `currentkv-full-layer-q4nx-down-bridge` 已经把 up/gate 从派生 tapped-int4
+contract 换成真实 Q4NX weight stream。c1r2 从 O compact 生成 bf16 full-vector
+packet0 replay；每个 replay 在 main16 上消费 16 个 128-dword activation chunk
+和 16 个 1280-dword Q4NX weight chunk，48 个 replay 合计 768 个 up/gate
+weight chunk。偶数 replay 输出 up[slice] record，奇数 replay 输出 gate[slice]
+record，payload 为 bf16。这个路径和 down 共用同一条 row1 S2MM4/5 weight
+ingress、row1 MM2S0..3 fanout、main16 DMA1 weight input；不同 phase 由
+BD/lock 顺序和 weight chunk offset 区分，不再依赖派生权重。
+
 最终需做逐元素相乘：
 
 ```
@@ -693,11 +809,18 @@ up slice，high half = 512 bf16 gate slice），输出 256-dword（512 bf16）
 SwiGLU slice。每片输出送入
 c6r1 的 6144-dword gather buffer：
 
+旧 contract kernel 把每个 dword 当作两个 s16 lane，用线性 sigmoid 的 Q15 近似计算
+固定点 `SiLU(gate) * up`。当前 Q4NX frontier 已切到 bf16 输入输出 ABI：
+`currentkv-full-layer-q4nx-down-bridge` 里 c6r2 接收 main16 Q4NX up/gate 产生的
+bf16 halves，运行 bf16-input SwiGLU approximation，再把 24 个 256-dword bf16
+slice 交给 down。它仍不是最终 Qwen3 精度内核，但 dtype ABI 已经和 Q4NX down
+kernel 对齐。
+
 ```
 24 个 slice × 256 dword = 6144 dword = 12288 bf16 完整 FFN intermediate
 ```
 
-Buffer 填满后，c6r1 用 packet0 发布 6144-dword 块，经与 attention 返回路径
+Buffer 填满后，c6r1 用 packet1 发布 6144-dword 块，经与 attention 返回路径
 **完全相同的 c1r1 共享激活桥**（DMA4 ↔ DMA1 256-dword ping-pong）扇出到
 Main16 入口的 128-dword activation ring：
 
@@ -712,6 +835,156 @@ Main16 入口的 128-dword activation ring：
 
 12288 → 4096 的矩阵乘（64 个 patch）。输入维度变大了，所以每个 tile 需要累加
 48 个 chunk（48 × 256 = 12288）而不是之前的 16 个。
+
+当前 Q4NX full-layer tail 已经把 down 入口扩到完整 48 个 main16 chunk：
+c6r2 发布 24 个 slice-indexed 256-dword bf16 SwiGLU slice，c6r1/c1r1 共享桥以
+packet1 流式送回 main16，main16 同时从 DMA0 消费 activation、从 DMA1 消费
+row1 S2MM4/5 分发来的 Q4NX weight chunk，并生成 DOWN compact record。这个版本
+验证的是 24 次 packet1 handoff、24 个下游 bf16 slice layout、48-chunk down
+Q4NX 累加容量和流控。
+
+`c1r2-o-upgate-bridge` 已经把 FFN 上半段从“同一组 up/gate 输入加 slice id”
+推进到 24 组 distinct adjacent pair：c1r2 先从 O compact 生成 replay-invariant
+full-vector payload，再发布 48 次 packet0 replay；main16 每次 replay 消耗 16 个
+128-dword activation chunk，累加出一个 512-bf16 slice。偶数 replay 发布
+up[slice] record，奇数 replay 发布 gate[slice] record；row1/c1r1 用同一组
+可复用 up/gate slot 连续汇聚 24 对 record，c6r2 每收到一对就输出一个
+256-dword SwiGLU slice。该路径已在真机上通过，验证了 O compact → c1r2 replay
+→ main16 up/gate tapped-int4 projection → row1/c1r1 compact → c6r2 的跨 tile
+流控闭环。
+
+早期 contract frontier 已经把这个 reusable-slot up/gate 策略移入 full-layer
+tail。full-layer compact trace 不再是
+`q,k,v,o,up,gate,down` 的 7 个独立 phase，而是
+`q,k,v,o,upgate,down` 的 body trace：`upgate` 是一个 48-record 长 body，对应
+24 个 adjacent up/gate pair。main16 先把 48 条 record 写入本地
+`upgate_records` buffer，再由一个 long BD 发送；row1 column tile 用 2D BD stride
+把每行的 48 条 record scatter 成 `48 x 65` column compact layout；c1r1 再 scatter
+成 `48 x 257` global compact layout；最后 c1r1 output BD 用同样的 2D stride 跳过
+每个 257-dword packet 的 header，把 48 个 256-dword payload half 连续送进 c6r2。
+c6r2 以每两半为一组消费，输出 24 个 distinct SwiGLU slice。
+
+这已经由早期 contract frontier 在真机上验证过；这些 runnable case 现在已从
+`run_npu.py` registry 下线，保留下来的结论是 reusable-slot up/gate compact
+trace、c1r2 replay lock rule 和 c6r2 payload-half ABI。旧的 summary/hash
+contract 已经被可继续扩展到 Q4NX dot 的投影边界替换；剩余 production 差距是
+把派生 int4 weight/tap contract 替换成真实 Q4NX weight stream，并校准 bf16/定点
+RMSNorm、attention、SwiGLU 和 down kernel。
+随后 `currentkv-full-layer-q4nx-down-bridge` 已经完成 O/FFN tail 的 Q4NX 替换：
+O、up/gate 和 down 都从同一个 host Q4NX weight BO 进入 row1 S2MM4/5，再经 row1
+MM2S0..3 送到 main16 DMA1；attention packet2、c1r2 replay 和 c6r2/down payload
+都使用 bf16 ABI。因此这段差距现在只剩数值校准和 Q/K/V 生产 Q4NX 化，不再包括
+O/up/gate/down 的物理 weight stream 接入。
+旧 `q4nx-weight-stream-contract` 真机 case 曾经证明另一半能力：host 侧 Q4NX
+weight BO、608 个 patch descriptor、packetized shim→memtile→main16 分发、
+AIE Q4NX chunk accumulation 都能跑通。但它是旧的 diagnostic main/edge 拓扑，
+不是当前 fused-layer 数据流。现在不再维护这个 runnable oracle；保留下来的
+能力已经变成共享生成器和 frontier 检查：weight BO layout、descriptor patching、
+row1 S2MM4/5 weight ingress、row1 MM2S0..3 fanout、main16 DMA1 Q4NX chunk
+kernel 都由 `currentkv-full-layer-q4nx-down-bridge` 直接使用和验证。
+`run_npu.py` 默认入口指向 `currentkv-full-layer-q4nx-down-bridge`。它还不等价于
+完整 production layer，因为 Q/K/V 仍是 deterministic/contract producer，
+attention 仍是 kv16 calibrated kernel，RMSNorm/SwiGLU 仍需数值校准；但
+O、up/gate 和 down phase 已经使用真实 row1 Q4NX weight ingress 和 main16 DMA1
+Q4NX kernel。
+
+历史 `down-q4nx-weight-bridge` 已经验证了这个迁移方向的第一个生产物理边界：c6r1
+发布 packet1，c1r1 用 DMA4/DMA1 共享激活桥把 6144-dword down activation 切成
+48 个 main16 DMA0 chunk；同时 c2..c5 row0 shim 用 MM2S0/1 把 patch0/patch1
+权重流进 row1 S2MM4/5，row1 再用 MM2S0..3 把每行的 1280-dword Q4NX chunk
+送入 main16 DMA1。16 个 main tile 在真机上同时消费 DMA0 activation 和 DMA1
+weight，并运行 AIE Q4NX chunk kernel。这个实验说明 S2MM4/5 可以作为生产
+weight ingress 使用，从而保留 row1 S2MM0..3 给 full-layer compact record
+fan-in。它当时也暴露出不能只“换 down kernel”：full-layer tail 的 c6r2 输出和
+c1r1 bridge down payload 必须同时校准到 bf16，才能喂给 Q4NX down kernel。这个
+dtype ABI 问题已在后续 `currentkv-full-layer-q4nx-down-bridge` 中用 bf16-input
+SwiGLU 和 Q4NX down 闭合。
+这组 row1 Q4NX patch ring 已经从实验代码抽成 `weight_stream.py`。生产
+full-layer 只允许使用 row1 S2MM4/5 作为 weight ingress，以避开 compact fan-in；
+row1 S2MM0..3 属于 compact gather，不再允许旧 oracle 的低通道 weight route
+进入当前 engine。patch buffer、lock phase、BD bank 和 row MM2S0..3 分发行语义
+都应从这个 helper 生成，避免每个 case 手写一份相似但 channel ownership 不同的
+MLIR。
+main16 Q4NX worker shape 已经并入当前 frontier 的 `currentkv-full-layer-q4nx-down-bridge`
+生成器；Q4NX chunk 数学只保留在 `q4nx_reference.py` 作为集成 reference。
+Q/K/V body record 数、O/upgate/down tail weight chunk base 和总 weight BO
+layout 由 `projection_schedule.py` 统一派生，避免 generator/reference 各自硬编码
+一份 phase offset。旧 down-side migration case 不再维护独立后端，避免同一条
+main DMA0/DMA1 ping-pong 和 row1 drain 语义出现多套写法。
+这条物理所有权现在也被固化成 `qwen3-layer/physical_contract.py` 的生成后检查：
+生产 Q4NX down case 必须出现 row1 S2MM4/5 weight ingress、row1 MM2S0..3 →
+main16 DMA1 fanout、main16 DMA0 activation ring 和 main16 DMA1 weight ring；
+同时显式禁止旧 oracle 的 shim → row1 S2MM0/1 weight route。当前 frontier
+必须同时检查 compact gather 和 weight ingress/fanout。也就是说现在的失败边界
+不再是“32 个 compute tile 放不下”，而是如果把旧 weight route 直接搬进
+full-layer，生成器会在物理 channel 所有权层面拒绝它。
+
+历史 `swiglu-q4nx-down-bridge` 进一步把 activation source 从 host packet1 payload
+推进到 c6r2：host 只提供 24 组 up/gate 输入和 Q4NX 权重，c6r2 在 NPU 上生成
+24 个 512-bf16 SwiGLU slice，c6r1 用 packet1 发布，c1r1 用同一条 DMA4/DMA1
+shared bridge 转发到 main16 DMA0；row1 同时用 S2MM4/5 + MM2S0..3 把 Q4NX
+weight chunk 送到 main16 DMA1。这个 case 已在真机通过，说明 down 入口的物理
+payload 可以是 Q4NX kernel 消费的 bf16 activation，而不是 fixed s16 contract。
+这个边界后来被并入 `currentkv-full-layer-q4nx-down-bridge`；因此它现在只作为
+历史分解记录和 helper/reference 来源存在，不再作为独立 runnable regression case。
+
+历史 `full-layer-q4nx-down-bridge` 已经把这个替换推进到 full-layer tail 内部：
+deterministic O compact → c1r2 full-vector replay → main16 up/gate →
+row1/c1r1 compact → c6r2 bf16 SwiGLU → c6r1 packet1 → c1r1 DMA4/DMA1 →
+main16 DMA0，同时 row1 用 S2MM4/5 接 host Q4NX down weights、MM2S0..3 发给
+main16 DMA1。这个 case 在同一组 row1 memtile 中同时启动 compact gather 和
+weight split：compact 使用 row1 S2MM0..3 与 MM2S5，weight 使用 row1 S2MM4/5
+与 MM2S0..3，并且 weight BD/lock 使用独立编号范围。真机结果通过，说明之前的
+row1 channel ownership 冲突已经从文档结论变成了可运行的 full-layer 合并路径。
+该 case 输出 257-dword down compact 而不是 8-dword hash summary；原因是 Q4NX
+bf16 结果允许小数值误差，hash 会把可接受的 1 ulp 误差放大成假 mismatch。
+这条边界也已经并入 `currentkv-full-layer-q4nx-down-bridge`，不再作为独立
+runnable case 维护；后续应继续输出可容差校验的 compact 或 production hidden
+vector，而不要对 Q4NX payload 做精确 hash。
+
+`currentkv-full-layer-q4nx-down-bridge` 已经完成这个迁移：current K/V packet8/9
+写回 host KV cache，rounded KV scan 进入 Shape-A/B kv16 attention，packet2
+回到 O phase，main16 Q4NX O 产生 O compact，随后 c1r2 bf16 replay →
+main16 Q4NX up/gate → row1/c1r1 compact → c6r2 bf16-input SwiGLU → packet1 down activation →
+c1r1 DMA4/DMA1 → main16 DMA0；同时 host Q4NX O/up/gate/down weights 从 c2..c5
+row0 shim MM2S0/1 进入 row1 S2MM4/5，再由 row1 MM2S0..3 送入 main16 DMA1。
+每个 main tile 的 weight stream 是 16 个 O chunk、768 个 up/gate chunk、再接
+48 个 down chunk；up/gate 用 chunk offset 跳过 O 区域，down 用 chunk offset
+跳过 O+up/gate 区域。该 case 真机通过，默认 token127 NPU 时间约 109.8 ms，
+输出仍是 257-dword down compact 并使用 bf16 容差验证。
+`--patch-from-token` 也已经恢复：新增 `%weights` buffer 后 weight descriptor 是
+runtime arg2，output 是 arg3；生成器现在检查 arg2 address patch 恰好 8 个、
+arg3 address patch 恰好 1 个。token1007 cache-capacity PDI patch 到 token91 后，
+patched `design.bin` 与直接重新编译的 token91 instruction stream 逐 word 相同，
+patched 真机 token91 也通过，NPU 时间约 110.2 ms。这证明 current-token/KV-scan
+的 exact-word patch 没有误改 weight descriptor，也证明 row1 compact gather 与
+row1 S2MM4/5 weight split 可以在 full-layer phase body 中共存。
+
+这里暴露出一个生成器层面的硬约束：full-layer 代码必须把 compact phase trace
+抽成生成器输入，并用同一个 trace 生成 main record DMA、row1 compact DMA 和
+bridge compact DMA 的 lock、BD next 指针、packet id 与 payload slice。trace item
+不能是裸字符串；它必须区分唯一 MLIR label、逻辑 phase、record slot、packet id
+和 payload slice。通过真机回归的 trace 是 `q,k,v,o,upgate,down`。这个 body trace
+避免了把 `up0,gate0,up1,gate1...up23,gate23,down` 物化成 53 个 phase，同时也避免了
+standalone `up -> gate -> up` 无限 BD ring 无法跳到 down 的问题。
+
+MyLM 的反汇编证据也支持这个方向：它不是为每个 N-block 展开一个独立 BD phase，
+而是使用少量 body/slot、静态 lock 协议和运行时 patch descriptor 驱动连续的
+608 patch 队列。IRON 当前做法是在 high-level MLIR-AIE 内用 2D BD stride 表达
+`upgate` body 的批量 scatter/gather；后续 production 如果需要进一步提高 overlap，
+可以把这个 body 拆成 double-buffered body slots，但仍不应回到 53 个 main/row1/bridge
+BD phase。
+
+这次 c1r2 桥实验还明确了一个 MLIR-AIE 约束：一个 memtile DMA BD block 最多只能有
+一个 `Release` lock op。最直接的“每个 row/group 一个 empty lock，compact output
+后逐个 release”会在编译时报 `BD block must have at most one release UseLockOp`；
+如果完全不回补 empty token，则第一组 up/gate 后 row1/c1r1 接收端会在第二组开始
+timeout。通过的做法是 stage-level counting empty lock：row1 column tile 的
+`up_empty/gate_empty` 初值为 4，每个 row 接收 BD acquire 1，column compact output
+BD 一次 release 4；c1r1 global compact 同理用初值 4 的 group-level empty lock。
+同时 output BD 不能再额外 release 旧的 drain token，否则同一个 BD 又会有两个
+release op。这个限制说明 production trace 也必须把“slot reuse”设计成每个 BD
+只需回补一个 stage-level token，而不是依赖 per-source release fan-out。
 
 IRON-ABI-v0 的 scheduler 以 slice 为单位 adjacent pair 提交：每生成一对
 (up[slice], gate[slice]) 的 257-dword compact packet，c6r2 即输出一个
@@ -745,7 +1018,7 @@ Edge 侧不同的工位处理后，再流回 Main：
 闭环 1（attention → O，最复杂，经过 6 种不同角色）：
   Main 产出 Q/K/V
     → c1r3 后处理（q/k norm + RoPE）
-    → c6r1 枢纽（拆 Q 为 4 窗口；K/V 经 packet14/15 写 KV cache）
+    → c6r1 枢纽（拆 Q 为 4 窗口；K/V 经 packet8/9 写 KV cache）
     → c0r1/c7r1 KV 整形（历史 K/V scan 回流）
     → Shape-A × 4（QK 评分 + online softmax）
     → Shape-B × 4（加权求和）
@@ -762,7 +1035,7 @@ Edge 侧不同的工位处理后，再流回 Main：
   Main 产出 up + gate 记录（每 tile 48 条 = 24 + 24 slices）
     → c6r2 SwiGLU 切片站（512-dw 输入 → 256-dw 输出）
     → c6r1 6144-dword gather buffer
-    → c6r1 packet0 → c1r1 共享激活桥 → Main 做 down 投影
+    → c6r1 packet1 → c1r1 共享激活桥 → Main 做 down 投影
 ```
 
 闭环 1 是整个设计最复杂的路径 — 数据物理上穿越了几乎整个 8 列阵列，经过后处理、
@@ -771,7 +1044,7 @@ Edge 侧不同的工位处理后，再流回 Main：
 **关键观察**：闭环 1（attention → O）和闭环 3（SwiGLU → down）**复用同一条
 c1r1 共享激活桥**（c6r1 packet 源 → c1r1 DMA4 256-dword bridge → DMA1
 multicast → Main16 DMA0 128-dword activation ring）—— 不是两套独立的返回机制，
-只是 packet2 与 packet0 切换源数据。Main16 端保持普通 projection activation ABI。
+只是 packet2 与 packet1 切换源数据。Main16 端保持普通 projection activation ABI。
 
 **每次闭环都避免了一次主存往返。** 如果不做融合，每次 Main 产出的结果都要写回
 主存，Edge 侧再从主存读出来；Edge 算完再写回主存，Main 再读出来。三次闭环就是
@@ -830,6 +1103,11 @@ replay count 和 downstream route 共同定义，不能只靠“换权重流”�
 目标结果是从第一个 chunk 之后尽量隐藏传输延迟。实际是否存在空等，取决于
 kernel latency、BD phase、lock order 和 stream route；small chunk-ring 的
 same-channel phase 一旦不精确，硬件会 timeout。
+
+KV scan 也遵循同一个原则：如果一个逻辑阶段需要的 descriptor 数量会挤占同一
+shim 的 current-write BD，就不应该继续静态展开。已验证的做法是把可独立背压的
+K 和 V 平面拆到两个物理 DMA channel；当 block 数继续增大时，再用 BD iteration
+和 queue repeat count 复用 scan descriptor，让 BD 数量和 row1 slot phase 同时可控。
 
 这就是 DMA 和 Lock 协作的价值：DMA 按 BD 指示搬数据，Lock 保证"填完才能算，
 算完才能填"，两者交替推进。
@@ -945,10 +1223,22 @@ hidden-in/hidden-out + weights + norm/RoPE 旁路 + KV cache descriptor，
   `n*512 .. n*512 + 511`。MyLM exact lane/tile value order 仍需校准。
 - **共享激活桥**：c6r1 packet → c1r1 DMA4 256-dword bridge → DMA1 multicast
   → Main16 DMA0 128-dword ring。attention 返回（packet2）与 down 输入返回
-  （packet0）复用同一条物理桥
+  （packet1）复用同一条物理桥
+- **Q4NX 权重入口**：c2..c5 row0 shim MM2S0/1 → row1 S2MM4/5 → row1
+  MM2S0..3 → Main16 DMA1。S2MM4/5 的使用不是装饰性选择：它避免和
+  full-layer row1 compact record fan-in 使用的 S2MM0..3 冲突。历史 down/SwiGLU
+  Q4NX bridge 先验证这条路可与 c1r1 activation bridge 同时驱动 main16；
+  `currentkv-full-layer-q4nx-down-bridge` 进一步验证同一条路可同时承载
+  O、up/gate 和 down weight chunks，并与 row1 S2MM0..3 compact gather 共存。
+  MyLM 文档把 main16 ABI 概括成 activation、Q4NX weight、compact record 三路；
+  IRON 的 MLIR 里 S2MM/MM2S 是方向独立的 channel namespace，因此当前 main16
+  record output 打印为 `MM2S1`，角色上对应第三路 record stream，不能把这个编号
+  误读成和 weight input `S2MM1` 冲突。
 - **FFN SwiGLU 放置**：c6r2 接收 512-dw 输入（`input[0x000..0x3ff]` = up，
-  `input[0x400..0x7ff]` = gate）→ 256-dw SwiGLU slice →
-  c6r1 6144-dw gather → packet0 发布
+  `input[0x400..0x7ff]` = gate）→ 512-bf16 / 256-dw SwiGLU slice →
+  c6r1 6144-dw gather → packet1 发布。旧 full-layer contract 把这个 slice 当
+  fixed s16 dword payload；当前 Q4NX frontier 已直接使用 bf16 slice ABI，并把
+  它接进 current K/V full-layer tail。
 - **Full-vector 放置**：c1r2 承担 hidden/RMSNorm/residual/final-output。
   对外是 `2049-dword` manual-header full-vector packet0 replay
   （1 control + 2048 payload）；`+12 → +48 → +1` 是 full-vector replay
@@ -967,12 +1257,13 @@ hidden-in/hidden-out + weights + norm/RoPE 旁路 + KV cache descriptor，
 - **Shape-A/B carrier**：每 16 个历史 token 一个 block。MyLM 已确认
   `base[0x100] + scalar[0x40]` 容量和 neighbor-local handoff；下面是
   IRON-ABI-v0 value 定义。
-  - `base[0x100]` = head-major 8 records × 16-token bf16 权重，
-    `base[h][t] = exp(score[h][t] - block_max[h])`
-  - `scalar[0x40]` = 8 × (block_max, block_sum) fp32 pair，
+  - `base[0x100]` = head-major 8 records × 16-token Q12 权重，
+    `base[h][t] = q12_exp(block_max[h] - score[h][t])`
+  - `scalar[0x40]` = 8 × (block_max, block_sum) int32 pair，
     `scalar[2h+0] = block_max[h]`, `scalar[2h+1] = block_sum[h]`
   - 通过本地相邻存储 + lock immediate 同步
-  - Shape-B 用标准 online-softmax merge 累加 `accum[8][128]` fp32
+  - Shape-B 用标准 online-softmax merge 累加 `accum[8][128]` int32/Q12；
+    生产 kernel 仍需校准到 Qwen3 的 bf16/fp32 softmax scale。
 - **Attention 输出 → O chunk 顺序**：head-major，
   `O_chunk[c]` = heads `2c` 与 `2c+1` 的所有 128 dim，每 chunk = 256 bf16 =
   128 dword，正好匹配 main16 activation ring 的 128-dword chunk。该 head-pair
@@ -1068,7 +1359,7 @@ row0  │K写回   │                  shim / 主存入口                │V�
 - 全向量站（c1r2）：4096-bf16 hidden 的第一次 RMSNorm、O 后残差+第二次 RMSNorm、最终残差/层输出
 - SwiGLU（c6r2）：512-dw up/gate slice → 256-dw SwiGLU slice
 - 共享桥（c1r1 memtile）：DMA4 256-dw 双缓冲 ↔ DMA1 multicast，attention 返回与 down 返回共用
-- 枢纽/汇聚（c6r1 memtile）：Q 分发 + attention 结果汇聚（packet2）+ FFN intermediate gather（packet0）
+- 枢纽/汇聚（c6r1 memtile）：Q 分发 + attention 结果汇聚（packet2）+ FFN intermediate gather（packet1）
 
 ### E. 术语对照表
 

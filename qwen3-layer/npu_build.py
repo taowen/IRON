@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -13,13 +14,22 @@ from aie.utils.config import peano_install_dir, root_path
 from aie.utils.npukernel import NPUKernel
 
 EXPERIMENT_DIR = Path(__file__).parent
+ROLE_KERNEL_SOURCES = {
+    "debug_contract.o": "debug_contract.cc",
+    "edge_attention.o": "edge_attention.cc",
+    "full_vector_station.o": "full_vector_station.cc",
+    "main_projection_q4nx.o": "main_projection_q4nx.cc",
+    "postprocess_qkv.o": "postprocess_qkv.cc",
+    "swiglu.o": "swiglu.cc",
+}
+LINK_WITH_RE = re.compile(r'link_with = "[^"]*/([^/"]+\.o)"')
 
 
 def run_command(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
-def compile_aie_object(source_name: str, object_name: str) -> None:
+def _compile_aie_object(source_name: str, object_name: str) -> None:
     peano_dir = Path(peano_install_dir())
     mlir_aie_dir = Path(root_path())
     clang = peano_dir / "bin" / "clang++"
@@ -48,15 +58,25 @@ def compile_aie_object(source_name: str, object_name: str) -> None:
     run_command(cmd)
 
 
-def compile_layer_kernel() -> None:
-    compile_aie_object("qwen3_layer.cc", "qwen3_layer.o")
+def _linked_role_objects(mlir_text: str) -> tuple[str, ...]:
+    seen: set[str] = set()
+    objects: list[str] = []
+    for object_name in LINK_WITH_RE.findall(mlir_text):
+        if object_name not in ROLE_KERNEL_SOURCES:
+            raise ValueError(f"unknown AIE role object in link_with: {object_name}")
+        if object_name not in seen:
+            seen.add(object_name)
+            objects.append(object_name)
+    return tuple(objects)
 
 
-def compile_bridge_kernel() -> None:
-    compile_aie_object("qwen3_bridge.cc", "qwen3_bridge.o")
+def _compile_linked_role_objects(mlir_text: str) -> None:
+    for object_name in _linked_role_objects(mlir_text):
+        _compile_aie_object(ROLE_KERNEL_SOURCES[object_name], object_name)
 
 
 def compile_mlir(mlir_path: Path, xclbin_path: Path, insts_path: Path) -> None:
+    _compile_linked_role_objects(mlir_path.read_text())
     mlir_aie_dir = Path(root_path())
     peano_dir = Path(peano_install_dir())
     aiecc = mlir_aie_dir / "bin" / "aiecc"

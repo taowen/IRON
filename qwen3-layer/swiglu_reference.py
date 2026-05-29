@@ -23,6 +23,11 @@ SWIGLU_OUTPUT_DWORDS = C6R2_HALF_DWORDS
 MAIN_PACKET_BASE = 16
 COLUMN_PACKET_BASE = 4
 GLOBAL_PACKET_ID = 8
+SIGMOID_Q15_ONE = 32768
+SIGMOID_Q15_HALF = SIGMOID_Q15_ONE // 2
+SIGMOID_LINEAR_LIMIT = 2048
+SIGMOID_LINEAR_SLOPE = 8
+SWIGLU_PRODUCT_SCALE = 16384
 
 
 def main_packet(group: int, row: int) -> int:
@@ -95,14 +100,73 @@ def expected_c6r2_input() -> np.ndarray:
     return np.concatenate((up, gate)).astype(np.int32)
 
 
-def expected_output() -> np.ndarray:
-    c6r2_input = expected_c6r2_input()
-    if c6r2_input.shape[0] != C6R2_INPUT_DWORDS:
-        raise RuntimeError(f"bad c6r2 input: {c6r2_input.shape[0]}")
+def _trunc_div(numerator: int, denominator: int) -> int:
+    if denominator == 0:
+        return 0
+    if numerator >= 0:
+        return numerator // denominator
+    return -((-numerator) // denominator)
+
+
+def _clamp_s16(value: int) -> int:
+    return max(-32768, min(32767, value))
+
+
+def _unpack_s16_word(value: int, lane: int) -> int:
+    word = int(value) & 0xFFFF_FFFF
+    raw = (word >> 16) & 0xFFFF if lane else word & 0xFFFF
+    return raw - 0x10000 if raw & 0x8000 else raw
+
+
+def _pack_s16_pair(low: int, high: int) -> np.int32:
+    low_u16 = _clamp_s16(low) & 0xFFFF
+    high_u16 = _clamp_s16(high) & 0xFFFF
+    return np.array(low_u16 | (high_u16 << 16), dtype=np.uint32).view(np.int32)
+
+
+def _sigmoid_q15(gate: int) -> int:
+    if gate <= -SIGMOID_LINEAR_LIMIT:
+        return 0
+    if gate >= SIGMOID_LINEAR_LIMIT:
+        return SIGMOID_Q15_ONE - 1
+    return SIGMOID_Q15_HALF + gate * SIGMOID_LINEAR_SLOPE
+
+
+def fixed_swiglu_lane(up: int, gate: int) -> int:
+    silu_gate = _trunc_div(gate * _sigmoid_q15(gate), SIGMOID_Q15_ONE)
+    return _clamp_s16(_trunc_div(up * silu_gate, SWIGLU_PRODUCT_SCALE))
+
+
+def _slice_adjust(value: int, slice_index: int, lane: int) -> int:
+    if slice_index == 0:
+        return value
+    scale = 256 + slice_index
+    delta = ((slice_index * 13 + lane * 3) % 17) - 8
+    return _clamp_s16(_trunc_div(value * scale, 256) + delta)
+
+
+def fixed_swiglu_slice_output(values: np.ndarray, slice_index: int) -> np.ndarray:
+    if values.shape[0] != C6R2_INPUT_DWORDS:
+        raise RuntimeError(f"bad swiglu input: {values.shape[0]}")
     output = np.empty(SWIGLU_OUTPUT_DWORDS, dtype=np.int32)
     for idx in range(SWIGLU_OUTPUT_DWORDS):
-        output[idx] = (int(c6r2_input[idx]) << 16) | int(c6r2_input[C6R2_HALF_DWORDS + idx])
+        up_word = int(values[idx])
+        gate_word = int(values[C6R2_HALF_DWORDS + idx])
+        low = fixed_swiglu_lane(_unpack_s16_word(up_word, 0), _unpack_s16_word(gate_word, 0))
+        high = fixed_swiglu_lane(_unpack_s16_word(up_word, 1), _unpack_s16_word(gate_word, 1))
+        output[idx] = _pack_s16_pair(
+            _slice_adjust(low, slice_index, idx * 2),
+            _slice_adjust(high, slice_index, idx * 2 + 1),
+        )
     return output
+
+
+def fixed_swiglu_output(values: np.ndarray) -> np.ndarray:
+    return fixed_swiglu_slice_output(values, 0)
+
+
+def expected_output() -> np.ndarray:
+    return fixed_swiglu_output(expected_c6r2_input())
 
 
 def validate_output(got: np.ndarray) -> list[str]:
@@ -124,6 +188,6 @@ def route_summary() -> list[str]:
         f"main_records={len(MAIN_COLUMNS) * len(MAIN_ROWS)}x{MAIN_RECORD_DWORDS} dwords",
         "column_compact=4x65 dwords per phase",
         f"global_compact={COMPACT_PACKET_DWORDS} dwords per phase",
-        f"c6r2_input={C6R2_INPUT_DWORDS} dwords, low=up high=gate",
+        f"c6r2_input={C6R2_INPUT_DWORDS} dwords, fixed-point SiLU(gate)*up",
         f"c6r2_output={SWIGLU_OUTPUT_DWORDS} dwords",
     ]

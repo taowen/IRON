@@ -11,7 +11,7 @@ import c1r2_generate
 import npu_build
 from c1r2_reference import (
     CASE_NAME,
-    SWIGLU_OUTPUT_DWORDS,
+    OUTPUT_DWORDS,
     expected_output,
     route_summary,
     validate_output,
@@ -52,7 +52,6 @@ def check_only() -> bool:
 
 
 def build_only() -> bool:
-    npu_build.compile_bridge_kernel()
     xclbin_path, insts_path = build_kernel()
     print(f"  PASS: built {xclbin_path}")
     print(f"  PASS: built {insts_path}")
@@ -71,14 +70,13 @@ def run() -> bool:
     )
     print()
 
-    npu_build.compile_bridge_kernel()
     xclbin_path, insts_path = build_kernel()
 
     print("  Loading NPU kernel...")
     handle = npu_build.load_kernel(xclbin_path, insts_path)
 
     expected = expected_output()
-    output_buf = XRTTensor((SWIGLU_OUTPUT_DWORDS,), dtype=np.int32)
+    output_buf = XRTTensor((OUTPUT_DWORDS,), dtype=np.int32)
 
     print("  Running on NPU...")
     result = npu_build.run(handle, [output_buf])

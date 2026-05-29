@@ -28,6 +28,20 @@ OUTPUT_DWORDS = HEADS_PER_WINDOW * HEAD_DIM // 2
 WEIGHT_DWORDS = HEADS_PER_WINDOW * CONTEXT // 2
 SCALAR_DWORDS = HEADS_PER_WINDOW * 2
 COLUMN_SUMMARY_DWORDS = len(MAIN_ROWS) * SUMMARY_DWORDS
+SOFTMAX_SCALE = 4096
+
+# Q12 lookup for round(4096 * exp(-delta / 8)); score delta is integer dot/head_dim.
+SOFTMAX_EXP_DELTA_Q12 = (
+    4096, 3615, 3190, 2815, 2484, 2192, 1935, 1707,
+    1507, 1330, 1174, 1036, 914, 807, 712, 628,
+    554, 489, 432, 381, 336, 297, 262, 231,
+    204, 180, 159, 140, 124, 109, 96, 85,
+    75, 66, 58, 52, 46, 40, 35, 31,
+    28, 24, 21, 19, 17, 15, 13, 12,
+    10, 9, 8, 7, 6, 5, 5, 4,
+    4, 3, 3, 3, 2, 2, 2, 2,
+    1,
+)
 
 
 def _u32_to_i32(value: int) -> int:
@@ -71,20 +85,10 @@ def _trunc_div(numerator: int, denominator: int) -> int:
 
 def _softmax_weight(delta: int) -> int:
     if delta <= 0:
-        return 4096
-    if delta <= 1:
-        return 3072
-    if delta <= 2:
-        return 2048
-    if delta <= 4:
-        return 1024
-    if delta <= 8:
-        return 512
-    if delta <= 16:
-        return 256
-    if delta <= 32:
-        return 128
-    return 64
+        return SOFTMAX_SCALE
+    if delta < len(SOFTMAX_EXP_DELTA_Q12):
+        return SOFTMAX_EXP_DELTA_Q12[delta]
+    return 1
 
 
 def make_q_payload() -> np.ndarray:
@@ -250,7 +254,7 @@ def route_summary() -> list[str]:
         f"case={CASE_NAME}",
         f"Shape-A: {HEADS_PER_WINDOW} Q heads x {HEAD_DIM} dim, "
         f"{KV_HEADS_PER_WINDOW} KV heads x {CONTEXT} tokens",
-        f"carrier={WEIGHT_DWORDS} weight dwords + {SCALAR_DWORDS} scalar dwords",
+        f"carrier={WEIGHT_DWORDS} Q12 exp weight dwords + {SCALAR_DWORDS} int32 scalar dwords",
         f"q={Q_DWORDS} dwords, kv_left/right={KV_SIDE_DWORDS} dwords each",
         f"return=4x{OUTPUT_DWORDS} dwords -> packet{PACKET_ID} -> main16 summaries",
     ]

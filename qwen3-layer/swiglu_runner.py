@@ -52,7 +52,6 @@ def check_only() -> bool:
 
 
 def build_only() -> bool:
-    npu_build.compile_bridge_kernel()
     xclbin_path, insts_path = build_kernel()
     print(f"  PASS: built {xclbin_path}")
     print(f"  PASS: built {insts_path}")
@@ -71,7 +70,6 @@ def run() -> bool:
     )
     print()
 
-    npu_build.compile_bridge_kernel()
     xclbin_path, insts_path = build_kernel()
 
     print("  Loading NPU kernel...")
@@ -96,6 +94,6 @@ def run() -> bool:
 
     print(
         "  PASS: main16 up/gate records compacted through row1/c1r1 and "
-        "arrived at c6r2 with low=up, high=gate"
+        "c6r2 fixed-point SwiGLU matched CPU reference"
     )
     return True

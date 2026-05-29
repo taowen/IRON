@@ -405,8 +405,8 @@ def generate_mlir() -> str:
 
 {chr(10).join(flows)}
 
-    func.func private @ffn_emit_records(memref<{MAIN_RECORD_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/qwen3_bridge.o"}}
-    func.func private @ffn_swiglu_contract(memref<{C6R2_INPUT_DWORDS}xi32>, memref<{SWIGLU_OUTPUT_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/qwen3_bridge.o"}}
+    func.func private @ffn_emit_records(memref<{MAIN_RECORD_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/debug_contract.o"}}
+    func.func private @ffn_swiglu_contract(memref<{C6R2_INPUT_DWORDS}xi32>, memref<{SWIGLU_OUTPUT_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/swiglu.o"}}
 
 {chr(10).join(blocks)}
 {_runtime_sequence()}
@@ -427,7 +427,7 @@ def validate_generated_mlir(mlir: str) -> list[str]:
         f"memref<{SWIGLU_OUTPUT_DWORDS}xi32>",
         "ffn_emit_records",
         "ffn_swiglu_contract",
-        "qwen3_bridge.o",
+        "debug_contract.o",
     )
     errors = [f"missing swiglu marker: {marker}" for marker in required if marker not in mlir]
     if mlir.count("aie.packet_flow(") != len(MAIN_COLUMNS) * (ROWS_PER_COLUMN + 1) + 1:

@@ -56,7 +56,6 @@ def check_only(case_name: str) -> bool:
 
 
 def build_only(case_name: str) -> bool:
-    npu_build.compile_bridge_kernel()
     xclbin_path, insts_path = build_kernel(case_name)
     print(f"  PASS: built {xclbin_path}")
     print(f"  PASS: built {insts_path}")
@@ -75,7 +74,6 @@ def run(case_name: str) -> bool:
     print("  route: c6r1 packet source -> c1r1 DMA4 -> c1r1 DMA1 -> main16 DMA0")
     print()
 
-    npu_build.compile_bridge_kernel()
     xclbin_path, insts_path = build_kernel(case.name)
 
     print("  Loading NPU kernel...")

@@ -314,8 +314,8 @@ def generate_mlir(case: BridgeCase) -> str:
 
 {chr(10).join(flows)}
 
-    func.func private @bridge_init_summary(memref<{SUMMARY_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/qwen3_bridge.o"}}
-    func.func private @bridge_accum_chunk(memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{SUMMARY_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/qwen3_bridge.o"}}
+    func.func private @bridge_init_summary(memref<{SUMMARY_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/debug_contract.o"}}
+    func.func private @bridge_accum_chunk(memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{SUMMARY_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/debug_contract.o"}}
 
 {chr(10).join(blocks)}
 {_runtime_sequence(case)}
@@ -334,7 +334,7 @@ def validate_generated_mlir(mlir: str, case: BridgeCase) -> list[str]:
         "aie.flow(%bridge, DMA : 1, %m0_0, DMA : 0)",
         f"memref<{case.payload_dwords}xi32>",
         f"memref<{TOTAL_SUMMARY_DWORDS}xi32>",
-        "qwen3_bridge.o",
+        "debug_contract.o",
     )
     errors = [f"missing bridge marker: {marker}" for marker in required if marker not in mlir]
     expected_main_flows = len(MAIN_COLUMNS) * ROWS_PER_COLUMN
