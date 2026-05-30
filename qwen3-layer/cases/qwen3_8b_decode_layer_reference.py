@@ -33,22 +33,82 @@ class LayerInputs:
 
 @dataclass(frozen=True)
 class LayerReferenceResult:
-    hidden_out: np.ndarray
-    k_cache: np.ndarray
-    v_cache: np.ndarray
+    input_norm: np.ndarray
+    q_raw: np.ndarray
+    k_raw: np.ndarray
+    v_raw: np.ndarray
     q: np.ndarray
     k: np.ndarray
     v: np.ndarray
+    hidden_out: np.ndarray
+    k_cache: np.ndarray
+    v_cache: np.ndarray
     attention: np.ndarray
+    o: np.ndarray
+    post_attention: np.ndarray
+    ffn_input: np.ndarray
+    up: np.ndarray
+    gate: np.ndarray
+    swiglu: np.ndarray
+    down: np.ndarray
 
     @property
     def hidden_out_i32(self) -> np.ndarray:
         return pack_bf16_i32(self.hidden_out)
 
 
+@dataclass(frozen=True)
+class Bf16CompareStats:
+    stage: str
+    max_abs: float
+    mean_abs: float
+    mismatch_count: int
+    abs_tol: float
+    rel_tol: float
+
+
 def pack_bf16_i32(values: np.ndarray) -> np.ndarray:
     packed = values.astype(bfloat16).tobytes()
     return np.frombuffer(packed, dtype=np.int32).copy()
+
+
+def bf16_values(values: np.ndarray) -> np.ndarray:
+    if values.dtype == np.int32:
+        return np.frombuffer(values.tobytes(), dtype=bfloat16).astype(np.float32)
+    return values.astype(bfloat16).astype(np.float32).reshape(-1)
+
+
+def bf16_compare_stats(
+    stage: str,
+    expected: np.ndarray,
+    got: np.ndarray,
+    abs_tol: float,
+    rel_tol: float,
+) -> Bf16CompareStats:
+    expected_values = bf16_values(expected)
+    got_values = bf16_values(got)
+    if expected_values.shape != got_values.shape:
+        raise ValueError(f"{stage} shape mismatch: {got_values.shape} != {expected_values.shape}")
+    abs_err = np.abs(expected_values - got_values)
+    limit = np.maximum(abs_tol, rel_tol * np.abs(expected_values))
+    finite = np.isfinite(expected_values) & np.isfinite(got_values)
+    mismatch = np.flatnonzero((abs_err > limit) & finite)
+    return Bf16CompareStats(
+        stage=stage,
+        max_abs=float(np.max(abs_err)),
+        mean_abs=float(np.mean(abs_err)),
+        mismatch_count=int(mismatch.size),
+        abs_tol=abs_tol,
+        rel_tol=rel_tol,
+    )
+
+
+def format_bf16_compare_stats(stats: Bf16CompareStats) -> str:
+    return (
+        f"{stats.stage}: max_abs={stats.max_abs:.9f} "
+        f"mean_abs={stats.mean_abs:.9f} mismatches={stats.mismatch_count} "
+        f"abs_tol={stats.abs_tol:.9f} rel_tol={stats.rel_tol:.6f}"
+    )
 
 
 def make_hidden_bf16() -> np.ndarray:
@@ -151,17 +211,17 @@ class Qwen3LayerReference:
             raise ValueError(f"KV cache shape mismatch: {inputs.k_cache.shape}/{inputs.v_cache.shape}")
 
         norm_hidden = self.input_norm_activation(inputs.hidden)
-        q = self.project(Q_PROJECTION, norm_hidden)
-        k = self.project(K_PROJECTION, norm_hidden)
+        q_raw = self.project(Q_PROJECTION, norm_hidden)
+        k_raw = self.project(K_PROJECTION, norm_hidden)
         v = self.project(V_PROJECTION, norm_hidden)
 
         q = _apply_rope(
-            _head_rms_norm(q, self.q_norm_weight, self.model.config.rms_norm_eps),
+            _head_rms_norm(q_raw, self.q_norm_weight, self.model.config.rms_norm_eps),
             inputs.current_token,
             self.model.config.rope_theta,
         )
         k = _apply_rope(
-            _head_rms_norm(k, self.k_norm_weight, self.model.config.rms_norm_eps),
+            _head_rms_norm(k_raw, self.k_norm_weight, self.model.config.rms_norm_eps),
             inputs.current_token,
             self.model.config.rope_theta,
         )
@@ -185,13 +245,24 @@ class Qwen3LayerReference:
         down = self.project(DOWN_PROJECTION, swiglu)
         hidden_out = (post_attention.astype(np.float32) + down.astype(np.float32)).astype(bfloat16)
         return LayerReferenceResult(
-            hidden_out=hidden_out,
-            k_cache=k_cache,
-            v_cache=v_cache,
+            input_norm=norm_hidden,
+            q_raw=q_raw,
+            k_raw=k_raw,
+            v_raw=v,
             q=q,
             k=k,
             v=v,
+            hidden_out=hidden_out,
+            k_cache=k_cache,
+            v_cache=v_cache,
             attention=attention,
+            o=o,
+            post_attention=post_attention,
+            ffn_input=ffn_input,
+            up=up,
+            gate=gate,
+            swiglu=swiglu,
+            down=down,
         )
 
 

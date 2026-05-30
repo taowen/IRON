@@ -40,13 +40,7 @@ def parse_args() -> argparse.Namespace:
         "--current-token",
         type=int,
         default=None,
-        help="current decode token for the currentkv case",
-    )
-    parser.add_argument(
-        "--patch-from-token",
-        type=int,
-        default=None,
-        help="compile currentkv xclbin/PDI for this cache-capacity token and patch design.bin to --current-token",
+        help="current decode token for token-aware cases",
     )
     parser.add_argument(
         "--model-path",
@@ -76,7 +70,6 @@ def run_case(args: argparse.Namespace) -> bool:
         return registry.check_only(
             args.case,
             args.current_token,
-            args.patch_from_token,
             args.model_path,
             args.layer,
             args.download_model,
@@ -85,7 +78,6 @@ def run_case(args: argparse.Namespace) -> bool:
         return registry.build_only(
             args.case,
             args.current_token,
-            args.patch_from_token,
             args.model_path,
             args.layer,
             args.download_model,
@@ -93,7 +85,6 @@ def run_case(args: argparse.Namespace) -> bool:
     return registry.run(
         args.case,
         args.current_token,
-        args.patch_from_token,
         args.model_path,
         args.layer,
         args.download_model,

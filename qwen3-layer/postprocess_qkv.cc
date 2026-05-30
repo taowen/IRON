@@ -19,6 +19,22 @@ static int32_t pack_s16_pair(int32_t low, int32_t high) {
     return static_cast<int32_t>(low_u16 | (high_u16 << 16));
 }
 
+static uint16_t bf16_bits(float value) {
+    union {
+        float f32;
+        uint32_t u32;
+    } bits = {value};
+    const uint32_t lsb = (bits.u32 >> 16) & 1u;
+    bits.u32 += 0x7fffu + lsb;
+    return static_cast<uint16_t>(bits.u32 >> 16);
+}
+
+static bfloat16 bf16_rne(float value) {
+    bfloat16 output;
+    reinterpret_cast<uint16_t *>(&output)[0] = bf16_bits(value);
+    return output;
+}
+
 static int32_t current_word_from_compact(
     int32_t *compact,
     int32_t idx,
@@ -66,7 +82,19 @@ static float fast_rsqrt(float value) {
         return 1.0f;
     }
     float y = 1.0f;
-    if (value > 1.0f) {
+    if (value < 0.000244140625f) {
+        y = 64.0f;
+    } else if (value < 0.0009765625f) {
+        y = 32.0f;
+    } else if (value < 0.00390625f) {
+        y = 16.0f;
+    } else if (value < 0.015625f) {
+        y = 8.0f;
+    } else if (value < 0.0625f) {
+        y = 4.0f;
+    } else if (value < 0.25f) {
+        y = 2.0f;
+    } else if (value > 1.0f) {
         y = 0.5f;
     }
     if (value > 4.0f) {
@@ -76,37 +104,33 @@ static float fast_rsqrt(float value) {
         y = 0.125f;
     }
     const float half = value * 0.5f;
-    for (int32_t iter = 0; iter < 6; iter++) {
+    for (int32_t iter = 0; iter < 10; iter++) {
         y = y * (1.5f - half * y * y);
     }
     return y;
 }
 
-static float abs_f32(float value) {
-    return value < 0.0f ? -value : value;
-}
-
 static float head_rms_scale(bfloat16 *body, int32_t head, int32_t head_dim) {
     const int32_t base = head * head_dim;
-    float max_abs = 0.0f;
-    for (int32_t dim = 0; dim < head_dim; dim++) {
-        const float value = static_cast<float>(body[base + dim]);
-        const float magnitude = abs_f32(value);
-        if (magnitude > max_abs) {
-            max_abs = magnitude;
-        }
-    }
-    if (max_abs == 0.0f) {
-        return 1.0f;
-    }
     float sum_sq = 0.0f;
     for (int32_t dim = 0; dim < head_dim; dim++) {
-        const float normalized = static_cast<float>(body[base + dim]) / max_abs;
-        sum_sq += normalized * normalized;
+        const float value = static_cast<float>(body[base + dim]);
+        sum_sq += value * value;
     }
     constexpr float eps = 0.000001f;
-    const float scaled_eps = eps / (max_abs * max_abs);
-    return fast_rsqrt(sum_sq / static_cast<float>(head_dim) + scaled_eps) / max_abs;
+    return fast_rsqrt(sum_sq / static_cast<float>(head_dim) + eps);
+}
+
+static bfloat16 normalized_lane(
+    bfloat16 *body,
+    bfloat16 *norm_weight,
+    int32_t lane,
+    int32_t dim,
+    float scale
+) {
+    return bf16_rne(
+        static_cast<float>(body[lane]) * scale * static_cast<float>(norm_weight[dim])
+    );
 }
 
 static void write_rope_pair(
@@ -121,13 +145,15 @@ static void write_rope_pair(
 ) {
     constexpr int32_t head_dim = 128;
     const int32_t lane = head * head_dim + dim;
-    const float even = static_cast<float>(body[lane]) * scale * static_cast<float>(norm_weight[dim]);
-    const float odd = static_cast<float>(body[lane + 1]) * scale * static_cast<float>(norm_weight[dim + 1]);
+    const bfloat16 normalized_even = normalized_lane(body, norm_weight, lane, dim, scale);
+    const bfloat16 normalized_odd = normalized_lane(body, norm_weight, lane + 1, dim + 1, scale);
+    const float even = static_cast<float>(normalized_even);
+    const float odd = static_cast<float>(normalized_odd);
     const int32_t pair = dim >> 1;
     const float c = static_cast<float>(rope_cos[pair]);
     const float s = static_cast<float>(rope_sin[pair]);
-    output[lane] = static_cast<bfloat16>(even * c - odd * s);
-    output[lane + 1] = static_cast<bfloat16>(even * s + odd * c);
+    output[lane] = bf16_rne(even * c - odd * s);
+    output[lane + 1] = bf16_rne(even * s + odd * c);
 }
 
 static int32_t packed_rope_word(
@@ -141,14 +167,16 @@ static int32_t packed_rope_word(
     constexpr int32_t head_dim = 128;
     const int32_t lane = logical_word * 2;
     const int32_t dim = lane % head_dim;
-    const float even = static_cast<float>(body[lane]) * scale * static_cast<float>(norm_weight[dim]);
-    const float odd = static_cast<float>(body[lane + 1]) * scale * static_cast<float>(norm_weight[dim + 1]);
+    const bfloat16 normalized_even = normalized_lane(body, norm_weight, lane, dim, scale);
+    const bfloat16 normalized_odd = normalized_lane(body, norm_weight, lane + 1, dim + 1, scale);
+    const float even = static_cast<float>(normalized_even);
+    const float odd = static_cast<float>(normalized_odd);
     const int32_t pair = dim >> 1;
     const float c = static_cast<float>(rope_cos[pair]);
     const float s = static_cast<float>(rope_sin[pair]);
     bfloat16 packed[2];
-    packed[0] = static_cast<bfloat16>(even * c - odd * s);
-    packed[1] = static_cast<bfloat16>(even * s + odd * c);
+    packed[0] = bf16_rne(even * c - odd * s);
+    packed[1] = bf16_rne(even * s + odd * c);
     return reinterpret_cast<int32_t *>(packed)[0];
 }
 

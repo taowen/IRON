@@ -23,6 +23,7 @@ from weight_stream import (
     weight_stream_lock_defs,
     weight_stream_row_streams,
 )
+from projection_schedule import DOWN_BODY_RECORDS, KV_BODY_RECORDS, O_BODY_RECORDS, Q_BODY_RECORDS
 from qkv_compact_reference import (
     COLUMN_COMPACT_DWORDS,
     K_GLOBAL_PACKET_ID,
@@ -52,6 +53,14 @@ BODY_PHASES = ("q", "k", "v", "o", "upgate", "down")
 BODY_RECORD_SLOTS = (0, 1, 2, 3, -1, 6)
 UPGATE_BODY_RECORDS = C1R2_UPGATE_REPLAYS
 UPGATE_MAIN_RECORD_DWORDS = UPGATE_BODY_RECORDS * RECORD_DWORDS
+BODY_RECORDS_BY_PHASE = {
+    "q": Q_BODY_RECORDS,
+    "k": KV_BODY_RECORDS,
+    "v": KV_BODY_RECORDS,
+    "o": O_BODY_RECORDS,
+    "upgate": UPGATE_BODY_RECORDS,
+    "down": DOWN_BODY_RECORDS,
+}
 
 COLUMN_RECEIVE_BDS = (
     (0, 1, 2, 3, 4, 5),
@@ -138,10 +147,24 @@ def _compact_phase(
     )
 
 
-COMPACT_PHASE_TRACE = tuple(
-    _compact_phase(label=stage, logical_phase=stage, record_slot=BODY_RECORD_SLOTS[stage_idx])
-    for stage_idx, stage in enumerate(BODY_PHASES)
-)
+def compact_phase_trace(labels: tuple[str, ...]) -> tuple[CompactPhase, ...]:
+    phases: list[CompactPhase] = []
+    for label in labels:
+        if label not in BODY_PHASES:
+            raise ValueError(f"unknown compact phase label: {label}")
+        stage_idx = BODY_PHASES.index(label)
+        phases.append(
+            _compact_phase(
+                label=label,
+                logical_phase=label,
+                record_slot=BODY_RECORD_SLOTS[stage_idx],
+                body_records=BODY_RECORDS_BY_PHASE[label],
+            )
+        )
+    return tuple(phases)
+
+
+COMPACT_PHASE_TRACE = compact_phase_trace(BODY_PHASES)
 WEIGHT_LOCK_BASE = len(COMPACT_PHASE_TRACE) + ROWS_PER_COLUMN + 1
 
 

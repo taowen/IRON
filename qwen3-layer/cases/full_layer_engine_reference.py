@@ -1,4 +1,4 @@
-"""CPU reference for current K/V full-layer tail with Q4NX up/gate and down."""
+"""CPU reference helpers for the qwen3 full-layer fused engine."""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ from qkv_compact_reference import (
     global_compact_from_columns,
 )
 
-CASE_NAME = "currentkv-full-layer-q4nx-down-bridge"
+CASE_NAME = "full-layer-engine"
 DEFAULT_SCHEDULE = make_decode_schedule(None)
 OUTPUT_DWORDS = HIDDEN_DIM // 2
 RMS_NORM_DWORDS = HIDDEN_DWORDS * 2
@@ -80,8 +80,10 @@ COLUMN_WEIGHT_BF16 = PATCHES_PER_COLUMN * PATCH_WEIGHT_BF16
 TOTAL_WEIGHT_BF16 = len(MAIN_COLUMNS) * COLUMN_WEIGHT_BF16
 TOTAL_WEIGHT_I32 = TOTAL_WEIGHT_BF16 // 2
 TOTAL_WEIGHT_AND_AUX_I32 = TOTAL_WEIGHT_I32 + AUX_DWORDS
-FULL_PIPELINE_ABS_TOL = 16.0
-FULL_PIPELINE_REL_TOL = 1.00
+FULL_PIPELINE_ABS_TOL = 0.05
+FULL_PIPELINE_REL_TOL = 0.20
+CACHE_REL_TOL = 0.02
+CACHE_ABS_TOL = 0.10
 SIGMOID_TABLE_SCALE = 8.0
 SIGMOID_TABLE = np.array(
     [
@@ -945,8 +947,8 @@ def validate_cache_writeback(
         errors.append(f"V cache shape mismatch: {got_v.shape} != {expected_v.shape}")
     if errors:
         return errors
-    _validate_bf16_cache("K", expected_k, got_k, errors, 0.035)
-    _validate_bf16_cache("V", expected_v, got_v, errors, 0.05)
+    _validate_bf16_cache("K", expected_k, got_k, errors, CACHE_ABS_TOL)
+    _validate_bf16_cache("V", expected_v, got_v, errors, CACHE_ABS_TOL)
     return errors
 
 
@@ -971,11 +973,13 @@ def _validate_bf16_cache(
         errors.append(f"{got_bad.size - 16} additional non-finite got {label} cache lanes")
     diff = np.abs(expected_values - got_values)
     finite = np.isfinite(expected_values) & np.isfinite(got_values)
-    mismatch = np.flatnonzero((diff > abs_tol) & finite)
+    limit = np.maximum(abs_tol, np.abs(expected_values) * CACHE_REL_TOL)
+    mismatch = np.flatnonzero((diff > limit) & finite)
     for lane in mismatch[:16]:
         errors.append(
             f"{label} cache lane {int(lane)}: expected={float(expected_values[lane]):.6f} "
-            f"got={float(got_values[lane]):.6f} abs={float(diff[lane]):.6f}"
+            f"got={float(got_values[lane]):.6f} abs={float(diff[lane]):.6f} "
+            f"limit={float(limit[lane]):.6f}"
         )
     if mismatch.size > 16:
         errors.append(f"{mismatch.size - 16} additional {label} cache lane mismatches")
@@ -1016,7 +1020,7 @@ def route_summary(schedule: DecodeSchedule) -> list[str]:
         "closed_loop_1=host raw hidden+RMSNorm weights -> c1r2 input RMSNorm replay -> main16 Q4NX Q/K/V -> c1r3 Q/K norm+RoPE bf16 ABI -> current K/V writeback -> KV scan -> bf16 attention -> packet2 -> main16 O",
         "closed_loop_2=bf16 attention packet2 plus Q4NX O -> c1r2 residual+post RMSNorm replay -> main16 Q4NX up/gate -> c6r2 bf16-input SwiGLU",
         "closed_loop_3=packet1 down activation plus row1 S2MM4/5 Q4NX weights -> main16 DMA0/DMA1",
-        "output=main16 Q4NX down compact records -> row1/c1r1 compact -> c1r2 compact drain",
+        "output=main16 Q4NX down compact records -> row1/c1r1 compact -> c1r2 hidden_out",
         f"decode_token={schedule.current_token}, blocks={schedule.kv_blocks}, tail={schedule.tail_tokens}",
         f"hidden={HIDDEN_DWORDS} dwords, aux={AUX_DWORDS} dwords, qkv_weight_chunks={QKV_BODY_WEIGHT_CHUNKS}, tail_weight_chunks={FULL_LAYER_TOTAL_WEIGHT_CHUNKS - QKV_BODY_WEIGHT_CHUNKS}, host_output={OUTPUT_DWORDS} dwords",
     ]

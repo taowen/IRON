@@ -16,9 +16,11 @@ static inline void q4nx_chunk_accum_slice(
     bfloat16 *activation_slice,
     int32_t num_rows
 ) {
+    ::aie::set_rounding(aie::rounding_mode::conv_even);
     constexpr int groups_per_row = qwen3::kQ4KChunk / qwen3::kQ4GroupSize;
     constexpr int rows_per_lane = qwen3::kMainRowsPerTile / 2;
-    constexpr int bytes_per_lane = qwen3::kQ4KChunk * (rows_per_lane / 2);
+    constexpr int row_pair_bytes = rows_per_lane / 2;
+    constexpr int bytes_per_lane = qwen3::kQ4KChunk * row_pair_bytes;
 
     bfloat16 *scales = packed_chunk;
     bfloat16 *zeros = packed_chunk + qwen3::kMainRowsPerTile * groups_per_row;
@@ -26,28 +28,51 @@ static inline void q4nx_chunk_accum_slice(
         packed_chunk + 2 * qwen3::kMainRowsPerTile * groups_per_row
     );
 
-    for (int row = 0; row < num_rows; row++) {
-        float row_acc = 0.0f;
-        const int lane = row / rows_per_lane;
-        const int local = row - lane * rows_per_lane;
-        const int byte_idx = local / 2;
-        const bool high_nibble = (local & 1) != 0;
-
+    for (int lane = 0; lane < 2; lane++) {
+        const int row_base = lane * rows_per_lane;
+        aie::accum<accfloat, rows_per_lane> row_acc = aie::zeros<accfloat, rows_per_lane>();
         for (int group = 0; group < groups_per_row; group++) {
-            const int scale_idx = group * qwen3::kMainRowsPerTile + row;
-            const float scale = static_cast<float>(scales[scale_idx]);
-            const float zero = static_cast<float>(zeros[scale_idx]);
-            for (int dim = 0; dim < qwen3::kQ4GroupSize; dim++) {
+            aie::vector<bfloat16, rows_per_lane> scale_vec =
+                aie::load_v<rows_per_lane>(scales + group * qwen3::kMainRowsPerTile + row_base);
+            aie::vector<bfloat16, rows_per_lane> zero_vec =
+                aie::load_v<rows_per_lane>(zeros + group * qwen3::kMainRowsPerTile + row_base);
+            for (int dim = 0; dim < qwen3::kQ4GroupSize; dim += 2) {
                 const int col = group * qwen3::kQ4GroupSize + dim;
-                const uint8_t packed = data[lane * bytes_per_lane + col * (rows_per_lane / 2) + byte_idx];
-                const uint8_t q = high_nibble ? packed >> 4 : packed & 0x0f;
-                const float weight = (static_cast<float>(q) - zero) * scale;
-                row_acc += weight * static_cast<float>(activation_slice[col]);
+                uint4 *column_nibbles = reinterpret_cast<uint4 *>(
+                    data + lane * bytes_per_lane + col * row_pair_bytes
+                );
+                aie::vector<uint4, qwen3::kMainRowsPerTile> packed =
+                    aie::load_v<qwen3::kMainRowsPerTile>(column_nibbles);
+                aie::vector<uint8, qwen3::kMainRowsPerTile> as_u8 = aie::unpack(packed);
+                aie::vector<uint16, qwen3::kMainRowsPerTile> as_u16 = aie::unpack(as_u8);
+                aie::vector<bfloat16, qwen3::kMainRowsPerTile> q_values =
+                    aie::to_float<bfloat16>(as_u16, 0);
+
+                aie::vector<bfloat16, rows_per_lane> q0 = q_values.extract<rows_per_lane>(0);
+                aie::vector<bfloat16, rows_per_lane> shifted0 = aie::sub(q0, zero_vec);
+                aie::accum<accfloat, rows_per_lane> dequant0_acc = aie::mul(shifted0, scale_vec);
+                aie::vector<bfloat16, rows_per_lane> dequant0 = dequant0_acc.to_vector<bfloat16>();
+                aie::vector<bfloat16, rows_per_lane> activation0 =
+                    aie::broadcast<bfloat16, rows_per_lane>(activation_slice[col]);
+                row_acc = aie::mac(row_acc, dequant0, activation0);
+
+                aie::vector<bfloat16, rows_per_lane> q1 = q_values.extract<rows_per_lane>(1);
+                aie::vector<bfloat16, rows_per_lane> shifted1 = aie::sub(q1, zero_vec);
+                aie::accum<accfloat, rows_per_lane> dequant1_acc = aie::mul(shifted1, scale_vec);
+                aie::vector<bfloat16, rows_per_lane> dequant1 = dequant1_acc.to_vector<bfloat16>();
+                aie::vector<bfloat16, rows_per_lane> activation1 =
+                    aie::broadcast<bfloat16, rows_per_lane>(activation_slice[col + 1]);
+                row_acc = aie::mac(row_acc, dequant1, activation1);
             }
         }
 
-        target[row] += row_acc;
+        aie::accum<accfloat, rows_per_lane> merged;
+        merged.from_vector(aie::load_v<rows_per_lane>(target + row_base), 0);
+        merged = aie::add(merged, row_acc.to_vector<float>());
+        aie::store_v(target + row_base, merged.to_vector<float>());
     }
+
+    (void)num_rows;
 }
 
 static inline void q4nx_chunk_accum_single(

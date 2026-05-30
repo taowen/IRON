@@ -1,7 +1,8 @@
-"""Generate MLIR-AIE for current K/V full-layer tail with Q4NX up/gate and down."""
+"""Generate MLIR-AIE for the qwen3 full-layer fused engine."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from attention_dataflow import (
@@ -22,8 +23,10 @@ from contract import (
     MAIN_COLUMNS,
     MAIN_ROWS,
     RECORD_DWORDS,
+    ROWS_PER_PATCH,
     SHAPE_CARRIER_DWORDS,
 )
+from dataflow import dataflow_slice_marker, validate_dataflow_slice
 from mlir_utils import (
     flow,
     lock_pair,
@@ -37,8 +40,11 @@ from mlir_utils import (
     require_absent_markers,
     require_count,
     require_disjoint_bd_ids,
+    require_dma_bd_next_ids,
     require_dma_bd_lock_balance,
+    require_dma_next_bd_labels,
     require_kv16_attention_shapes,
+    require_main_record_phase_barrier,
     require_marker_order,
     require_max_address_patch_arg,
     require_memtile_dma_bd_bank,
@@ -46,6 +52,7 @@ from mlir_utils import (
     require_npu_push_queue_repeat_range,
     require_npu_writebd_field_ranges,
     require_npu_writebd_id_limit,
+    require_unique_packet_flows,
     require_unique_bd_ids,
 )
 from compact_dataflow import (
@@ -79,7 +86,6 @@ from compact_dataflow import (
     WEIGHT_ROW_BDS,
     _bd_dimensions,
     _bridge,
-    _compact_phase,
     _hub,
     _main_record_transfer,
     _main_symbol,
@@ -87,6 +93,7 @@ from compact_dataflow import (
     _phase_trace_errors,
     _phase_trace_marker,
     column_packet,
+    compact_phase_trace,
     main_packet,
     q4nx_weight_column_memtile,
 )
@@ -114,7 +121,16 @@ from projection_schedule import (
     V_CHUNKS_PER_RECORD,
     V_WEIGHT_CHUNK_BASE,
 )
-from cases.currentkv_full_layer_q4nx_down_reference import (
+from resource_manifest import (
+    BDResource,
+    BufferResource,
+    LockResource,
+    ResourceManifest,
+    TileResource,
+    validate_manifest_matches_mlir,
+    validate_resource_manifest,
+)
+from cases.full_layer_engine_reference import (
     CASE_NAME,
     COLUMN_WEIGHT_BF16,
     DEFAULT_SCHEDULE,
@@ -123,10 +139,10 @@ from cases.currentkv_full_layer_q4nx_down_reference import (
     PATCH_WEIGHT_BF16,
     QK_ROPE_DWORDS,
     RMS_NORM_DWORDS,
+    AUX_DWORDS,
     TOTAL_WEIGHT_AND_AUX_I32,
-    TOTAL_WEIGHT_I32,
 )
-from cases.currentkv_kvscan_attention_kv16_generate import (
+from cases.currentkv_cache_dataflow import (
     CURRENT_WRITE_BDS,
     CURRENT_WRITE_CHANNEL,
     K_SCAN_BD,
@@ -136,12 +152,12 @@ from cases.currentkv_kvscan_attention_kv16_generate import (
     KV_SPLIT_V_IN_BDS,
     V_SCAN_BD,
     V_SIDE_SCAN_DWORDS,
-    _kv_split_scan_memtile,
-    _push_current_cache_write,
-    _push_kv_scan_from_cache,
-    _shape_blocks_name,
-    _shape_runtime_start_name,
-    _shape_tail_tokens_name,
+    kv_split_scan_memtile,
+    push_current_cache_write,
+    push_kv_scan_from_cache,
+    shape_blocks_name,
+    shape_runtime_start_name,
+    shape_tail_tokens_name,
 )
 from cases.currentkv_kvscan_attention_kv16_reference import (
     ACCUM_LANES,
@@ -160,16 +176,146 @@ from cases.currentkv_kvscan_attention_kv16_reference import (
 from cases.kvscan_attention_kv16_reference import OUTPUT_DWORDS as ATTENTION_OUTPUT_DWORDS
 from cases.kvscan_attention_kv16_reference import WEIGHT_DWORDS, WINDOW_DWORDS
 
-QKV_BODY_PHASE_TRACE = (
-    _compact_phase("q", "q", BODY_RECORD_SLOTS[0], Q_BODY_RECORDS),
-    _compact_phase("k", "k", BODY_RECORD_SLOTS[1], KV_BODY_RECORDS),
-    _compact_phase("v", "v", BODY_RECORD_SLOTS[2], KV_BODY_RECORDS),
-    _compact_phase("o", "o", BODY_RECORD_SLOTS[3], O_BODY_RECORDS),
-    _compact_phase("upgate", "upgate", BODY_RECORD_SLOTS[4]),
-    _compact_phase("down", "down", BODY_RECORD_SLOTS[5], DOWN_BODY_RECORDS),
-)
+QKV_PREFIX_PHASE_TRACE = compact_phase_trace(("q", "k", "v"))
+QKV_BODY_PHASE_TRACE = compact_phase_trace(("q", "k", "v", "o", "upgate", "down"))
 Q_MAIN_RECORD_DWORDS = Q_BODY_RECORDS * RECORD_DWORDS
 KV_MAIN_RECORD_DWORDS = KV_BODY_RECORDS * RECORD_DWORDS
+MAIN16_ALL_PHASES = ("Q", "K", "V", "O", "UPGATE", "DOWN")
+
+
+@dataclass(frozen=True)
+class Main16Buffer:
+    name: str
+    address: int
+    size_bytes: int
+    phases: tuple[str, ...]
+    semantic: str
+    memref: str
+
+
+MAIN16_BUFFERS = (
+    Main16Buffer(
+        "o_records",
+        0x2000,
+        O_BODY_RECORDS * RECORD_DWORDS * 4,
+        ("O",),
+        "O compact records",
+        f"memref<{O_BODY_RECORDS * RECORD_DWORDS}xi32>",
+    ),
+    Main16Buffer(
+        "wt_ping",
+        0x2800,
+        CHUNK_BF16 * 2,
+        MAIN16_ALL_PHASES,
+        "DMA1 weight ping",
+        f"memref<{CHUNK_BF16}xbf16>",
+    ),
+    Main16Buffer(
+        "wt_pong",
+        0x4000,
+        CHUNK_BF16 * 2,
+        MAIN16_ALL_PHASES,
+        "DMA1 weight pong",
+        f"memref<{CHUNK_BF16}xbf16>",
+    ),
+    Main16Buffer(
+        "k_records",
+        0x5800,
+        KV_MAIN_RECORD_DWORDS * 4,
+        ("K",),
+        "K compact record",
+        f"memref<{KV_MAIN_RECORD_DWORDS}xi32>",
+    ),
+    Main16Buffer(
+        "v_records",
+        0x6000,
+        KV_MAIN_RECORD_DWORDS * 4,
+        ("V",),
+        "V compact record",
+        f"memref<{KV_MAIN_RECORD_DWORDS}xi32>",
+    ),
+    Main16Buffer(
+        "records",
+        0x6800,
+        MAIN_RECORD_DWORDS * 4,
+        MAIN16_ALL_PHASES,
+        "shared compact record staging",
+        f"memref<{MAIN_RECORD_DWORDS}xi32>",
+    ),
+    Main16Buffer(
+        "down_records",
+        0x7000,
+        DOWN_BODY_RECORDS * RECORD_DWORDS * 4,
+        ("DOWN",),
+        "down compact records",
+        f"memref<{DOWN_BODY_RECORDS * RECORD_DWORDS}xi32>",
+    ),
+    Main16Buffer(
+        "chunk_pong",
+        0x7800,
+        MAIN_CHUNK_DWORDS * 4,
+        MAIN16_ALL_PHASES,
+        "DMA0 activation pong",
+        f"memref<{MAIN_CHUNK_DWORDS}xi32>",
+    ),
+    Main16Buffer(
+        "q_records",
+        0x8000,
+        Q_MAIN_RECORD_DWORDS * 4,
+        ("Q",),
+        "Q compact records",
+        f"memref<{Q_MAIN_RECORD_DWORDS}xi32>",
+    ),
+    Main16Buffer(
+        "upgate_records",
+        0x9000,
+        UPGATE_MAIN_RECORD_DWORDS * 4,
+        ("UPGATE",),
+        "up/gate compact records",
+        f"memref<{UPGATE_MAIN_RECORD_DWORDS}xi32>",
+    ),
+    Main16Buffer(
+        "chunk_ping",
+        0xC000,
+        MAIN_CHUNK_DWORDS * 4,
+        MAIN16_ALL_PHASES,
+        "DMA0 activation ping",
+        f"memref<{MAIN_CHUNK_DWORDS}xi32>",
+    ),
+    Main16Buffer(
+        "q4nx_output",
+        0xC400,
+        32 * 2,
+        MAIN16_ALL_PHASES,
+        "Q4NX output scratch",
+        "memref<32xbf16>",
+    ),
+)
+MAIN16_BUFFER_BY_NAME = {buffer.name: buffer for buffer in MAIN16_BUFFERS}
+WEIGHT_PATCH_BD_IDS = (
+    (0, 2, 4, 6, 8, 10, 12, 14),
+    (1, 3, 5, 7, 9, 11, 13, 15),
+)
+WEIGHT_SPAN_CHUNKS = QKV_BODY_WEIGHT_CHUNKS
+
+
+def _split_weight_span(chunk_base: int, chunks: int) -> tuple[tuple[int, int], ...]:
+    spans: list[tuple[int, int]] = []
+    for offset in range(0, chunks, WEIGHT_SPAN_CHUNKS):
+        spans.append((chunk_base + offset, min(WEIGHT_SPAN_CHUNKS, chunks - offset)))
+    return tuple(spans)
+
+
+def _full_weight_spans() -> tuple[tuple[int, int], ...]:
+    spans = (
+        (Q_WEIGHT_CHUNK_BASE, QKV_BODY_WEIGHT_CHUNKS),
+        (FULL_LAYER_O_WEIGHT_CHUNK_BASE, O_WEIGHT_CHUNKS),
+        *_split_weight_span(FULL_LAYER_UPGATE_WEIGHT_CHUNK_BASE, UPGATE_WEIGHT_CHUNKS),
+        *_split_weight_span(FULL_LAYER_DOWN_WEIGHT_CHUNK_BASE, DOWN_WEIGHT_CHUNKS),
+    )
+    if len(spans) != len(WEIGHT_PATCH_BD_IDS[0]):
+        raise RuntimeError(f"bad full-layer weight span count: {len(spans)}")
+    return spans
 
 
 def _runtime_sequence(schedule: DecodeSchedule) -> str:
@@ -182,27 +328,23 @@ def _runtime_sequence(schedule: DecodeSchedule) -> str:
     ]
     lines.append(npu_rtp_write("post_current_token", 0, schedule.current_token))
     for window in range(4):
-        lines.append(npu_rtp_write(_shape_blocks_name(shape_a_symbol(window)), 0, schedule.kv_blocks))
-        lines.append(npu_rtp_write(_shape_blocks_name(shape_b_symbol(window)), 0, schedule.kv_blocks))
-        lines.append(npu_rtp_write(_shape_tail_tokens_name(shape_a_symbol(window)), 0, schedule.tail_tokens))
+        lines.append(npu_rtp_write(shape_blocks_name(shape_a_symbol(window)), 0, schedule.kv_blocks))
+        lines.append(npu_rtp_write(shape_blocks_name(shape_b_symbol(window)), 0, schedule.kv_blocks))
+        lines.append(npu_rtp_write(shape_tail_tokens_name(shape_a_symbol(window)), 0, schedule.tail_tokens))
     lines.extend(
         (
             npu_writebd(
                 1,
                 10,
                 QK_ROPE_DWORDS,
-                (TOTAL_WEIGHT_I32 + RMS_NORM_DWORDS) * 4,
+                RMS_NORM_DWORDS * 4,
             ),
-            npu_address_patch(1, 10, 2, (TOTAL_WEIGHT_I32 + RMS_NORM_DWORDS) * 4),
+            npu_address_patch(1, 10, 2, RMS_NORM_DWORDS * 4),
             npu_push_queue(1, "MM2S", 1, 10),
         )
     )
-    lines.append(npu_set_lock("post_runtime_start", 1))
-    for window in range(4):
-        lines.append(npu_set_lock(_shape_runtime_start_name(shape_a_symbol(window)), 1))
-        lines.append(npu_set_lock(_shape_runtime_start_name(shape_b_symbol(window)), 1))
-    lines.extend(_push_current_cache_write(0, 0, schedule))
-    lines.extend(_push_current_cache_write(7, 1, schedule))
+    lines.extend(push_current_cache_write(0, 0, schedule))
+    lines.extend(push_current_cache_write(7, 1, schedule))
     lines.extend(
         (
             npu_writebd(1, 13, OUTPUT_DWORDS, 0),
@@ -211,30 +353,47 @@ def _runtime_sequence(schedule: DecodeSchedule) -> str:
             npu_writebd(1, 12, HIDDEN_DWORDS, 0),
             npu_address_patch(1, 12, 4, 0),
             npu_push_queue(1, "MM2S", 0, 12),
-            npu_writebd(1, 14, HIDDEN_DWORDS, TOTAL_WEIGHT_I32 * 4),
-            npu_address_patch(1, 14, 2, TOTAL_WEIGHT_I32 * 4),
+            npu_writebd(1, 14, HIDDEN_DWORDS, 0),
+            npu_address_patch(1, 14, 2, 0),
             npu_push_queue(1, "MM2S", 0, 14),
-            npu_writebd(1, 15, HIDDEN_DWORDS, (TOTAL_WEIGHT_I32 + HIDDEN_DWORDS) * 4),
-            npu_address_patch(1, 15, 2, (TOTAL_WEIGHT_I32 + HIDDEN_DWORDS) * 4),
+            npu_writebd(1, 15, HIDDEN_DWORDS, HIDDEN_DWORDS * 4),
+            npu_address_patch(1, 15, 2, HIDDEN_DWORDS * 4),
             npu_push_queue(1, "MM2S", 0, 15),
         )
     )
+    weight_spans = _full_weight_spans()
+    chunk_pair_bytes = ROWS_PER_PATCH * CHUNK_BF16 * 2
     for group, column in enumerate(MAIN_COLUMNS):
-        column_base = group * COLUMN_WEIGHT_BF16 * 2
-        patch_bytes = PATCH_WEIGHT_BF16 * 2
-        lines.extend(
-            (
-                npu_writebd(column, 0, PATCH_WEIGHT_BF16 // 2, column_base),
-                npu_address_patch(column, 0, 2, column_base),
-                npu_writebd(column, 1, PATCH_WEIGHT_BF16 // 2, column_base + patch_bytes),
-                npu_address_patch(column, 1, 2, column_base + patch_bytes),
-                npu_push_queue(column, "MM2S", 0, 0),
-                npu_push_queue(column, "MM2S", 1, 1),
-            )
-        )
+        column_base = AUX_DWORDS * 4 + group * COLUMN_WEIGHT_BF16 * 2
+        for patch, bd_ids in enumerate(WEIGHT_PATCH_BD_IDS):
+            patch_base = column_base + patch * PATCH_WEIGHT_BF16 * 2
+            for span_idx, (chunk_base, chunk_count) in enumerate(weight_spans):
+                bd_id = bd_ids[span_idx]
+                has_next = span_idx + 1 < len(weight_spans)
+                next_bd = bd_ids[span_idx + 1] if has_next else 0
+                byte_offset = patch_base + chunk_base * chunk_pair_bytes
+                dwords = chunk_count * ROWS_PER_PATCH * CHUNK_BF16 // 2
+                lines.extend(
+                    (
+                        npu_writebd(
+                            column,
+                            bd_id,
+                            dwords,
+                            0,
+                            next_bd=next_bd,
+                            use_next_bd=has_next,
+                        ),
+                        npu_address_patch(column, bd_id, 2, byte_offset),
+                    )
+                )
+            lines.append(npu_push_queue(column, "MM2S", patch, bd_ids[0]))
+    lines.append(npu_set_lock("post_runtime_start", 1))
     lines.extend((npu_sync(0, CURRENT_WRITE_CHANNEL), npu_sync(7, CURRENT_WRITE_CHANNEL)))
-    lines.extend(_push_kv_scan_from_cache(0, 0, 1, 0, schedule))
-    lines.extend(_push_kv_scan_from_cache(7, 0, 1, 4, schedule))
+    lines.extend(push_kv_scan_from_cache(0, 0, 1, 0, schedule))
+    lines.extend(push_kv_scan_from_cache(7, 0, 1, 4, schedule))
+    for window in range(4):
+        lines.append(npu_set_lock(shape_runtime_start_name(shape_a_symbol(window)), 1))
+        lines.append(npu_set_lock(shape_runtime_start_name(shape_b_symbol(window)), 1))
     lines.extend(
         (
             npu_sync(0, 0, direction=1),
@@ -254,9 +413,9 @@ def _runtime_sequence(schedule: DecodeSchedule) -> str:
 
 def _shape_a_multiblock_bf16(window: int) -> str:
     tile = shape_a_symbol(window)
-    blocks_name = _shape_blocks_name(tile)
-    tail_tokens_name = _shape_tail_tokens_name(tile)
-    runtime_start = _shape_runtime_start_name(tile)
+    blocks_name = shape_blocks_name(tile)
+    tail_tokens_name = shape_tail_tokens_name(tile)
+    runtime_start = shape_runtime_start_name(tile)
     return f"""
     %{tile}_q = aie.buffer(%{tile}) {{sym_name = "{tile}_q"}} : memref<{WINDOW_DWORDS}xi32>
     %{tile}_k = aie.buffer(%{tile}) {{sym_name = "{tile}_k"}} : memref<{K_WINDOW_DWORDS}xi32>
@@ -324,8 +483,8 @@ def _shape_a_multiblock_bf16(window: int) -> str:
 
 def _shape_b_multiblock_bf16(window: int) -> str:
     tile = shape_b_symbol(window)
-    blocks_name = _shape_blocks_name(tile)
-    runtime_start = _shape_runtime_start_name(tile)
+    blocks_name = shape_blocks_name(tile)
+    runtime_start = shape_runtime_start_name(tile)
     return f"""
     %{tile}_v = aie.buffer(%{tile}) {{sym_name = "{tile}_v"}} : memref<{V_WINDOW_DWORDS}xi32>
     %{tile}_carrier = aie.buffer(%{tile}) {{sym_name = "{tile}_carrier"}} : memref<{SHAPE_CARRIER_DWORDS}xi32>
@@ -491,19 +650,174 @@ def _postprocess_qkv_body() -> str:
 
 
 def _record_buffer_ref(tile: str, buffer_name: str) -> str:
-    if buffer_name == "q_records":
-        return f"%{tile}_q_records : memref<{Q_MAIN_RECORD_DWORDS}xi32>"
-    if buffer_name == "k_records":
-        return f"%{tile}_k_records : memref<{KV_MAIN_RECORD_DWORDS}xi32>"
-    if buffer_name == "v_records":
-        return f"%{tile}_v_records : memref<{KV_MAIN_RECORD_DWORDS}xi32>"
-    if buffer_name == "o_records":
-        return f"%{tile}_o_records : memref<{O_BODY_RECORDS * RECORD_DWORDS}xi32>"
-    if buffer_name == "upgate_records":
-        return f"%{tile}_upgate_records : memref<{UPGATE_MAIN_RECORD_DWORDS}xi32>"
-    if buffer_name == "down_records":
-        return f"%{tile}_down_records : memref<{DOWN_BODY_RECORDS * RECORD_DWORDS}xi32>"
-    return f"%{tile}_records : memref<{MAIN_RECORD_DWORDS}xi32>"
+    spec = MAIN16_BUFFER_BY_NAME[buffer_name]
+    return f"%{tile}_{buffer_name} : {spec.memref}"
+
+
+def _main_buffer_name(tile: str, buffer_name: str) -> str:
+    return f"%{tile}_{buffer_name}"
+
+
+def _main_buffer_type(buffer_name: str) -> str:
+    return MAIN16_BUFFER_BY_NAME[buffer_name].memref
+
+
+def _main_buffer_attr(tile: str, address: int) -> str:
+    return f'{{address = {address} : i32, sym_name = "{tile}"}}'
+
+
+def validate_main_buffer_residency(scope: str, mlir: str) -> list[str]:
+    errors: list[str] = []
+    for group in range(len(MAIN_COLUMNS)):
+        for row in range(len(MAIN_ROWS)):
+            tile = _main_symbol(group, row)
+            for buffer in MAIN16_BUFFERS:
+                marker = (
+                    f"%{tile}_{buffer.name} = aie.buffer(%{tile}) "
+                    f'{{address = {buffer.address} : i32, sym_name = "{tile}_{buffer.name}"}}'
+                )
+                if marker not in mlir:
+                    errors.append(
+                        f"{scope}: main16 {tile}_{buffer.name} must stay pinned at 0x{buffer.address:04x}"
+                    )
+    return errors
+
+
+def resource_manifest_for_case(case_name: str) -> ResourceManifest:
+    return ResourceManifest(
+        schema="qwen3-layer-resource-manifest-v1",
+        case=case_name,
+        tiles=tuple(
+            _main16_tile_resources(group, row)
+            for group in range(len(MAIN_COLUMNS))
+            for row in range(len(MAIN_ROWS))
+        ),
+    )
+
+
+def resource_manifest(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> ResourceManifest:
+    return resource_manifest_for_case(CASE_NAME)
+
+
+def _main16_tile_resources(group: int, row: int) -> TileResource:
+    tile = _main_symbol(group, row)
+    return TileResource(
+        name=tile,
+        coord=(MAIN_COLUMNS[group], MAIN_ROWS[row]),
+        role="main16",
+        buffers=tuple(_main_buffer_resource(tile, buffer) for buffer in MAIN16_BUFFERS),
+        locks=(
+            _main_lock_resource(tile, "records_empty", 0, 3, "main16 compact record output buffers reusable"),
+            _main_lock_resource(tile, "records_full", 1, 0, "main16 compact record output buffers ready"),
+            _main_lock_resource(tile, "chunk_empty", 2, 2, "main16 DMA0 activation ping/pong reusable"),
+            _main_lock_resource(tile, "chunk_full", 3, 0, "main16 DMA0 activation ping/pong ready"),
+            _main_lock_resource(tile, "wt_empty", 4, 2, "main16 DMA1 Q4NX weight ping/pong reusable"),
+            _main_lock_resource(tile, "wt_full", 5, 0, "main16 DMA1 Q4NX weight ping/pong ready"),
+        ),
+        bds=(
+            BDResource(
+                name="activation_ping",
+                bd_id=0,
+                channel=0,
+                direction="S2MM",
+                length=MAIN_CHUNK_DWORDS,
+                buffer=f"{tile}_chunk_ping",
+                phases=_all_phases(),
+                semantic="main16 DMA0 activation ping",
+                next_bd_id=1,
+            ),
+            BDResource(
+                name="activation_pong",
+                bd_id=1,
+                channel=0,
+                direction="S2MM",
+                length=MAIN_CHUNK_DWORDS,
+                buffer=f"{tile}_chunk_pong",
+                phases=_all_phases(),
+                semantic="main16 DMA0 activation pong",
+                next_bd_id=0,
+            ),
+            *_main_record_bds(tile, row),
+            BDResource(
+                name="weight_ping",
+                bd_id=8,
+                channel=1,
+                direction="S2MM",
+                length=CHUNK_BF16,
+                buffer=f"{tile}_wt_ping",
+                phases=_all_phases(),
+                semantic="main16 DMA1 Q4NX weight ping",
+                next_bd_id=9,
+            ),
+            BDResource(
+                name="weight_pong",
+                bd_id=9,
+                channel=1,
+                direction="S2MM",
+                length=CHUNK_BF16,
+                buffer=f"{tile}_wt_pong",
+                phases=_all_phases(),
+                semantic="main16 DMA1 Q4NX weight pong",
+                next_bd_id=8,
+            ),
+        ),
+    )
+
+
+def _main_buffer_resource(
+    tile: str,
+    buffer: Main16Buffer,
+) -> BufferResource:
+    return BufferResource(
+        name=buffer.name,
+        mlir_name=f"{tile}_{buffer.name}",
+        address=buffer.address,
+        size_bytes=buffer.size_bytes,
+        phases=buffer.phases,
+        semantic=f"main16 {buffer.semantic}",
+    )
+
+
+def _main_lock_resource(tile: str, suffix: str, lock_id: int, init: int, semantic: str) -> LockResource:
+    return LockResource(
+        name=suffix,
+        mlir_name=f"{tile}_{suffix}",
+        lock_id=lock_id,
+        init=init,
+        phases=_all_phases(),
+        semantic=semantic,
+    )
+
+
+def _main_record_bds(tile: str, row: int) -> tuple[BDResource, ...]:
+    bds: list[BDResource] = []
+    for stage_idx, phase in enumerate(QKV_BODY_PHASE_TRACE):
+        buffer_name, _offset, length, _dimensions = _main_record_transfer(phase, row)
+        label = phase.label.upper()
+        bds.append(
+            BDResource(
+                name=f"{phase.label}_record_output",
+                bd_id=2 + stage_idx,
+                channel=1,
+                direction="MM2S",
+                length=length,
+                buffer=f"{tile}_{buffer_name}",
+                phases=_phases(label),
+                semantic=f"main16 compact record output phase {phase.label}",
+                next_bd_id=2 + ((stage_idx + 1) % len(QKV_BODY_PHASE_TRACE)),
+            )
+        )
+    return tuple(bds)
+
+
+def _phases(phase: str) -> tuple[str, ...]:
+    if phase == "ALL":
+        return _all_phases()
+    return (phase,)
+
+
+def _all_phases() -> tuple[str, ...]:
+    return MAIN16_ALL_PHASES
 
 
 def _q4nx_body_phase_kernel(
@@ -608,6 +922,98 @@ def _q4nx_multiblock_phase_kernel(
       }}"""
 
 
+def main16_qkv_prefix_tile(group: int, row: int) -> str:
+    tile = _main_symbol(group, row)
+    packet = main_packet(group, row)
+    record_blocks = []
+    for stage_idx, phase in enumerate(QKV_PREFIX_PHASE_TRACE):
+        buffer_name, offset, length, dimensions = _main_record_transfer(phase, row)
+        buffer_ref = _record_buffer_ref(tile, buffer_name)
+        next_label = f"^{_next_phase(QKV_PREFIX_PHASE_TRACE, stage_idx).label}_out"
+        record_blocks.append(f"""    ^{phase.label}_out:
+      aie.use_lock(%{tile}_records_full, AcquireGreaterEqual, 1)
+      aie.dma_bd({buffer_ref}, {offset}, {length}{_bd_dimensions(dimensions)}) {{bd_id = {2 + stage_idx} : i32, next_bd_id = {2 + ((stage_idx + 1) % len(QKV_PREFIX_PHASE_TRACE))} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {packet}>}}
+      aie.use_lock(%{tile}_records_empty, Release, 1)
+      aie.next_bd {next_label}""")
+
+    q_name = _main_buffer_name(tile, "q_records")
+    q_type = _main_buffer_type("q_records")
+    k_name = _main_buffer_name(tile, "k_records")
+    k_type = _main_buffer_type("k_records")
+    v_name = _main_buffer_name(tile, "v_records")
+    v_type = _main_buffer_type("v_records")
+    buffer_decls = "\n".join(
+        f"    %{tile}_{buffer.name} = aie.buffer(%{tile}) "
+        f'{_main_buffer_attr(f"{tile}_{buffer.name}", buffer.address)} : {buffer.memref}'
+        for buffer in MAIN16_BUFFERS
+    )
+    return f"""
+{buffer_decls}
+    %{tile}_records_empty = aie.lock(%{tile}, 0) {{init = {len(QKV_PREFIX_PHASE_TRACE)} : i32, sym_name = "{tile}_records_empty"}}
+    %{tile}_records_full = aie.lock(%{tile}, 1) {{init = 0 : i32, sym_name = "{tile}_records_full"}}
+    %{tile}_chunk_empty = aie.lock(%{tile}, 2) {{init = 2 : i32, sym_name = "{tile}_chunk_empty"}}
+    %{tile}_chunk_full = aie.lock(%{tile}, 3) {{init = 0 : i32, sym_name = "{tile}_chunk_full"}}
+    %{tile}_wt_empty = aie.lock(%{tile}, 4) {{init = 2 : i32, sym_name = "{tile}_wt_empty"}}
+    %{tile}_wt_full = aie.lock(%{tile}, 5) {{init = 0 : i32, sym_name = "{tile}_wt_full"}}
+
+    %{tile}_core = aie.core(%{tile}) {{
+      %c0 = arith.constant 0 : index
+      %c1 = arith.constant 1 : index
+      %c2 = arith.constant 2 : index
+      %c8 = arith.constant 8 : index
+      %c16 = arith.constant 16 : index
+      %c1_i32 = arith.constant 1 : i32
+      %c2_i32 = arith.constant 2 : i32
+      %c{Q_WEIGHT_CHUNK_BASE}_i32 = arith.constant {Q_WEIGHT_CHUNK_BASE} : i32
+      %c{K_WEIGHT_CHUNK_BASE}_i32 = arith.constant {K_WEIGHT_CHUNK_BASE} : i32
+      %c{V_WEIGHT_CHUNK_BASE}_i32 = arith.constant {V_WEIGHT_CHUNK_BASE} : i32
+      %m_i32 = arith.constant 32 : i32
+      %group_i32 = arith.constant {group} : i32
+      %row_i32 = arith.constant {row} : i32
+
+      aie.use_lock(%{tile}_records_empty, AcquireGreaterEqual, {len(QKV_PREFIX_PHASE_TRACE)})
+{_q4nx_body_phase_kernel(tile, "q", "q4nx_emit_q_body_record", Q_BODY_RECORDS, Q_CHUNKS_PER_RECORD, Q_WEIGHT_CHUNK_BASE, q_name, q_type)}
+{_q4nx_body_phase_kernel(tile, "k", "q4nx_emit_k_body_record", KV_BODY_RECORDS, K_CHUNKS_PER_RECORD, K_WEIGHT_CHUNK_BASE, k_name, k_type)}
+{_q4nx_body_phase_kernel(tile, "v", "q4nx_emit_v_body_record", KV_BODY_RECORDS, V_CHUNKS_PER_RECORD, V_WEIGHT_CHUNK_BASE, v_name, v_type)}
+      aie.use_lock(%{tile}_records_full, Release, {len(QKV_PREFIX_PHASE_TRACE)})
+      aie.end
+    }}
+
+    %{tile}_mem = aie.mem(%{tile}) {{
+      %chunk_dma = aie.dma_start(S2MM, 0, ^chunk_ping, ^wt_start)
+    ^chunk_ping:
+      aie.use_lock(%{tile}_chunk_empty, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_chunk_ping : memref<{MAIN_CHUNK_DWORDS}xi32>, 0, {MAIN_CHUNK_DWORDS}) {{bd_id = 0 : i32, next_bd_id = 1 : i32}}
+      aie.use_lock(%{tile}_chunk_full, Release, 1)
+      aie.next_bd ^chunk_pong
+    ^chunk_pong:
+      aie.use_lock(%{tile}_chunk_empty, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_chunk_pong : memref<{MAIN_CHUNK_DWORDS}xi32>, 0, {MAIN_CHUNK_DWORDS}) {{bd_id = 1 : i32, next_bd_id = 0 : i32}}
+      aie.use_lock(%{tile}_chunk_full, Release, 1)
+      aie.next_bd ^chunk_ping
+
+    ^wt_start:
+      %wt_dma = aie.dma_start(S2MM, 1, ^wt_ping, ^record_start)
+    ^wt_ping:
+      aie.use_lock(%{tile}_wt_empty, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_wt_ping : memref<{CHUNK_BF16}xbf16>, 0, {CHUNK_BF16}) {{bd_id = 8 : i32, next_bd_id = 9 : i32}}
+      aie.use_lock(%{tile}_wt_full, Release, 1)
+      aie.next_bd ^wt_pong
+    ^wt_pong:
+      aie.use_lock(%{tile}_wt_empty, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_wt_pong : memref<{CHUNK_BF16}xbf16>, 0, {CHUNK_BF16}) {{bd_id = 9 : i32, next_bd_id = 8 : i32}}
+      aie.use_lock(%{tile}_wt_full, Release, 1)
+      aie.next_bd ^wt_ping
+
+    ^record_start:
+      %record_dma = aie.dma_start(MM2S, 1, ^q_out, ^end)
+{chr(10).join(record_blocks)}
+    ^end:
+      aie.end
+    }}
+"""
+
+
 def _main_tile(group: int, row: int) -> str:
     tile = _main_symbol(group, row)
     packet = main_packet(group, row)
@@ -622,30 +1028,24 @@ def _main_tile(group: int, row: int) -> str:
       aie.use_lock(%{tile}_records_empty, Release, 1)
       aie.next_bd {next_label}""")
 
-    q_name = f"%{tile}_q_records"
-    q_type = f"memref<{Q_MAIN_RECORD_DWORDS}xi32>"
-    k_name = f"%{tile}_k_records"
-    k_type = f"memref<{KV_MAIN_RECORD_DWORDS}xi32>"
-    v_name = f"%{tile}_v_records"
-    v_type = f"memref<{KV_MAIN_RECORD_DWORDS}xi32>"
-    o_name = f"%{tile}_o_records"
-    o_type = f"memref<{O_BODY_RECORDS * RECORD_DWORDS}xi32>"
-    down_name = f"%{tile}_down_records"
-    down_type = f"memref<{DOWN_BODY_RECORDS * RECORD_DWORDS}xi32>"
+    q_name = _main_buffer_name(tile, "q_records")
+    q_type = _main_buffer_type("q_records")
+    k_name = _main_buffer_name(tile, "k_records")
+    k_type = _main_buffer_type("k_records")
+    v_name = _main_buffer_name(tile, "v_records")
+    v_type = _main_buffer_type("v_records")
+    o_name = _main_buffer_name(tile, "o_records")
+    o_type = _main_buffer_type("o_records")
+    down_name = _main_buffer_name(tile, "down_records")
+    down_type = _main_buffer_type("down_records")
+    buffer_decls = "\n".join(
+        f"    %{tile}_{buffer.name} = aie.buffer(%{tile}) "
+        f'{_main_buffer_attr(f"{tile}_{buffer.name}", buffer.address)} : {buffer.memref}'
+        for buffer in MAIN16_BUFFERS
+    )
     return f"""
-    %{tile}_q_records = aie.buffer(%{tile}) {{sym_name = "{tile}_q_records"}} : memref<{Q_MAIN_RECORD_DWORDS}xi32>
-    %{tile}_k_records = aie.buffer(%{tile}) {{sym_name = "{tile}_k_records"}} : memref<{KV_MAIN_RECORD_DWORDS}xi32>
-    %{tile}_v_records = aie.buffer(%{tile}) {{sym_name = "{tile}_v_records"}} : memref<{KV_MAIN_RECORD_DWORDS}xi32>
-    %{tile}_o_records = aie.buffer(%{tile}) {{sym_name = "{tile}_o_records"}} : memref<{O_BODY_RECORDS * RECORD_DWORDS}xi32>
-    %{tile}_records = aie.buffer(%{tile}) {{sym_name = "{tile}_records"}} : memref<{MAIN_RECORD_DWORDS}xi32>
-    %{tile}_upgate_records = aie.buffer(%{tile}) {{sym_name = "{tile}_upgate_records"}} : memref<{UPGATE_MAIN_RECORD_DWORDS}xi32>
-    %{tile}_down_records = aie.buffer(%{tile}) {{sym_name = "{tile}_down_records"}} : memref<{DOWN_BODY_RECORDS * RECORD_DWORDS}xi32>
-    %{tile}_chunk_ping = aie.buffer(%{tile}) {{sym_name = "{tile}_chunk_ping"}} : memref<{MAIN_CHUNK_DWORDS}xi32>
-    %{tile}_chunk_pong = aie.buffer(%{tile}) {{sym_name = "{tile}_chunk_pong"}} : memref<{MAIN_CHUNK_DWORDS}xi32>
-    %{tile}_wt_ping = aie.buffer(%{tile}) {{sym_name = "{tile}_wt_ping"}} : memref<{CHUNK_BF16}xbf16>
-    %{tile}_wt_pong = aie.buffer(%{tile}) {{sym_name = "{tile}_wt_pong"}} : memref<{CHUNK_BF16}xbf16>
-    %{tile}_q4nx_output = aie.buffer(%{tile}) {{sym_name = "{tile}_q4nx_output"}} : memref<32xbf16>
-    %{tile}_records_empty = aie.lock(%{tile}, 0) {{init = {len(QKV_BODY_PHASE_TRACE)} : i32, sym_name = "{tile}_records_empty"}}
+{buffer_decls}
+    %{tile}_records_empty = aie.lock(%{tile}, 0) {{init = 3 : i32, sym_name = "{tile}_records_empty"}}
     %{tile}_records_full = aie.lock(%{tile}, 1) {{init = 0 : i32, sym_name = "{tile}_records_full"}}
     %{tile}_chunk_empty = aie.lock(%{tile}, 2) {{init = 2 : i32, sym_name = "{tile}_chunk_empty"}}
     %{tile}_chunk_full = aie.lock(%{tile}, 3) {{init = 0 : i32, sym_name = "{tile}_chunk_full"}}
@@ -676,7 +1076,7 @@ def _main_tile(group: int, row: int) -> str:
 {_q4nx_body_phase_kernel(tile, "v", "q4nx_emit_v_body_record", KV_BODY_RECORDS, V_CHUNKS_PER_RECORD, V_WEIGHT_CHUNK_BASE, v_name, v_type)}
       aie.use_lock(%{tile}_records_full, Release, 3)
 
-      aie.use_lock(%{tile}_records_empty, AcquireGreaterEqual, 1)
+      aie.use_lock(%{tile}_records_empty, AcquireGreaterEqual, 3)
 {_q4nx_multiblock_phase_kernel(tile, "o", "q4nx_emit_o_body_record", O_BODY_RECORDS, O_CHUNKS_PER_RECORD, FULL_LAYER_O_WEIGHT_CHUNK_BASE, o_name, o_type)}
       aie.use_lock(%{tile}_records_full, Release, 1)
 
@@ -758,7 +1158,7 @@ def _full_vector_q4nx_output() -> str:
     %full_hidden = aie.buffer(%full) {{sym_name = "full_hidden"}} : memref<{HIDDEN_DWORDS}xi32>
     %full_vector = aie.buffer(%full) {{sym_name = "full_vector"}} : memref<{HIDDEN_DWORDS}xi32>
     %full_compact = aie.buffer(%full) {{sym_name = "full_compact"}} : memref<{COMPACT_PACKET_DWORDS}xi32>
-    %full_replay = aie.buffer(%full) {{sym_name = "full_replay"}} : memref<{C1R2_PACKET_DWORDS}xi32>
+    %full_replay = aie.buffer(%full) {{sym_name = "full_replay"}} : memref<{replay_payload_dwords}xi32>
     %full_output = aie.buffer(%full) {{sym_name = "full_output"}} : memref<{OUTPUT_DWORDS}xi32>
     %full_hidden_empty = aie.lock(%full, 0) {{init = 1 : i32, sym_name = "full_hidden_empty"}}
     %full_hidden_full = aie.lock(%full, 1) {{init = 0 : i32, sym_name = "full_hidden_full"}}
@@ -781,8 +1181,8 @@ def _full_vector_q4nx_output() -> str:
       aie.use_lock(%full_hidden_full, AcquireGreaterEqual, 1)
       aie.use_lock(%full_vector_full, AcquireGreaterEqual, 1)
       aie.use_lock(%full_replay_empty, AcquireGreaterEqual, 1)
-      func.call @full_c1r2_make_input_norm_replay(%full_hidden, %full_vector, %full_replay, %payload_i32)
-        : (memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{C1R2_PACKET_DWORDS}xi32>, i32) -> ()
+      func.call @full_c1r2_make_input_norm_payload(%full_hidden, %full_vector, %full_replay, %payload_i32)
+        : (memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{replay_payload_dwords}xi32>, i32) -> ()
       aie.use_lock(%full_replay_full, Release, {C1R2_QKV_REPLAYS})
       aie.use_lock(%full_vector_empty, Release, 1)
 
@@ -796,8 +1196,8 @@ def _full_vector_q4nx_output() -> str:
 
       aie.use_lock(%full_vector_full, AcquireGreaterEqual, 1)
       aie.use_lock(%full_replay_empty, AcquireGreaterEqual, {C1R2_QKV_REPLAYS})
-      func.call @full_c1r2_make_post_norm_replay(%full_hidden, %full_vector, %full_replay, %payload_i32)
-        : (memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{C1R2_PACKET_DWORDS}xi32>, i32) -> ()
+      func.call @full_c1r2_make_post_norm_payload(%full_hidden, %full_vector, %full_replay, %payload_i32)
+        : (memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{replay_payload_dwords}xi32>, i32) -> ()
       aie.use_lock(%full_replay_full, Release, {C1R2_UPGATE_REPLAYS})
       aie.use_lock(%full_vector_empty, Release, 1)
 
@@ -846,7 +1246,7 @@ def _full_vector_q4nx_output() -> str:
       %replay_dma = aie.dma_start(MM2S, 1, ^replay_out, ^output_out_start)
     ^replay_out:
       aie.use_lock(%full_replay_full, AcquireGreaterEqual, 1)
-      aie.dma_bd(%full_replay : memref<{C1R2_PACKET_DWORDS}xi32>, 1, {replay_payload_dwords}) {{bd_id = 1 : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {FULL_REPLAY_PACKET_ID}>}}
+      aie.dma_bd(%full_replay : memref<{replay_payload_dwords}xi32>, 0, {replay_payload_dwords}) {{bd_id = 1 : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {FULL_REPLAY_PACKET_ID}>}}
       aie.use_lock(%full_replay_empty, Release, 1)
       aie.next_bd ^replay_out
 
@@ -939,7 +1339,8 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
     for window, (column, row) in enumerate(SHAPE_B_TILES):
         tile_defs.append(f"    %{shape_b_symbol(window)} = aie.tile({column}, {row})")
 
-    flows = [f"    // case marker {CASE_NAME}"]
+    slice_marker = dataflow_slice_marker("full_layer")
+    flows = [f"    // case marker {CASE_NAME}", f"    // {slice_marker}"]
     for group in range(len(MAIN_COLUMNS)):
         for row in range(len(MAIN_ROWS)):
             flows.append(packet_flow(main_packet(group, row), _main_symbol(group, row), 1, f"mt{group}", row))
@@ -989,8 +1390,8 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
         _bridge(QKV_BODY_PHASE_TRACE),
         _postprocess_qkv_body(),
         _hub(),
-        _kv_split_scan_memtile(0),
-        _kv_split_scan_memtile(1),
+        kv_split_scan_memtile(0),
+        kv_split_scan_memtile(1),
         _full_vector_q4nx_output(),
         _swiglu_bf16(),
     ]
@@ -1009,9 +1410,9 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
 {chr(10).join(flows)}
 
     func.func private @qwen3_postprocess_q4nx_body_payload(memref<{Q_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{QK_ROPE_DWORDS}xi32>, memref<{Q_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<1xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/postprocess_qkv.o"}}
-    func.func private @full_c1r2_make_input_norm_replay(memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{C1R2_PACKET_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
+    func.func private @full_c1r2_make_input_norm_payload(memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
     func.func private @full_c1r2_add_o_compact_to_residual(memref<{HIDDEN_DWORDS}xi32>, memref<{COMPACT_PACKET_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
-    func.func private @full_c1r2_make_post_norm_replay(memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{C1R2_PACKET_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
+    func.func private @full_c1r2_make_post_norm_payload(memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
     func.func private @full_c1r2_write_down_block(memref<{HIDDEN_DWORDS}xi32>, memref<{COMPACT_PACKET_DWORDS}xi32>, memref<{OUTPUT_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
     func.func private @ffn_swiglu_slice_bf16_inputs(memref<{C6R2_INPUT_DWORDS}xi32>, memref<{C6R2_HALF_DWORDS * 2}xbf16>, i32, i32) attributes {{link_with = "{experiment_dir}/swiglu.o"}}
     func.func private @qwen3_attention_bf16_make_carrier_masked(memref<{WINDOW_DWORDS}xi32>, memref<{K_WINDOW_DWORDS}xi32>, memref<{SCALAR_DWORDS + WEIGHT_DWORDS}xi32>, i32, i32, i32, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
@@ -1039,8 +1440,10 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
 
 
 def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> list[str]:
+    ownership = resource_manifest(schedule)
     required = (
         f"case marker {CASE_NAME}",
+        dataflow_slice_marker("full_layer"),
         f"compact phase trace {_phase_trace_marker(QKV_BODY_PHASE_TRACE)}",
         "qwen3_postprocess_q4nx_body_payload",
         f"aie.dma_bd(%post_q_compact : memref<{Q_DWORDS}xi32>, 0, {Q_DWORDS})",
@@ -1048,9 +1451,9 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         f"aie.dma_bd(%post_qk_rope_side : memref<{QK_ROPE_DWORDS}xi32>, 0, {QK_ROPE_DWORDS})",
         "qwen3_attention_bf16_make_carrier_masked",
         "qwen3_attention_bf16_finish_accum",
-        "full_c1r2_make_input_norm_replay",
+        "full_c1r2_make_input_norm_payload",
         "full_c1r2_add_o_compact_to_residual",
-        "full_c1r2_make_post_norm_replay",
+        "full_c1r2_make_post_norm_payload",
         "q4nx_emit_q_body_record",
         "q4nx_emit_k_body_record",
         "q4nx_emit_v_body_record",
@@ -1101,13 +1504,16 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         "arg_idx = 2 : i32",
         "arg_idx = 4 : i32",
     )
-    errors = [f"missing currentkv full-layer q4nx marker: {marker}" for marker in required if marker not in mlir]
+    errors = [f"missing full-layer engine marker: {marker}" for marker in required if marker not in mlir]
+    errors.extend(validate_resource_manifest(CASE_NAME, ownership))
+    errors.extend(validate_manifest_matches_mlir(CASE_NAME, ownership, mlir))
     if "qwen3_layer.o" in mlir:
-        errors.append("currentkv full-layer must not link the old mixed qwen3_layer object")
+        errors.append("full-layer engine must not link the old mixed qwen3_layer object")
     if "qwen3_bridge.o" in mlir:
-        errors.append("currentkv full-layer must not link the old mixed qwen3_bridge object")
+        errors.append("full-layer engine must not link the old mixed qwen3_bridge object")
     if "debug_contract.o" in mlir:
-        errors.append("currentkv full-layer must not link debug_contract.o")
+        errors.append("full-layer engine must not link debug_contract.o")
+    errors.extend(validate_dataflow_slice("full_layer"))
     errors.extend(_phase_trace_errors(QKV_BODY_PHASE_TRACE))
     errors.extend(
         require_marker_order(
@@ -1116,7 +1522,15 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
             (
                 f"aiex.npu.rtp_write(@post_current_token, 0, {schedule.current_token})",
                 f"aiex.npu.rtp_write(@shape_a0_tail_tokens, 0, {schedule.tail_tokens})",
+                f"aiex.npu.push_queue(0, 0, S2MM : {CURRENT_WRITE_CHANNEL}) {{bd_id = {CURRENT_WRITE_BDS[0]} : i32",
+                f"aiex.npu.push_queue(7, 0, S2MM : {CURRENT_WRITE_CHANNEL}) {{bd_id = {CURRENT_WRITE_BDS[0]} : i32",
+                "aiex.npu.push_queue(1, 0, S2MM : 1) {bd_id = 13 : i32",
+                "aiex.npu.push_queue(1, 0, MM2S : 0) {bd_id = 15 : i32",
+                "aiex.npu.push_queue(5, 0, MM2S : 1) {bd_id = 1 : i32",
                 "aiex.set_lock(%post_runtime_start, 1)",
+                f"aiex.npu.sync {{channel = {CURRENT_WRITE_CHANNEL} : i32, column = 0 : i32",
+                f"aiex.npu.push_queue(0, 0, MM2S : 0) {{bd_id = {K_SCAN_BD} : i32",
+                f"aiex.npu.push_queue(7, 0, MM2S : 1) {{bd_id = {V_SCAN_BD} : i32",
                 "aiex.set_lock(%shape_a0_runtime_start, 1)",
             ),
         )
@@ -1138,11 +1552,24 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     errors.extend(require_count(CASE_NAME, "q4nx single-accum chunk call sites", mlir.count("func.call @q4nx_chunk_accum_slice_i32"), len(MAIN_COLUMNS) * len(MAIN_ROWS) * 8))
     errors.extend(require_count(CASE_NAME, "q4nx block-accum chunk call sites", mlir.count("func.call @q4nx_chunk_accum_block_slice_i32"), len(MAIN_COLUMNS) * len(MAIN_ROWS) * 8))
     errors.extend(require_count(CASE_NAME, "q4nx down emit calls", mlir.count("func.call @q4nx_emit_down_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
-    errors.extend(require_count(CASE_NAME, "weight/aux arg2 address patches", mlir.count("arg_idx = 2 : i32"), 11))
+    expected_arg2_patches = 3 + len(MAIN_COLUMNS) * len(WEIGHT_PATCH_BD_IDS) * len(_full_weight_spans())
+    errors.extend(
+        require_count(
+            CASE_NAME,
+            "aux-prefixed weight arg2 address patches",
+            mlir.count("arg_idx = 2 : i32"),
+            expected_arg2_patches,
+        )
+    )
     errors.extend(require_count(CASE_NAME, "output arg3 address patches", mlir.count("arg_idx = 3 : i32"), 1))
     errors.extend(require_count(CASE_NAME, "hidden arg4 address patches", mlir.count("arg_idx = 4 : i32"), 1))
+    errors.extend(require_unique_packet_flows(CASE_NAME, mlir))
+    errors.extend(require_dma_next_bd_labels(CASE_NAME, mlir))
+    errors.extend(require_dma_bd_next_ids(CASE_NAME, mlir))
+    errors.extend(require_main_record_phase_barrier(CASE_NAME, mlir, 3))
     errors.extend(require_dma_bd_lock_balance(CASE_NAME, mlir))
     errors.extend(require_memtile_dma_bd_bank(CASE_NAME, mlir))
+    errors.extend(validate_main_buffer_residency(CASE_NAME, mlir))
     errors.extend(
         require_kv16_attention_shapes(
             CASE_NAME,
@@ -1201,6 +1628,8 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     errors.extend(require_unique_bd_ids(f"{CASE_NAME} row1 weight stream", all_weight_bds))
     compact_bds = tuple(bd for row_bds in COLUMN_RECEIVE_BDS for bd in row_bds) + COMPACT_OUT_BDS
     errors.extend(require_disjoint_bd_ids(CASE_NAME, all_weight_bds, compact_bds))
+    if f"buffer_length = {PATCH_WEIGHT_BF16 // 2} : i32" in mlir:
+        errors.append("full-layer weight ingress must use bounded descriptor spans, not one monolithic patch BD")
     if CURRENT_PACKET_K != 8 or CURRENT_PACKET_V != 9:
         errors.append("current K/V packets must stay at 8/9 to avoid full-layer packet14/15 traffic")
     if DOWN_CHUNKS != 48 or TOTAL_MAIN_CHUNKS != 768:

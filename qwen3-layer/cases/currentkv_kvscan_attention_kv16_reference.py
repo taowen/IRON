@@ -11,7 +11,7 @@ from cases import kvscan_attention_kv16_reference as kvscan
 from cases import mainq_kvscan_attention_kv16_reference as mainq
 from qkv_compact_reference import K_PHASE, V_PHASE, qkv_global_compact
 
-CASE_NAME = "currentkv-kvscan-attention-kv16-o-bridge"
+CASE_NAME = "currentkv-cache-layout-reference"
 CURRENT_DWORDS = 512
 CURRENT_PACKET_K = 8
 CURRENT_PACKET_V = 9

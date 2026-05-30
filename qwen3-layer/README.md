@@ -25,6 +25,8 @@ The current implementation is the qwen3-dataflow physical skeleton:
   helpers used by runnable cases.
 - `physical_contract.py`: executable channel ownership checks for the
   compact-only full-layer cases and the MyLM-aligned Q4NX dual-input ABI.
+- `resource_manifest.py`: explicit tile-local buffer, lock, and BD ownership
+  manifest checks for main16 QKV residency and phase overlap.
 - `weight_stream.py`: shared row1 Q4NX patch-ring generator for host/shim
   weight ingress into main16 DMA1.
 - `projection_schedule.py`: single source for Q/K/V body record counts and
@@ -36,9 +38,14 @@ The current implementation is the qwen3-dataflow physical skeleton:
   generators.
 - `qkv_compact_reference.py`: shared Q/K/V/O compact record layout helpers for
   active attention integration references.
-- `qkv_compact_dataflow.py`: shared four-phase Q/K/V/O compact bridge used by
-  current-K/V attention integration boundaries; the old standalone qkv-shape
-  generator/reference has been removed.
+- `cases/full_layer_engine_generate.py`: the single full-layer fused-engine
+  MLIR generator. Active slices import this generator and crop the physical
+  phase range instead of keeping separate debug dataflows.
+- `cases/full_layer_engine_reference.py`: shared physical oracle helpers,
+  constants, weight layout, cache writeback, attention, O/FFN, and final hidden
+  validation used by the active runners.
+- `cases/currentkv_cache_dataflow.py`: shared current-token K/V cache
+  writeback, rounded KV scan, and Shape-A/B runtime-start helper generation.
 - `q4nx_reference.py`: shared Q4NX chunk reference math used by integration
   checks. It now follows the MyLM 5120-byte Q4NX chunk layout instead of the
   old row-major synthetic chunk layout.
@@ -59,8 +66,6 @@ The current implementation is the qwen3-dataflow physical skeleton:
 - `full_vector_station.cc`: c1r2 hidden/O compact replay, full-vector station,
   and final compact/output helpers.
 - `swiglu.cc`: c6r2 up/gate SwiGLU kernels that produce down activations.
-- `debug_contract.cc`: temporary deterministic bridge and smoke-test contract
-  kernels. This is not part of the production full-layer path.
 - `record_format.h` / `qwen3_constants.h`: shared header layout and constants.
 - `cases/`: modular case registry and wrappers for executable integration
   boundaries, including the Q/K/V -> Shape-A/B -> O compact path.
@@ -80,14 +85,10 @@ The current implementation is the qwen3-dataflow physical skeleton:
 .venv/bin/python qwen3-layer/run_npu.py --case qwen3-8b-decode-layer --model-path /var/home/taowen/flm/models/Qwen3-8B-NPU2
 .venv/bin/python qwen3-layer/run_npu.py --build-only
 .venv/bin/python qwen3-layer/run_npu.py
-.venv/bin/python qwen3-layer/run_npu.py --case qwen3-8b-qkv-body-post-bridge
-.venv/bin/python qwen3-layer/run_npu.py --case currentkv-kvscan-attention-kv16-o-bridge
-.venv/bin/python qwen3-layer/run_npu.py --case currentkv-kvscan-attention-kv16-o-bridge --current-token 91
-.venv/bin/python qwen3-layer/run_npu.py --case currentkv-kvscan-attention-kv16-o-bridge --current-token 91 --patch-from-token 127
-.venv/bin/python qwen3-layer/run_npu.py --case currentkv-kvscan-attention-kv16-o-bridge --current-token 91 --patch-from-token 1007
-.venv/bin/python qwen3-layer/run_npu.py --case currentkv-full-layer-q4nx-down-bridge
-.venv/bin/python qwen3-layer/run_npu.py --case currentkv-full-layer-q4nx-down-bridge --current-token 91 --patch-from-token 1007
-.venv/bin/python qwen3-layer/run_npu.py --case q4nx-qkv-body-post-bridge
+.venv/bin/python qwen3-layer/run_npu.py --case qwen3-8b-c1r2-input-norm-replay
+.venv/bin/python qwen3-layer/run_npu.py --case qwen3-8b-qkv-cache-write-bridge --current-token 31
+.venv/bin/python qwen3-layer/run_npu.py --case full-layer-qkv-prefix --current-token 31
+.venv/bin/python qwen3-layer/run_npu.py --case full-layer-attention-o-bf16 --current-token 31
 ```
 
 This runner is intentionally an integration boundary, not a tiny unit test. The
@@ -97,94 +98,39 @@ constructs the real layer Q4NX weight stream in the main16 ABI, runs the current
 full-layer NPU physical frontier at token31, and compares the 2048-dword final
 hidden payload with the matching physical oracle. token31 is the default because
 it keeps a multi-block KV scan while still producing a non-zero end-to-end
-signal through the temporary kv16 attention ABI; token127 remains covered by
-the currentkv synthetic frontier and patched descriptor checks. This is not the
-final production Qwen3 decode yet: c1r2, c1r3, and attention still use the
-current physical oracle kernels while their production numerics are being
-replaced; c6r2 now runs the bf16 `SiLU(gate) * up` path with the local bounded
-table sigmoid used by the NPU reference. The previous synthetic frontier,
-`currentkv-full-layer-q4nx-down-bridge`, is still kept as a closed-loop
-diagnostic for physical routing, descriptor ownership, and patched decode
-schedules. Historical migration cases for the old 608-patch
-weight-stream oracle, deterministic full-layer tail, and standalone
-down/SwiGLU/Q4NX bridges have been retired from the runnable registry. Their
-useful pieces now live in shared generators: `weight_stream.py` owns row1
-S2MM4/5 weight ingress and row1 MM2S fanout, `compact_dataflow.py` owns the
-frontier compact bridge plus row1 weight-stream composition, and
-`physical_contract.py` validates that the frontier does not regress to the old
-row1 S2MM0/1 weight route.
-The `currentkv-full-layer-q4nx-down-bridge` case now starts from a host hidden
-vector replayed by c1r2, runs Q4NX Q/K/V on main16, converts the bf16 Q/K/V
-body into the current kv16 attention ABI in c1r3, and writes current K/V through
-packet8/9 before scanning rounded KV cache blocks. The attention result returns
-as a bf16 packet2 payload, main16 consumes it in Q4NX O, c1r2 replays the O
-result as full-vector packet0 payloads, main16 runs Q4NX up/gate with row1
-S2MM4/5 weights on DMA1, c6r2 consumes bf16-input SwiGLU, and main16 finally
-runs Q4NX down with the same DMA0/DMA1 activation/weight ABI. O and down now use
-chunk-major multi-block accumulation on main16, so c6r1/c1r1 do not need MyLM's
-source-side eight-way activation replay for this route. The final validation
-drains the 2048-dword hidden payload. Its instruction patch path has been
-audited with the larger Q4NX weight stream: `%weights` stays on arg2,
-output stays on arg3, token1007 -> token91 patched `design.bin` is
-word-identical to a direct token91 recompile, and both the default token127 run
-and patched token91 run pass on NPU. One resolved failure mode here was the old
-c1r2 bit-hash replay: bf16 O compact values matched numerically, but hashing
-their bit patterns amplified one-ulp differences into final mismatches. The
-current bridge uses numeric bf16 compact expansion with a bounded fixed scale.
-The runnable registry now keeps only active boundaries that still feed the
-current frontier. `--check-only` validates generated MLIR structure, and
+signal through the production bf16 attention-O slice. This is not the final
+production Qwen3 decode yet: c1r2, c1r3, attention, and FFN pieces are being
+replaced with production numerics behind the same physical ABI.
+
+The runnable registry is deliberately small. The public cases are:
+
+- `qwen3-8b-decode-layer`: the real model full-layer decode frontier.
+- `full-layer-qkv-prefix`: the full-layer physical Q/K/V prefix slice.
+- `full-layer-attention-o-bf16`: the production bf16 attention -> O slice.
+- `qwen3-8b-qkv-cache-write-bridge`: the real-model current K/V writeback slice.
+- `qwen3-8b-c1r2-input-norm-replay`: the real-model c1r2 RMSNorm replay boundary.
+
+Historical migration cases for the old 608-patch weight-stream oracle,
+deterministic full-layer tail, patched descriptor runner, and standalone
+down/SwiGLU/Q4NX bridges are no longer runnable modes. Their useful constraints
+now live in shared generators: `weight_stream.py` owns row1 S2MM4/5 weight
+ingress and row1 MM2S fanout, `compact_dataflow.py` owns the frontier compact
+bridge plus row1 weight-stream composition, and `physical_contract.py` validates
+that the frontier does not regress to the old row1 S2MM0/1 weight route.
+
+`--check-only` validates generated MLIR structure and physical contracts.
 `--build-only` verifies routing, core compilation, instruction generation, PDI,
-and xclbin generation. Older bridge, shape, and single-phase smoke cases are no
-longer registry entries because the full frontier now covers their physical
-routes with production role objects; their useful constraints were moved into
-shared generators and `physical_contract.py`.
-The `currentkv-kvscan-attention-kv16-o-bridge` case adds the next decode
-boundary. Main16 emits Q/K/V compacts, c1r3 expands Q and emits current K/V as
-packet8/9, shim DMA writes the current-token slices into block-major K and V
-cache BOs with the two-BD even/odd scatter, the runtime syncs those writes, and
-split shim K/V scan streams read the rounded 16-token context blocks from the
-same BOs before Shape-A/B consumes the windows.
-Shape-A emits one carrier per block and masks the rounded tail block with a
-tail-token RTP, Shape-B merges the block states online, then packet2 returns a
-single attention output to the O phase. The host history buffers deliberately
-contain poisoned current-token slots, so the output only matches when packet8
-and packet9 update the cache before scan. The runner also reads the K/V cache
-BOs back and validates the overwritten slots directly, which separates
-writeback failures from later attention/O failures.
-The `q4nx-qkv-body-post-bridge` case is the kept Q/K/V handoff diagnostic. It
-replaces the deterministic Q/K/V producer: host hidden enters the c1r2-position
-full-vector station, 12 packet0 replays go through c1r1 into main16 DMA0, Q/K/V
-weights enter through row1 S2MM4/5 and main16 DMA1, and c1r3 drains Q plus
-current K/V layout to host. The smaller Q-only diagnostic is no longer a
-runnable registry entry because the QKV boundary covers the same initial hidden
-replay and weight timing with the full Q/K/V postprocess ABI.
-`qwen3-8b-qkv-body-post-bridge` runs the same physical boundary with real
-Qwen3-8B layer Q/K/V Q4NX chunks and a CPU-computed input RMSNorm activation.
-Its preflight checks that the row1/main16 Q/K/V stream reconstructs the direct
-model projection tensors before running the NPU. This is now the first real
-model NPU numerical boundary; it intentionally stops before Q/K norm, RoPE,
-KV-cache writeback, and attention so that stream-order failures remain
-separable from later production kernels.
-`--current-token` selects a single decode schedule: current-token RTP value,
-current-write byte offset, cache BO size, Shape-A/B block count, Shape-A tail
-valid-token count, scan BD `iteration_size`, and queue `repeat_count` all come
-from the same `DecodeSchedule`. Shape-A/B block count and Shape-A tail count are
-RTPs protected by runtime-start locks, not core constants. `--patch-from-token`
-compiles the xclbin/PDI for a larger cache-capacity schedule and patches only
-`design.bin` to the target token. Both token127 -> token91 and token1007 ->
-token91 have passed on NPU. token1007 is the current AIEX descriptor ceiling:
-63 rounded 16-token blocks, covering a 1024-token cache capacity. The
-token127 -> token91 patched instruction stream is word-identical to a freshly
-compiled token91 stream.
-The `currentkv-full-layer-q4nx-down-bridge` case is the current full-layer
-closed loop. It keeps hidden replay, Q4NX Q/K/V body, bf16-to-kv16 attention
-ABI conversion, packet8/9 current-K/V writeback, rounded KV scan, Shape-A/B
-kv16 attention, packet2 O handoff, bf16 c1r2 replay, Q4NX O, Q4NX up/gate,
-bf16-input c6r2 SwiGLU, packet1 down handoff, Q4NX down, and final compact
-drain in one real NPU run. It also carries the NPU constraints that matter for
-future work: c1r2 packet0 replay owns MM2S1 BD1, c1r1 S2MM3 needs high-bank
-compact BDs, c6r2 consumes payload halves without compact headers, and row1
-compact gather must stay disjoint from row1 S2MM4/5 Q4NX weight ingress.
+and xclbin generation. `--current-token` selects a single decode schedule:
+current-token RTP value, current-write byte offset, cache BO size, Shape-A/B
+block count, Shape-A tail valid-token count, scan BD `iteration_size`, and
+queue `repeat_count` all come from the same `DecodeSchedule`.
+
+The two full-layer slices are cut from the full-layer topology instead of
+handwritten debug dataflow. The prefix slice validates hidden replay, row1
+weight ingress, main16 Q/K/V residency, and c1r3 packet8/9 current K/V
+writeback. The attention-O slice continues through the production
+`qwen3_attention_bf16_*` path, packet2 handoff, and main16 O phase without a
+deterministic/debug attention producer.
 
 The up/gate bridge intentionally uses one S2MM channel per row in each row1
 column compact tile. A single S2MM channel with multiple packet BDs is not a
@@ -277,18 +223,17 @@ accumulators, and Q8 s16-pair packing before fixed-point SwiGLU.
 ```
 
 The executable cases prove the current hardware contracts. The active registry
-keeps the Q4NX Q/K/V body handoff diagnostic, the current-K/V cache writeback
-plus KV-scan/attention boundary, and `currentkv-full-layer-q4nx-down-bridge` as
-the closed-loop frontier. The old
-`current` case name and the 608-patch weight-stream oracle were retired because
-they implied a second fused-layer backend. The useful pieces of that path are
-now explicit shared code: host Q4NX weight BO layout, packetized patch
-descriptors, row1 S2MM4/5 ingress, and AIE Q4NX chunk accumulation.
+keeps the real full-layer decode case plus four stable integration slices:
+c1r2 input RMSNorm replay, real-model current-K/V cache writeback,
+full-layer Q/K/V prefix, and production bf16 attention -> O. The old `current`
+case name, patched descriptor runner, and 608-patch weight-stream oracle were
+retired because they implied a second fused-layer backend. The useful pieces of
+that path are now explicit shared code: host Q4NX weight BO layout, row1
+S2MM4/5 ingress, and AIE Q4NX chunk accumulation.
 The frontier now uses main16 Q4NX kernels for Q/K/V/O/up/gate/down over the
-same row1 S2MM4/5 -> main16 DMA1 weight stream, including token1007-capacity
-PDI reuse through patched token91 instructions. Remaining numerical work is to
-calibrate the kv16 attention approximation, c1r2 RMSNorm/replay, and c6r2
-bounded table sigmoid against production Qwen3 tolerances.
+same row1 S2MM4/5 -> main16 DMA1 weight stream. Remaining numerical work is to
+finish production Qwen3 calibration for c1r2 RMSNorm/replay, c1r3 Q/K norm +
+RoPE, bf16 attention, and c6r2 bounded table sigmoid.
 In IRON MLIR, S2MM and MM2S channel ids are directional
 namespaces: the current main16 record output is emitted as `MM2S1`, which is
 role-equivalent to MyLM's third main16 record stream even though the exact

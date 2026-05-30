@@ -186,32 +186,11 @@
 
 ---
 
-# 第四部分：综合实战
-
-## 第二十三章：调试——NPU 出错时怎么定位
+# 第四部分：调试——NPU 出错时怎么定位
 
 - timeout 定位：哪个 lock acquire 等不到
 - 数据错误定位：读回中间 BO、poisoned data、host reference 同物理 layout
 - 常见 bug 分类：lock 配对错、BD bank 违规、packet ID 冲突、channel 所有权冲突、RTP 时序错
-
-## 第二十四章：实战——一个量化 Matvec 的完整实现
-
-- 问题：4096 输入 × Q4NX 权重 → 4096 输出
-- 应用 Pattern 1：16 tile 各 32 行，权重按 chunk 流入
-- 应用 Pattern 2：权重一次用完，activation replay
-- 应用 Pattern 3：17-dw record → 层级汇聚 → 257-dw 输出
-- 应用 Pattern 4：权重 ping-pong + credit lock
-- 应用 Pattern 5：Memtile channel 所有权划分
-- 应用 Pattern 6：Q4NX 权重预 pack
-- 应用 Pattern 11：host reference 对比验证
-
-## 第二十五章：实战进阶——给 Matvec 加上融合和动态参数
-
-- 应用 Pattern 10：两个 projection 片上交接
-- 应用 Pattern 9：不同输出维度用 descriptor patch
-- 应用 Pattern 8：cache scan 分阶段
-- 应用 Pattern 7：大中间矩阵 block carrier + online merge
-- 端到端：从单算子到多算子融合的渐进路径
 
 ---
 

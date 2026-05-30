@@ -50,6 +50,145 @@ class LayerDataflow:
     edges: tuple[Edge, ...]
 
 
+@dataclass(frozen=True)
+class DataflowSlice:
+    name: str
+    phases: tuple[str, ...]
+    edges: tuple[str, ...]
+    forbidden_edges: tuple[str, ...]
+
+
+FULL_LAYER_PHASES = ("q", "k", "v", "o", "upgate", "down")
+DATAFLOW_SLICES = (
+    DataflowSlice(
+        "full_layer_qkv_prefix",
+        ("q", "k", "v"),
+        (
+            "hidden_in",
+            "q4nx_weight_ingress",
+            "row1_weight_to_main",
+            "c1r2_qkv_replay",
+            "bridge_to_main_qkv",
+            "main_qkv_records",
+            "current_k_writeback",
+            "current_v_writeback",
+        ),
+        (
+            "q_to_hub",
+            "k_scan_left",
+            "v_scan_left",
+            "k_scan_right",
+            "v_scan_right",
+            "attention_packet2",
+            "bridge_to_main_o",
+            "main_o_records",
+            "c1r2_upgate_replay",
+            "bridge_to_main_upgate",
+            "main_upgate_records",
+            "global_compact",
+            "down_packet1",
+            "bridge_to_main_down",
+            "main_down_records",
+            "hidden_out",
+        ),
+    ),
+    DataflowSlice(
+        "qkv_cache_write",
+        ("q", "k", "v"),
+        (
+            "hidden_in",
+            "q4nx_weight_ingress",
+            "row1_weight_to_main",
+            "c1r2_qkv_replay",
+            "bridge_to_main_qkv",
+            "main_qkv_records",
+            "current_k_writeback",
+            "current_v_writeback",
+        ),
+        (
+            "attention_packet2",
+            "bridge_to_main_o",
+            "main_o_records",
+            "c1r2_upgate_replay",
+            "bridge_to_main_upgate",
+            "main_upgate_records",
+            "global_compact",
+            "down_packet1",
+            "bridge_to_main_down",
+            "main_down_records",
+            "hidden_out",
+        ),
+    ),
+    DataflowSlice(
+        "attention_o",
+        ("o",),
+        (
+            "q_to_hub",
+            "q_window_0",
+            "q_window_1",
+            "q_window_2",
+            "q_window_3",
+            "k_scan_left",
+            "v_scan_left",
+            "k_scan_right",
+            "v_scan_right",
+            "k_left_to_shape_a0",
+            "v_left_to_shape_b0",
+            "k_left_to_shape_a1",
+            "v_left_to_shape_b1",
+            "k_right_to_shape_a2",
+            "v_right_to_shape_b2",
+            "k_right_to_shape_a3",
+            "v_right_to_shape_b3",
+            "carrier_0",
+            "carrier_1",
+            "carrier_2",
+            "carrier_3",
+            "shape_b0_return",
+            "shape_b1_return",
+            "shape_b2_return",
+            "shape_b3_return",
+            "attention_packet2",
+            "bridge_to_main_o",
+            "main_o_records",
+        ),
+        (
+            "main_upgate_records",
+            "global_compact",
+            "down_packet1",
+            "bridge_to_main_down",
+            "main_down_records",
+        ),
+    ),
+    DataflowSlice(
+        "replay_o_down",
+        ("o", "upgate", "down"),
+        (
+            "attention_packet2",
+            "bridge_to_main_o",
+            "main_o_records",
+            "c1r2_upgate_replay",
+            "bridge_to_main_upgate",
+            "main_upgate_records",
+            "column_compact",
+            "global_compact",
+            "swiglu_to_hub",
+            "down_packet1",
+            "bridge_to_main_down",
+            "main_down_records",
+            "hidden_out",
+        ),
+        ("current_k_writeback", "current_v_writeback", "q_to_hub"),
+    ),
+    DataflowSlice(
+        "full_layer",
+        FULL_LAYER_PHASES,
+        (),
+        (),
+    ),
+)
+
+
 def _main16_nodes() -> tuple[Node, ...]:
     return tuple(
         Node(f"main_{column}_{row}", f"c{column}r{row}", "main16_projection")
@@ -194,6 +333,82 @@ def _node_names(graph: LayerDataflow) -> set[str]:
 
 def _edge_by_name(graph: LayerDataflow) -> dict[str, Edge]:
     return {edge.name: edge for edge in graph.edges}
+
+
+def _slice_by_name(name: str) -> DataflowSlice:
+    for item in DATAFLOW_SLICES:
+        if item.name == name:
+            return item
+    raise ValueError(f"unknown dataflow slice: {name}")
+
+
+def dataflow_slice_marker(name: str) -> str:
+    _slice_by_name(name)
+    return f"dataflow slice {name}"
+
+
+def _resolved_slice(item: DataflowSlice, graph: LayerDataflow) -> DataflowSlice:
+    if item.name != "full_layer":
+        return item
+    return DataflowSlice(item.name, item.phases, tuple(edge.name for edge in graph.edges), ())
+
+
+def build_dataflow_slice(name: str, graph: LayerDataflow | None = None) -> LayerDataflow:
+    current = build_dataflow() if graph is None else graph
+    item = _resolved_slice(_slice_by_name(name), current)
+    selected = set(item.edges)
+    edges = tuple(edge for edge in current.edges if edge.name in selected)
+    node_names = {edge.source for edge in edges if edge.source != "main16"}
+    node_names.update(edge.target for edge in edges if edge.target != "main16")
+    nodes = tuple(node for node in current.nodes if node.name in node_names)
+    return LayerDataflow(nodes=nodes, edges=edges)
+
+
+def validate_dataflow_slice(name: str, graph: LayerDataflow | None = None) -> list[str]:
+    current = build_dataflow() if graph is None else graph
+    item = _resolved_slice(_slice_by_name(name), current)
+    errors = validate_dataflow(current)
+    edge_names = set(_edge_by_name(current))
+
+    if len(set(item.phases)) != len(item.phases):
+        errors.append(f"{name}: duplicate phase in slice {item.phases}")
+    for phase in item.phases:
+        if phase not in FULL_LAYER_PHASES:
+            errors.append(f"{name}: unknown phase {phase}")
+    for edge in item.edges:
+        if edge not in edge_names:
+            errors.append(f"{name}: slice edge {edge} is not in full dataflow")
+    for edge in item.forbidden_edges:
+        if edge not in edge_names:
+            errors.append(f"{name}: forbidden edge {edge} is not in full dataflow")
+    overlap = sorted(set(item.edges).intersection(item.forbidden_edges))
+    for edge in overlap:
+        errors.append(f"{name}: edge {edge} is both required and forbidden")
+
+    required_edge_by_phase = {
+        "q": "main_qkv_records",
+        "k": "main_qkv_records",
+        "v": "main_qkv_records",
+        "o": "main_o_records",
+        "upgate": "main_upgate_records",
+        "down": "main_down_records",
+    }
+    for phase in item.phases:
+        edge = required_edge_by_phase[phase]
+        if edge not in item.edges:
+            errors.append(f"{name}: phase {phase} is missing required edge {edge}")
+    for phase, edge in required_edge_by_phase.items():
+        if phase not in item.phases and edge in item.edges:
+            errors.append(f"{name}: edge {edge} appears without phase {phase}")
+    return errors
+
+
+def validate_all_dataflow_slices(graph: LayerDataflow | None = None) -> list[str]:
+    current = build_dataflow() if graph is None else graph
+    errors: list[str] = []
+    for item in DATAFLOW_SLICES:
+        errors.extend(validate_dataflow_slice(item.name, current))
+    return errors
 
 
 def validate_dataflow(graph: LayerDataflow | None = None) -> list[str]:

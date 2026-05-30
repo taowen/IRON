@@ -198,6 +198,91 @@ def require_dma_bd_lock_balance(scope: str, mlir: str) -> list[str]:
     return errors
 
 
+def _dma_regions(mlir: str) -> list[tuple[str, str]]:
+    regions: list[tuple[str, str]] = []
+    region_name = ""
+    region_lines: list[str] = []
+    in_region = False
+    depth = 0
+    for line in mlir.splitlines():
+        if not in_region:
+            match = re.search(r"%([A-Za-z0-9_]+)\s*=\s*aie\.(mem|memtile_dma)\(", line)
+            if match:
+                in_region = True
+                region_name = match.group(1)
+                region_lines = [line]
+                depth = line.count("{") - line.count("}")
+            continue
+        region_lines.append(line)
+        depth += line.count("{") - line.count("}")
+        if depth <= 0:
+            regions.append((region_name, "\n".join(region_lines)))
+            in_region = False
+            region_name = ""
+            region_lines = []
+    return regions
+
+
+def require_dma_next_bd_labels(scope: str, mlir: str) -> list[str]:
+    errors: list[str] = []
+    for region_name, region in _dma_regions(mlir):
+        labels = set(re.findall(r"^\s*\^([A-Za-z0-9_]+):", region, flags=re.MULTILINE))
+        for label in re.findall(r"aie\.dma_start\([^,]+,\s*[0-9]+,\s*\^([A-Za-z0-9_]+)", region):
+            if label not in labels:
+                errors.append(f"{scope}: {region_name} dma_start target ^{label} is missing")
+        for label in re.findall(r"aie\.next_bd\s+\^([A-Za-z0-9_]+)", region):
+            if label not in labels:
+                errors.append(f"{scope}: {region_name} next_bd target ^{label} is missing")
+    return errors
+
+
+def require_dma_bd_next_ids(scope: str, mlir: str) -> list[str]:
+    errors: list[str] = []
+    for region_name, region in _dma_regions(mlir):
+        bd_ids = {int(item) for item in re.findall(r"(?<!next_)bd_id = ([0-9]+) : i32", region)}
+        for next_id in (int(item) for item in re.findall(r"next_bd_id = ([0-9]+) : i32", region)):
+            if next_id not in bd_ids:
+                errors.append(f"{scope}: {region_name} next_bd_id {next_id} has no matching bd_id")
+    return errors
+
+
+def require_unique_packet_flows(scope: str, mlir: str) -> list[str]:
+    packet_ids = [int(item) for item in re.findall(r"aie\.packet_flow\(([0-9]+)\)", mlir)]
+    seen: set[int] = set()
+    duplicates: list[int] = []
+    for packet_id in packet_ids:
+        if packet_id in seen and packet_id not in duplicates:
+            duplicates.append(packet_id)
+        seen.add(packet_id)
+    return [f"{scope}: duplicate packet_flow id {packet_id}" for packet_id in duplicates]
+
+
+def require_main_record_phase_barrier(scope: str, mlir: str, first_acquire: int) -> list[str]:
+    errors: list[str] = []
+    pattern = (
+        r"%(m[0-9]+_[0-9]+)_records_empty = aie\.lock\([^)]*\) "
+        r"\{init = ([0-9]+) : i32"
+    )
+    for tile, init_text in re.findall(pattern, mlir):
+        lock_name = f"{tile}_records_empty"
+        init = int(init_text)
+        acquires = re.findall(
+            rf"aie\.use_lock\(%{lock_name},\s*AcquireGreaterEqual,\s*([0-9]+)\)",
+            mlir,
+        )
+        if not acquires:
+            errors.append(f"{scope}: {lock_name} is never acquired by the main core")
+            continue
+        first = int(acquires[0])
+        if init != first_acquire:
+            errors.append(f"{scope}: {lock_name} init {init} != first phase acquire {first_acquire}")
+        if first != first_acquire:
+            errors.append(f"{scope}: {lock_name} first acquire {first} != expected {first_acquire}")
+        if init > first:
+            errors.append(f"{scope}: {lock_name} can advance into a later phase before record DMA drains")
+    return errors
+
+
 def require_memtile_dma_bd_bank(scope: str, mlir: str) -> list[str]:
     errors: list[str] = []
     region_name = ""
