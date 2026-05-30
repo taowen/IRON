@@ -51,7 +51,7 @@ from q4nx_reference import (
     packed_as_i32 as q4nx_packed_as_i32,
     q4nx_matvec_from_chunk,
 )
-from cases.currentkv_kvscan_attention_kv16_reference import (
+from cases.decode_cache_reference import (
     BLOCK_TOKENS,
     CACHE_BLOCK_DWORDS,
     CURRENT_DWORDS,
@@ -68,8 +68,10 @@ from cases.currentkv_kvscan_attention_kv16_reference import (
     _write_current,
 )
 from qkv_compact_reference import (
+    body_record_header,
     column_compact_from_records,
     global_compact_from_columns,
+    record_header,
 )
 
 CASE_NAME = "full-layer-engine"
@@ -358,7 +360,7 @@ def _qkv_body_record(
             _activation_slice(hidden, chunk),
         )
     record = np.empty(RECORD_DWORDS, dtype=np.int32)
-    record[0] = (phase << 24) | (block << 20) | (group << 16) | (row << 8) | 0xD0
+    record[0] = body_record_header(phase, block, group, row)
     record[1:] = np.frombuffer(accum.astype(bfloat16).tobytes(), dtype=np.int32)
     return record
 
@@ -665,13 +667,13 @@ def q4nx_o_global_compacts(
             for row in range(ROWS_PER_COLUMN):
                 accum = np.zeros(M_PER_TILE, dtype=np.float32)
                 for chunk in range(O_CHUNKS_PER_RECORD):
-                    weight_chunk = FULL_LAYER_O_WEIGHT_CHUNK_BASE + chunk * O_BODY_RECORDS + block
+                    weight_chunk = FULL_LAYER_O_WEIGHT_CHUNK_BASE + block * O_CHUNKS_PER_RECORD + chunk
                     accum += q4nx_matvec_from_chunk(
                         _chunk_for_tile(packed, group, row, weight_chunk),
                         _activation_slice(activation_values, chunk),
                     )
                 record = np.empty(RECORD_DWORDS, dtype=np.int32)
-                record[0] = (3 << 24) | (block << 20) | (group << 16) | (row << 8) | 0xD0
+                record[0] = body_record_header(3, block, group, row)
                 record[1:] = np.frombuffer(accum.astype(bfloat16).tobytes(), dtype=np.int32)
                 compact_records.append(record)
             columns.append(column_compact_from_records(compact_records))
@@ -718,7 +720,7 @@ def _upgate_record(
 ) -> np.ndarray:
     phase = 4 if (replay & 1) == 0 else 5
     record = np.empty(RECORD_DWORDS, dtype=np.int32)
-    record[0] = (phase << 24) | (group << 16) | (row << 8) | 0xD0
+    record[0] = record_header(phase, group, row)
     output = _upgate_tile_output(replay_values, packed, group, row, replay)
     record[1:] = np.frombuffer(output.tobytes(), dtype=np.int32)
     return record
@@ -862,13 +864,13 @@ def q4nx_down_global_compacts(
             for row in range(ROWS_PER_COLUMN):
                 accum = np.zeros(M_PER_TILE, dtype=np.float32)
                 for chunk in range(DOWN_CHUNKS):
-                    weight_chunk = FULL_LAYER_DOWN_WEIGHT_CHUNK_BASE + chunk * DOWN_BODY_RECORDS + block
+                    weight_chunk = FULL_LAYER_DOWN_WEIGHT_CHUNK_BASE + block * DOWN_CHUNKS + chunk
                     accum += q4nx_matvec_from_chunk(
                         _chunk_for_tile(packed, group, row, weight_chunk),
                         _activation_slice(activation_values, chunk),
                     )
                 record = np.empty(RECORD_DWORDS, dtype=np.int32)
-                record[0] = (6 << 24) | (block << 20) | (group << 16) | (row << 8) | 0xD0
+                record[0] = body_record_header(6, block, group, row)
                 record[1:] = np.frombuffer(accum.astype(bfloat16).tobytes(), dtype=np.int32)
                 compact_records.append(record)
             columns.append(column_compact_from_records(compact_records))

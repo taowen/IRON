@@ -99,13 +99,22 @@ def flow(src_tile: str, src_dma: int, dst_tile: str, dst_dma: int) -> str:
     return f"    aie.flow(%{src_tile}, DMA : {src_dma}, %{dst_tile}, DMA : {dst_dma})"
 
 
-def packet_flow(packet_id: int, src_tile: str, src_dma: int, dst_tile: str, dst_dma: int) -> str:
+def packet_flow(
+    packet_id: int,
+    src_tile: str,
+    src_dma: int,
+    dst_tile: str,
+    dst_dma: int,
+    *,
+    keep_pkt_header: bool = False,
+) -> str:
+    attrs = " {keep_pkt_header = true}" if keep_pkt_header else ""
     return "\n".join(
         (
             f"    aie.packet_flow({packet_id}) {{",
             f"      aie.packet_source<%{src_tile}, DMA : {src_dma}>",
             f"      aie.packet_dest<%{dst_tile}, DMA : {dst_dma}>",
-            "    }",
+            f"    }}{attrs}",
         )
     )
 
@@ -170,7 +179,11 @@ def require_marker_order(scope: str, mlir: str, markers: tuple[str, ...]) -> lis
     return errors
 
 
-def require_dma_bd_lock_balance(scope: str, mlir: str) -> list[str]:
+def require_dma_bd_lock_balance(
+    scope: str,
+    mlir: str,
+    allowed_unbalanced_blocks: tuple[str, ...] = (),
+) -> list[str]:
     errors: list[str] = []
     block_name = "entry"
     block_lines: list[str] = []
@@ -183,7 +196,7 @@ def require_dma_bd_lock_balance(scope: str, mlir: str) -> list[str]:
             return
         has_acquire = re.search(r"aie\.use_lock\([^)]*,\s*Acquire", block) is not None
         has_release = re.search(r"aie\.use_lock\([^)]*,\s*Release", block) is not None
-        if has_acquire != has_release:
+        if has_acquire != has_release and block_name not in allowed_unbalanced_blocks:
             errors.append(f"{scope}: {block_name} has unbalanced DMA BD locks")
 
     for line in mlir.splitlines():
@@ -195,6 +208,44 @@ def require_dma_bd_lock_balance(scope: str, mlir: str) -> list[str]:
         else:
             block_lines.append(line)
     flush_block()
+    return errors
+
+
+def require_source_side_packet_replay(
+    scope: str,
+    mlir: str,
+    label_prefix: str,
+    packet_id: int,
+    replay_count: int,
+    first_acquire: str,
+    last_release: str,
+) -> list[str]:
+    errors: list[str] = []
+    labels = tuple(f"^{label_prefix}{idx}" for idx in range(replay_count))
+    for label in labels:
+        if f"    {label}:" not in mlir:
+            errors.append(f"{scope}: source-side replay label missing: {label}")
+    if errors:
+        return errors
+    first = mlir.find(f"    {labels[0]}:")
+    last = mlir.find(f"    {labels[-1]}:")
+    if first > last:
+        errors.append(f"{scope}: source-side replay labels are out of order for {label_prefix}")
+    last_block_end = mlir.find("    ^", last + 1)
+    if last_block_end == -1:
+        last_block_end = len(mlir)
+    replay_region = mlir[first:last_block_end]
+    packet_marker = f"pkt_id = {packet_id}>"
+    count = replay_region.count(packet_marker)
+    if count != replay_count:
+        errors.append(f"{scope}: source-side replay packet {packet_id} count {count} != {replay_count}")
+    first_block_end = mlir.find(f"    {labels[1]}:", first) if replay_count > 1 else last
+    first_block = mlir[first:first_block_end]
+    if first_acquire not in first_block:
+        errors.append(f"{scope}: source-side replay first block must acquire {first_acquire}")
+    last_block = mlir[last:last_block_end]
+    if last_release not in last_block:
+        errors.append(f"{scope}: source-side replay last block must release {last_release}")
     return errors
 
 
@@ -281,6 +332,132 @@ def require_main_record_phase_barrier(scope: str, mlir: str, first_acquire: int)
         if init > first:
             errors.append(f"{scope}: {lock_name} can advance into a later phase before record DMA drains")
     return errors
+
+
+def require_main_record_pingpong(scope: str, mlir: str) -> list[str]:
+    errors: list[str] = []
+    linked_main16_core_kernel = (
+        "q4nx_main16_full_scheduler" in mlir
+        or "q4nx_main16_qkv_scheduler" in mlir
+        or "q4nx_main16_qkvo_scheduler" in mlir
+    )
+    pattern = (
+        r"%(m[0-9]+_[0-9]+)_records_empty = aie\.lock\([^)]*\) "
+        r"\{init = ([0-9]+) : i32"
+    )
+    for tile, init_text in re.findall(pattern, mlir):
+        row = int(tile.rsplit("_", 1)[1])
+        source_offset = 0 if row == 0 else 1
+        source_length = 17 if row == 0 else 16
+        if int(init_text) != 2:
+            errors.append(f"{scope}: {tile}_records_empty init {init_text} != ping/pong depth 2")
+
+        empty_acquires = re.findall(
+            rf"aie\.use_lock\(%{tile}_records_empty,\s*AcquireGreaterEqual,\s*([0-9]+)\)",
+            mlir,
+        )
+        full_releases = re.findall(
+            rf"aie\.use_lock\(%{tile}_records_full,\s*Release,\s*([0-9]+)\)",
+            mlir,
+        )
+        if not empty_acquires and not linked_main16_core_kernel:
+            errors.append(f"{scope}: {tile}_records_empty is never acquired by the main core")
+        for value in empty_acquires:
+            if int(value) != 1:
+                errors.append(f"{scope}: {tile}_records_empty acquire {value} != per-record acquire 1")
+        for value in full_releases:
+            if int(value) != 1:
+                errors.append(f"{scope}: {tile}_records_full release {value} != per-record release 1")
+
+        for suffix, bd_id, next_bd in (("ping", 4, 5), ("pong", 5, 4)):
+            buffer_name = f"{tile}_record_{suffix}"
+            buffer_marker = f"%{buffer_name} = aie.buffer(%{tile}) "
+            if buffer_marker not in mlir:
+                errors.append(f"{scope}: missing {buffer_name} buffer")
+            bd_pattern = (
+                rf"aie\.dma_bd\(%{buffer_name} : memref<17xi32>, "
+                rf"{source_offset}, {source_length}\) "
+                rf"\{{(?=[^}}]*bd_id = {bd_id} : i32)"
+                rf"(?=[^}}]*next_bd_id = {next_bd} : i32)[^}}]*\}}"
+            )
+            if re.search(bd_pattern, mlir) is None:
+                errors.append(
+                    f"{scope}: missing {buffer_name} record BD{bd_id}->{next_bd} "
+                    f"offset={source_offset} length={source_length}"
+                )
+    return errors
+
+
+def require_compact_record_packet_granularity(scope: str, mlir: str) -> list[str]:
+    main_record_source = (
+        "record_ping : memref<17xi32>, 0, 17" in mlir
+        and "record_pong : memref<17xi32>, 0, 17" in mlir
+    )
+    phase_sized_column_receive = (
+        "memref<520xi32>, 0, 136" in mlir
+        or "memref<520xi32>, 17, 128" in mlir
+    )
+    record_granular_column_receive = (
+        "memref<65xi32>, 0, 17" in mlir
+        and "memref<65xi32>, 17, 16" in mlir
+        and "memref<65xi32>, 33, 16" in mlir
+        and "memref<65xi32>, 49, 16" in mlir
+    )
+    record_granular_column_output = (
+        "memref<65xi32>, 0, 65" in mlir
+        and "memref<65xi32>, 1, 64" in mlir
+    )
+    phase_sized_bridge_receive = (
+        "memref<2056xi32>, 0, 520" in mlir
+        or "memref<2056xi32>, 65, 512" in mlir
+    )
+    record_granular_bridge_receive = (
+        "memref<257xi32>, 0, 65" in mlir
+        and "memref<257xi32>, 65, 64" in mlir
+        and "memref<257xi32>, 129, 64" in mlir
+        and "memref<257xi32>, 193, 64" in mlir
+    )
+    record_granular_bridge_output = "memref<257xi32>, 0, 257" in mlir
+    if main_record_source and phase_sized_column_receive:
+        return [
+            (
+                f"{scope}: main16 emits one 17/16-dword packet per compact record, "
+                "but row1 compact receive BDs still expect phase-sized Q/K/V bursts. "
+                "Convert row1 to the MyLM-style 17+16+16+16 -> 65-dword record packer "
+                "before running on hardware."
+            )
+        ]
+    if main_record_source and not (record_granular_column_receive and record_granular_column_output):
+        return [
+            (
+                f"{scope}: main16 record output is enabled, but row1 does not expose the "
+                "MyLM-style 65-dword compact packer shape: S2MM lengths must be "
+                "17,16,16,16; column0 MM2S must emit 65 dwords, and column1..3 "
+                "must emit only the 64-dword payload."
+            )
+        ]
+    if main_record_source and record_granular_column_receive and phase_sized_bridge_receive:
+        return [
+            (
+                f"{scope}: row1 now emits one 65/64-dword column compact per record, "
+                "but c1r1 still receives Q/K/V as phase-sized 520/512-dword bursts. "
+                "This mixed state compiles but times out on hardware. Convert c1r1 "
+                "to the MyLM-style 65+64+64+64 -> 257-dword record packer before "
+                "running this topology."
+            )
+        ]
+    if main_record_source and record_granular_column_receive and not (
+        record_granular_bridge_receive and record_granular_bridge_output
+    ):
+        return [
+            (
+                f"{scope}: row1 emits record-granular 65-dword column compacts, "
+                "but c1r1 does not expose the MyLM-style 257-dword global record "
+                "packer shape: S2MM lengths must be 65,64,64,64 and MM2S must "
+                "emit the 257-dword record with the manual packet header."
+            )
+        ]
+    return []
 
 
 def require_memtile_dma_bd_bank(scope: str, mlir: str) -> list[str]:
@@ -376,7 +553,7 @@ def require_no_compute_kv_materialization(
     return errors
 
 
-def require_kv16_attention_shapes(
+def require_attention_block_shapes(
     scope: str,
     k_window_dwords: int,
     v_window_dwords: int,

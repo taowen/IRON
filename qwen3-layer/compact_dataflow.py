@@ -26,6 +26,8 @@ from weight_stream import (
 from projection_schedule import DOWN_BODY_RECORDS, KV_BODY_RECORDS, O_BODY_RECORDS, Q_BODY_RECORDS
 from qkv_compact_reference import (
     COLUMN_COMPACT_DWORDS,
+    DOWN_GLOBAL_PACKET_ID,
+    FFN_GLOBAL_PACKET_ID,
     K_GLOBAL_PACKET_ID,
     MAIN_CHUNK_DWORDS,
     O_GLOBAL_PACKET_ID,
@@ -34,14 +36,12 @@ from qkv_compact_reference import (
     Q_GLOBAL_PACKET_ID,
     V_GLOBAL_PACKET_ID,
     WINDOW_DWORDS,
-    column_packet,
+    body_record_header,
     main_packet,
 )
 
 FULL_LAYER_RECORD_STAGES = ("q", "k", "v", "o", "up", "gate", "down")
 MAIN_RECORD_DWORDS = RECORD_DWORDS * len(FULL_LAYER_RECORD_STAGES)
-FFN_GLOBAL_PACKET_ID = 14
-DOWN_GLOBAL_PACKET_ID = 15
 FULL_REPLAY_PACKET_ID = 0
 DOWN_ACT_PACKET_ID = 1
 DOWN_CHUNKS = DOWN_PACKET_DWORDS // MAIN_CHUNK_DWORDS
@@ -63,23 +63,26 @@ BODY_RECORDS_BY_PHASE = {
 }
 
 COLUMN_RECEIVE_BDS = (
-    (0, 1, 2, 3, 4, 5),
-    (24, 25, 26, 27, 28, 29),
-    (7, 8, 9, 10, 11, 12),
-    (31, 32, 33, 41, 42, 43),
+    (0, 1),
+    (24, 25),
+    (2, 3),
+    (26, 27),
 )
 BRIDGE_RECEIVE_BDS = (
-    (0, 1, 2, 3, 4, 5),
-    (24, 25, 26, 27, 30, 31),
-    (9, 10, 11, 12, 13, 14),
-    (41, 42, 43, 44, 45, 46),
+    (0, 1),
+    (24, 25),
+    (2, 3),
+    (26, 27),
 )
-COMPACT_OUT_BDS = (34, 35, 36, 37, 38, 39)
+COLUMN_OUT_BDS = (10, 11)
+COMPACT_OUT_BDS = (4, 5)
 BRIDGE_PACKET_IN_BDS = (6, 7)
 BRIDGE_PACKET_OUT_BDS = (28, 29)
-MAIN_RECORD_BDS = (2, 3, 4, 5, 6, 7)
-WEIGHT_PATCH_INPUT_BDS = ((14, 15), (30, 40))
-WEIGHT_ROW_BDS = ((16, 17), (44, 45), (18, 19), (46, 47))
+MAIN_RECORD_BDS = (4, 5, 6, 7, 8, 9)
+WEIGHT_PATCH_INPUT_BDS = ((4, 5), (32, 33))
+WEIGHT_ROW_BDS = ((6, 7), (28, 29), (8, 9), (30, 31))
+COLUMN_OUT_CHANNEL = 4
+BRIDGE_COMPACT_OUT_CHANNEL = 0
 
 HUB_Q_IN_CHANNEL = 1
 HUB_Q_IN_BD = 24
@@ -89,8 +92,8 @@ HUB_RETURN_IN_CHANNELS = (2, 3, 4, 5)
 HUB_RETURN_IN_BDS = (4, 28, 6, 30)
 HUB_FFN_IN_CHANNEL = 0
 HUB_FFN_IN_BD = 0
-HUB_ATTENTION_OUT_BD = 34
-HUB_FFN_OUT_BD = 35
+HUB_ATTENTION_OUT_BDS = tuple(range(34, 34 + O_BODY_RECORDS))
+HUB_DOWN_OUT_BDS = (27, 29, 31, 32, 33, 42, 43, 44)
 
 
 @dataclass(frozen=True)
@@ -165,7 +168,8 @@ def compact_phase_trace(labels: tuple[str, ...]) -> tuple[CompactPhase, ...]:
 
 
 COMPACT_PHASE_TRACE = compact_phase_trace(BODY_PHASES)
-WEIGHT_LOCK_BASE = len(COMPACT_PHASE_TRACE) + ROWS_PER_COLUMN + 1
+COMPACT_PIPELINE_LOCKS = ROWS_PER_COLUMN + 1
+WEIGHT_LOCK_BASE = COMPACT_PIPELINE_LOCKS
 
 
 def _phase_trace_marker(phase_trace: tuple[CompactPhase, ...]) -> str:
@@ -194,16 +198,13 @@ def _phase_trace_errors(phase_trace: tuple[CompactPhase, ...]) -> list[str]:
         )
     if record_slots != BODY_RECORD_SLOTS:
         errors.append(f"compact phase trace record slots do not match current body schedule: {record_slots}")
-    if len(phase_trace) != len(COMPACT_OUT_BDS):
-        errors.append("compact phase trace/bridge output BD count mismatch")
+    if len(COMPACT_OUT_BDS) != 2:
+        errors.append("compact bridge output must be a 2-BD ping/pong ring")
     if len(phase_trace) != len(MAIN_RECORD_BDS):
         errors.append("compact phase trace/main record BD count mismatch")
-    for row, bd_ids in enumerate(COLUMN_RECEIVE_BDS):
-        if len(phase_trace) != len(bd_ids):
-            errors.append(f"compact phase trace/column row {row} BD count mismatch")
     for group, bd_ids in enumerate(BRIDGE_RECEIVE_BDS):
-        if len(phase_trace) != len(bd_ids):
-            errors.append(f"compact phase trace/bridge group {group} BD count mismatch")
+        if len(bd_ids) != 2:
+            errors.append(f"compact bridge group {group} must use a 2-BD ping/pong ring")
     return errors
 
 
@@ -212,7 +213,7 @@ def _main_symbol(group: int, row: int) -> str:
 
 
 def down_record_header(group: int, row: int) -> int:
-    return (DOWN_PHASE << 24) | (group << 16) | (row << 8) | 0xD0
+    return body_record_header(DOWN_PHASE, 0, group, row)
 
 
 def _segment(row: int) -> tuple[int, int]:
@@ -239,12 +240,6 @@ def _phase_buffer(tile: str, phase: CompactPhase) -> tuple[str, str]:
     if phase.body_records > 1:
         return f"%{tile}_{phase.label}", f"memref<{phase.body_records * COLUMN_COMPACT_DWORDS}xi32>"
     return f"%{tile}_{phase.label}", f"memref<{COLUMN_COMPACT_DWORDS}xi32>"
-
-
-def _bridge_phase_buffer(phase: CompactPhase) -> tuple[str, str]:
-    if phase.body_records > 1:
-        return f"%bridge_{phase.label}", f"memref<{phase.body_records * COMPACT_PACKET_DWORDS}xi32>"
-    return f"%bridge_{phase.label}", f"memref<{COMPACT_PACKET_DWORDS}xi32>"
 
 
 def _main_record_transfer(phase: CompactPhase, row: int) -> tuple[str, int, int, tuple[tuple[int, int], ...]]:
@@ -286,33 +281,14 @@ def _column_output_transfer(group: int, phase: CompactPhase) -> tuple[int, int, 
     return source_offset, source_length, ()
 
 
-def _bridge_receive_transfer(group: int, phase: CompactPhase) -> tuple[int, int, tuple[tuple[int, int], ...]]:
+def _bridge_receive_transfer(group: int) -> tuple[int, int]:
     if group == 0:
         dest_offset = 0
         length = COLUMN_COMPACT_DWORDS
     else:
         length = COLUMN_COMPACT_DWORDS - 1
         dest_offset = COLUMN_COMPACT_DWORDS + (group - 1) * (COLUMN_COMPACT_DWORDS - 1)
-    if phase.body_records > 1:
-        return dest_offset, phase.body_records * length, (
-            (phase.body_records, COMPACT_PACKET_DWORDS),
-            (length, 1),
-        )
-    return dest_offset, length, ()
-
-
-def _bridge_output_transfer(phase: CompactPhase) -> tuple[int, int, tuple[tuple[int, int], ...]]:
-    if phase.logical_phase == "upgate":
-        return 1, phase.body_records * C6R2_HALF_DWORDS, (
-            (phase.body_records, COMPACT_PACKET_DWORDS),
-            (C6R2_HALF_DWORDS, 1),
-        )
-    if phase.logical_phase in ("q", "k", "v") and phase.body_records > 1:
-        return 1, phase.body_records * C6R2_HALF_DWORDS, (
-            (phase.body_records, COMPACT_PACKET_DWORDS),
-            (C6R2_HALF_DWORDS, 1),
-        )
-    return phase.output_offset, phase.output_length, ()
+    return dest_offset, length
 
 
 def _column_lock_defs(tile: str, phase_trace: tuple[CompactPhase, ...]) -> str:
@@ -334,75 +310,96 @@ def _column_lock_defs(tile: str, phase_trace: tuple[CompactPhase, ...]) -> str:
     return "".join(lines)
 
 
-def _bridge_lock_defs(phase_trace: tuple[CompactPhase, ...]) -> str:
-    lines: list[str] = []
-    for stage_idx, phase in enumerate(phase_trace):
+def _column_record_lock_defs(tile: str) -> str:
+    lines = [
+        f'    %{tile}_compact_stage0 = aie.lock(%{tile}, 0) '
+        f'{{init = 2 : i32, sym_name = "{tile}_compact_stage0"}}\n'
+    ]
+    for stage in range(1, COMPACT_PIPELINE_LOCKS):
         lines.append(
-            f'    %bridge_{phase.label}_full = aie.lock(%bridge, {stage_idx}) '
-            f'{{init = 0 : i32, sym_name = "bridge_{phase.label}_full"}}\n'
+            f'    %{tile}_compact_stage{stage} = aie.lock(%{tile}, {stage}) '
+            f'{{init = 0 : i32, sym_name = "{tile}_compact_stage{stage}"}}\n'
         )
-    lines.append(lock_pair("bridge", "packet", len(phase_trace), init_empty=2))
-    group_lock_base = len(phase_trace) + 2
-    for group in range(len(MAIN_COLUMNS)):
-        lines.append(
-            f'    %bridge_g{group}_empty = aie.lock(%bridge, {group_lock_base + group}) '
-            f'{{init = {len(phase_trace)} : i32, sym_name = "bridge_g{group}_empty"}}\n'
+    return "".join(lines)
+
+
+def _column_record_buffers(tile: str) -> str:
+    return "\n".join(
+        (
+            f'    %{tile}_compact_ping = aie.buffer(%{tile}) '
+            f'{{sym_name = "{tile}_compact_ping"}} : memref<{COLUMN_COMPACT_DWORDS}xi32>',
+            f'    %{tile}_compact_pong = aie.buffer(%{tile}) '
+            f'{{sym_name = "{tile}_compact_pong"}} : memref<{COLUMN_COMPACT_DWORDS}xi32>',
         )
-    lines.append(
-        f'    %bridge_drain_token = aie.lock(%bridge, {group_lock_base + len(MAIN_COLUMNS)}) '
-        '{init = 0 : i32, sym_name = "bridge_drain_token"}\n'
     )
+
+
+def _column_record_receive_starts(tile: str, terminal_label: str) -> str:
+    receive_starts: list[str] = []
+    for row in range(ROWS_PER_COLUMN):
+        start_label = "" if row == 0 else f"    ^compact_row{row}_start:\n"
+        next_start = f"^compact_row{row + 1}_start" if row + 1 < ROWS_PER_COLUMN else terminal_label
+        ping_bd, pong_bd = COLUMN_RECEIVE_BDS[row]
+        dest_offset, length = _segment(row)
+        receive_starts.append(
+            f"""{start_label}      %compact_row{row}_dma = aie.dma_start(S2MM, {row}, ^compact_row{row}_ping, {next_start})
+    ^compact_row{row}_ping:
+      aie.use_lock(%{tile}_compact_stage{row}, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_compact_ping : memref<{COLUMN_COMPACT_DWORDS}xi32>, {dest_offset}, {length}) {{bd_id = {ping_bd} : i32, next_bd_id = {pong_bd} : i32}}
+      aie.use_lock(%{tile}_compact_stage{row + 1}, Release, 1)
+      aie.next_bd ^compact_row{row}_pong
+    ^compact_row{row}_pong:
+      aie.use_lock(%{tile}_compact_stage{row}, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_compact_pong : memref<{COLUMN_COMPACT_DWORDS}xi32>, {dest_offset}, {length}) {{bd_id = {pong_bd} : i32, next_bd_id = {ping_bd} : i32}}
+      aie.use_lock(%{tile}_compact_stage{row + 1}, Release, 1)
+      aie.next_bd ^compact_row{row}_ping"""
+        )
+    return "\n".join(receive_starts)
+
+
+def _column_record_output_blocks(tile: str, group: int) -> str:
+    ping_bd, pong_bd = COLUMN_OUT_BDS
+    source_offset = 0 if group == 0 else 1
+    source_length = COLUMN_COMPACT_DWORDS if group == 0 else COLUMN_COMPACT_DWORDS - 1
+    return f"""    ^out_start:
+      %out_dma = aie.dma_start(MM2S, {COLUMN_OUT_CHANNEL}, ^compact_ping_out, ^end)
+    ^compact_ping_out:
+      aie.use_lock(%{tile}_compact_stage{ROWS_PER_COLUMN}, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_compact_ping : memref<{COLUMN_COMPACT_DWORDS}xi32>, {source_offset}, {source_length}) {{bd_id = {ping_bd} : i32, next_bd_id = {pong_bd} : i32}}
+      aie.use_lock(%{tile}_compact_stage0, Release, 1)
+      aie.next_bd ^compact_pong_out
+    ^compact_pong_out:
+      aie.use_lock(%{tile}_compact_stage{ROWS_PER_COLUMN}, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_compact_pong : memref<{COLUMN_COMPACT_DWORDS}xi32>, {source_offset}, {source_length}) {{bd_id = {pong_bd} : i32, next_bd_id = {ping_bd} : i32}}
+      aie.use_lock(%{tile}_compact_stage0, Release, 1)
+      aie.next_bd ^compact_ping_out"""
+
+
+def _bridge_lock_defs() -> str:
+    lines = [
+        '    %bridge_compact_stage0 = aie.lock(%bridge, 0) '
+        '{init = 2 : i32, sym_name = "bridge_compact_stage0"}\n'
+    ]
+    for stage in range(1, COMPACT_PIPELINE_LOCKS):
+        lines.append(
+            f'    %bridge_compact_stage{stage} = aie.lock(%bridge, {stage}) '
+            f'{{init = 0 : i32, sym_name = "bridge_compact_stage{stage}"}}\n'
+        )
+    lines.append(lock_pair("bridge", "packet", COMPACT_PIPELINE_LOCKS, init_empty=2))
     return "".join(lines)
 
 
 def compact_column_memtile(group: int, phase_trace: tuple[CompactPhase, ...]) -> str:
     tile = f"mt{group}"
-    packet = column_packet(group)
-    receive_starts: list[str] = []
-    for row in range(ROWS_PER_COLUMN):
-        start_label = "" if row == 0 else f"    ^row{row}_start:\n"
-        next_start = f"^row{row + 1}_start" if row + 1 < ROWS_PER_COLUMN else "^out_start"
-        bds = COLUMN_RECEIVE_BDS[row]
-        stage_blocks: list[str] = []
-        for stage_idx, phase in enumerate(phase_trace):
-            next_phase = _next_phase(phase_trace, stage_idx)
-            dest_offset, length, dimensions = _column_receive_transfer(phase, row)
-            buffer_name, buffer_type = _phase_buffer(tile, phase)
-            stage_blocks.append(f"""    ^row{row}_{phase.label}:
-      aie.use_lock(%{tile}_row{row}_empty, AcquireGreaterEqual, 1)
-      aie.dma_bd({buffer_name} : {buffer_type}, {dest_offset}, {length}{_bd_dimensions(dimensions)}) {{bd_id = {bds[stage_idx]} : i32, next_bd_id = {bds[(stage_idx + 1) % len(phase_trace)]} : i32}}
-      aie.use_lock(%{tile}_{phase.label}_full, Release, 1)
-      aie.next_bd ^row{row}_{next_phase.label}""")
-        receive_starts.append(
-            f"""{start_label}      %row{row}_dma = aie.dma_start(S2MM, {row}, ^row{row}_q, {next_start})
-{chr(10).join(stage_blocks)}"""
-        )
-
-    out_blocks: list[str] = []
-    for stage_idx, phase in enumerate(phase_trace):
-        next_phase = _next_phase(phase_trace, stage_idx)
-        source_offset, source_length, dimensions = _column_output_transfer(group, phase)
-        buffer_name, buffer_type = _phase_buffer(tile, phase)
-        out_blocks.append(f"""    ^{phase.label}_out:
-      aie.use_lock(%{tile}_{phase.label}_full, AcquireGreaterEqual, {ROWS_PER_COLUMN})
-      aie.dma_bd({buffer_name} : {buffer_type}, {source_offset}, {source_length}{_bd_dimensions(dimensions)}) {{bd_id = {COMPACT_OUT_BDS[stage_idx]} : i32, next_bd_id = {COMPACT_OUT_BDS[(stage_idx + 1) % len(phase_trace)]} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {packet}>}}
-      aie.use_lock(%{tile}_drain_token, Release, 1)
-      aie.next_bd ^{next_phase.label}_out""")
-
-    buffers = "\n".join(
-        f'    %{tile}_{phase.label} = aie.buffer(%{tile}) {{sym_name = "{tile}_{phase.label}"}} : memref<{phase.body_records * COLUMN_COMPACT_DWORDS}xi32>'
-        for phase in phase_trace
-    )
     return f"""
-{buffers}
-{_column_lock_defs(tile, phase_trace)}
+    // compact phase trace {_phase_trace_marker(phase_trace)}
+{_column_record_buffers(tile)}
+{_column_record_lock_defs(tile)}
 
     %{tile}_dma = aie.memtile_dma(%{tile}) {{
-{chr(10).join(receive_starts)}
+{_column_record_receive_starts(tile, "^out_start")}
 
-    ^out_start:
-      %out_dma = aie.dma_start(MM2S, 5, ^q_out, ^end)
-{chr(10).join(out_blocks)}
+{_column_record_output_blocks(tile, group)}
     ^end:
       aie.end
     }}
@@ -411,7 +408,6 @@ def compact_column_memtile(group: int, phase_trace: tuple[CompactPhase, ...]) ->
 
 def q4nx_weight_column_memtile(group: int, phase_trace: tuple[CompactPhase, ...]) -> str:
     tile = f"mt{group}"
-    packet = column_packet(group)
     weight_config = WeightStreamConfig(
         group=group,
         input_channels=(4, 5),
@@ -421,115 +417,79 @@ def q4nx_weight_column_memtile(group: int, phase_trace: tuple[CompactPhase, ...]
         row_terminal_label="^out_start",
         input_block_prefix="q4nx_",
     )
-    receive_starts: list[str] = []
-    for row in range(ROWS_PER_COLUMN):
-        start_label = "" if row == 0 else f"    ^row{row}_start:\n"
-        next_start = f"^row{row + 1}_start" if row + 1 < ROWS_PER_COLUMN else "^patch0_start"
-        bds = COLUMN_RECEIVE_BDS[row]
-        stage_blocks: list[str] = []
-        for stage_idx, phase in enumerate(phase_trace):
-            next_phase = _next_phase(phase_trace, stage_idx)
-            dest_offset, length, dimensions = _column_receive_transfer(phase, row)
-            buffer_name, buffer_type = _phase_buffer(tile, phase)
-            stage_blocks.append(f"""    ^row{row}_{phase.label}:
-      aie.use_lock(%{tile}_row{row}_empty, AcquireGreaterEqual, 1)
-      aie.dma_bd({buffer_name} : {buffer_type}, {dest_offset}, {length}{_bd_dimensions(dimensions)}) {{bd_id = {bds[stage_idx]} : i32, next_bd_id = {bds[(stage_idx + 1) % len(phase_trace)]} : i32}}
-      aie.use_lock(%{tile}_{phase.label}_full, Release, 1)
-      aie.next_bd ^row{row}_{next_phase.label}""")
-        receive_starts.append(
-            f"""{start_label}      %row{row}_dma = aie.dma_start(S2MM, {row}, ^row{row}_q, {next_start})
-{chr(10).join(stage_blocks)}"""
-        )
-
-    out_blocks: list[str] = []
-    for stage_idx, phase in enumerate(phase_trace):
-        next_phase = _next_phase(phase_trace, stage_idx)
-        source_offset, source_length, dimensions = _column_output_transfer(group, phase)
-        buffer_name, buffer_type = _phase_buffer(tile, phase)
-        out_blocks.append(f"""    ^{phase.label}_out:
-      aie.use_lock(%{tile}_{phase.label}_full, AcquireGreaterEqual, {ROWS_PER_COLUMN})
-      aie.dma_bd({buffer_name} : {buffer_type}, {source_offset}, {source_length}{_bd_dimensions(dimensions)}) {{bd_id = {COMPACT_OUT_BDS[stage_idx]} : i32, next_bd_id = {COMPACT_OUT_BDS[(stage_idx + 1) % len(phase_trace)]} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {packet}>}}
-      aie.use_lock(%{tile}_drain_token, Release, 1)
-      aie.next_bd ^{next_phase.label}_out""")
-
-    buffers = "\n".join(
-        f'    %{tile}_{phase.label} = aie.buffer(%{tile}) {{sym_name = "{tile}_{phase.label}"}} : memref<{phase.body_records * COLUMN_COMPACT_DWORDS}xi32>'
-        for phase in phase_trace
-    )
     return f"""
-{buffers}
+    // compact phase trace {_phase_trace_marker(phase_trace)}
+{_column_record_buffers(tile)}
 {weight_stream_buffers(tile)}
-{_column_lock_defs(tile, phase_trace)}
+{_column_record_lock_defs(tile)}
 {weight_stream_lock_defs(tile, WEIGHT_LOCK_BASE)}
 
     %{tile}_dma = aie.memtile_dma(%{tile}) {{
-{chr(10).join(receive_starts)}
+{_column_record_receive_starts(tile, "^patch0_start")}
 
 {weight_stream_input_rings(weight_config)}
 
 {weight_stream_row_streams(weight_config)}
 
-    ^out_start:
-      %out_dma = aie.dma_start(MM2S, 5, ^q_out, ^end)
-{chr(10).join(out_blocks)}
+{_column_record_output_blocks(tile, group)}
     ^end:
       aie.end
     }}
 """
 
 
-def _bridge_receive_starts(phase_trace: tuple[CompactPhase, ...]) -> str:
+def _bridge_receive_starts() -> str:
     starts: list[str] = []
     for group in range(len(MAIN_COLUMNS)):
         start_label = "" if group == 0 else f"    ^g{group}_start:\n"
         next_start = f"^g{group + 1}_start" if group + 1 < len(MAIN_COLUMNS) else "^compact_out_start"
-        bds = BRIDGE_RECEIVE_BDS[group]
-        stage_blocks: list[str] = []
-        for stage_idx, phase in enumerate(phase_trace):
-            next_phase = _next_phase(phase_trace, stage_idx)
-            dest_offset, length, dimensions = _bridge_receive_transfer(group, phase)
-            buffer_name, buffer_type = _bridge_phase_buffer(phase)
-            stage_blocks.append(f"""    ^g{group}_{phase.label}:
-      aie.use_lock(%bridge_g{group}_empty, AcquireGreaterEqual, 1)
-      aie.dma_bd({buffer_name} : {buffer_type}, {dest_offset}, {length}{_bd_dimensions(dimensions)}) {{bd_id = {bds[stage_idx]} : i32, next_bd_id = {bds[(stage_idx + 1) % len(phase_trace)]} : i32}}
-      aie.use_lock(%bridge_{phase.label}_full, Release, 1)
-      aie.next_bd ^g{group}_{next_phase.label}""")
+        ping_bd, pong_bd = BRIDGE_RECEIVE_BDS[group]
+        dest_offset, length = _bridge_receive_transfer(group)
         starts.append(
             f"""{start_label}      %g{group}_dma = aie.dma_start(S2MM, {group}, ^g{group}_q, {next_start})
-{chr(10).join(stage_blocks)}"""
+    ^g{group}_q:
+      aie.use_lock(%bridge_compact_stage{group}, AcquireGreaterEqual, 1)
+      aie.dma_bd(%bridge_compact_ping : memref<{COMPACT_PACKET_DWORDS}xi32>, {dest_offset}, {length}) {{bd_id = {ping_bd} : i32, next_bd_id = {pong_bd} : i32}}
+      aie.use_lock(%bridge_compact_stage{group + 1}, Release, 1)
+      aie.next_bd ^g{group}_pong
+    ^g{group}_pong:
+      aie.use_lock(%bridge_compact_stage{group}, AcquireGreaterEqual, 1)
+      aie.dma_bd(%bridge_compact_pong : memref<{COMPACT_PACKET_DWORDS}xi32>, {dest_offset}, {length}) {{bd_id = {pong_bd} : i32, next_bd_id = {ping_bd} : i32}}
+      aie.use_lock(%bridge_compact_stage{group + 1}, Release, 1)
+      aie.next_bd ^g{group}_q"""
         )
     return "\n".join(starts)
 
 
-def _bridge(phase_trace: tuple[CompactPhase, ...]) -> str:
-    compact_out_blocks: list[str] = []
-    for stage_idx, phase in enumerate(phase_trace):
-        next_phase = _next_phase(phase_trace, stage_idx)
-        output_offset, output_length, dimensions = _bridge_output_transfer(phase)
-        buffer_name, buffer_type = _bridge_phase_buffer(phase)
-        compact_out_blocks.append(f"""    ^{phase.label}_out:
-      aie.use_lock(%bridge_{phase.label}_full, AcquireGreaterEqual, {len(MAIN_COLUMNS)})
-      aie.dma_bd({buffer_name} : {buffer_type}, {output_offset}, {output_length}{_bd_dimensions(dimensions)}) {{bd_id = {COMPACT_OUT_BDS[stage_idx]} : i32, next_bd_id = {COMPACT_OUT_BDS[(stage_idx + 1) % len(phase_trace)]} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {phase.packet_id}>}}
-      aie.use_lock(%bridge_drain_token, Release, 1)
-      aie.next_bd ^{next_phase.label}_out""")
+def _bridge_output_blocks() -> str:
+    ping_bd, pong_bd = COMPACT_OUT_BDS
+    return f"""    ^compact_ping_out:
+      aie.use_lock(%bridge_compact_stage{ROWS_PER_COLUMN}, AcquireGreaterEqual, 1)
+      aie.dma_bd(%bridge_compact_ping : memref<{COMPACT_PACKET_DWORDS}xi32>, 0, {COMPACT_PACKET_DWORDS}) {{bd_id = {ping_bd} : i32, next_bd_id = {pong_bd} : i32}}
+      aie.use_lock(%bridge_compact_stage0, Release, 1)
+      aie.next_bd ^compact_pong_out
+    ^compact_pong_out:
+      aie.use_lock(%bridge_compact_stage{ROWS_PER_COLUMN}, AcquireGreaterEqual, 1)
+      aie.dma_bd(%bridge_compact_pong : memref<{COMPACT_PACKET_DWORDS}xi32>, 0, {COMPACT_PACKET_DWORDS}) {{bd_id = {pong_bd} : i32, next_bd_id = {ping_bd} : i32}}
+      aie.use_lock(%bridge_compact_stage0, Release, 1)
+      aie.next_bd ^compact_ping_out"""
 
-    buffers = "\n".join(
-        f'    %bridge_{phase.label} = aie.buffer(%bridge) {{sym_name = "bridge_{phase.label}"}} : memref<{phase.body_records * COMPACT_PACKET_DWORDS}xi32>'
-        for phase in phase_trace
-    )
+
+def _bridge(phase_trace: tuple[CompactPhase, ...]) -> str:
     return f"""
     // compact phase trace {_phase_trace_marker(phase_trace)}
-{buffers}
+    %bridge_compact_ping = aie.buffer(%bridge) {{sym_name = "bridge_compact_ping"}} : memref<{COMPACT_PACKET_DWORDS}xi32>
+    %bridge_compact_pong = aie.buffer(%bridge) {{sym_name = "bridge_compact_pong"}} : memref<{COMPACT_PACKET_DWORDS}xi32>
     %bridge_packet_ping = aie.buffer(%bridge) {{sym_name = "bridge_packet_ping"}} : memref<{C6R2_HALF_DWORDS}xi32>
     %bridge_packet_pong = aie.buffer(%bridge) {{sym_name = "bridge_packet_pong"}} : memref<{C6R2_HALF_DWORDS}xi32>
-{_bridge_lock_defs(phase_trace)}
+{_bridge_lock_defs()}
 
     %bridge_dma = aie.memtile_dma(%bridge) {{
-{_bridge_receive_starts(phase_trace)}
+{_bridge_receive_starts()}
 
     ^compact_out_start:
-      %compact_out_dma = aie.dma_start(MM2S, 5, ^q_out, ^packet_in_start)
-{chr(10).join(compact_out_blocks)}
+      %compact_out_dma = aie.dma_start(MM2S, {BRIDGE_COMPACT_OUT_CHANNEL}, ^compact_ping_out, ^packet_in_start)
+{_bridge_output_blocks()}
 
     ^packet_in_start:
       %packet_in_dma = aie.dma_start(S2MM, 4, ^packet_in_ping, ^packet_out_start)
@@ -585,15 +545,49 @@ def _hub() -> str:
       aie.use_lock(%hub_return_full, Release, 1)
       aie.next_bd ^return{window}_in""")
 
+    attention_outs: list[str] = []
+    for replay, bd_id in enumerate(HUB_ATTENTION_OUT_BDS):
+        next_label = f"^attention_out{replay + 1}" if replay + 1 < O_BODY_RECORDS else "^down_out0"
+        if replay == 0:
+            acquire = "      aie.use_lock(%hub_return_full, AcquireGreaterEqual, 4)\n"
+            release = "      aie.use_lock(%hub_attention_replay, Release, 1)\n"
+        elif replay + 1 == O_BODY_RECORDS:
+            acquire = "      aie.use_lock(%hub_attention_replay, AcquireGreaterEqual, 1)\n"
+            release = "      aie.use_lock(%hub_return_empty, Release, 4)\n"
+        else:
+            acquire = "      aie.use_lock(%hub_attention_replay, AcquireGreaterEqual, 1)\n"
+            release = "      aie.use_lock(%hub_attention_replay, Release, 1)\n"
+        attention_outs.append(f"""    ^attention_out{replay}:
+{acquire}      aie.dma_bd(%hub_return : memref<{Q_DWORDS}xi32>, 0, {Q_DWORDS}) {{bd_id = {bd_id} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {PACKET_ID_ATTENTION}>}}
+{release}      aie.next_bd {next_label}""")
+
+    down_outs: list[str] = []
+    for replay, bd_id in enumerate(HUB_DOWN_OUT_BDS):
+        next_label = f"^down_out{replay + 1}" if replay + 1 < DOWN_BODY_RECORDS else "^down_out0"
+        if replay == 0:
+            acquire = "      aie.use_lock(%hub_ffn_full, AcquireGreaterEqual, 1)\n"
+            release = "      aie.use_lock(%hub_down_replay, Release, 1)\n"
+        elif replay + 1 == DOWN_BODY_RECORDS:
+            acquire = "      aie.use_lock(%hub_down_replay, AcquireGreaterEqual, 1)\n"
+            release = "      aie.use_lock(%hub_ffn_empty, Release, 1)\n"
+        else:
+            acquire = "      aie.use_lock(%hub_down_replay, AcquireGreaterEqual, 1)\n"
+            release = "      aie.use_lock(%hub_down_replay, Release, 1)\n"
+        down_outs.append(f"""    ^down_out{replay}:
+{acquire}      aie.dma_bd(%hub_ffn : memref<{DOWN_PACKET_DWORDS}xi32>, 0, {DOWN_PACKET_DWORDS}) {{bd_id = {bd_id} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {DOWN_ACT_PACKET_ID}>}}
+{release}      aie.next_bd {next_label}""")
+
     return f"""
     %hub_q = aie.buffer(%hub) {{address = 147456 : i32, sym_name = "hub_q"}} : memref<{Q_DWORDS}xi32>
     %hub_return = aie.buffer(%hub) {{address = 163840 : i32, sym_name = "hub_return"}} : memref<{Q_DWORDS}xi32>
-    %hub_ffn = aie.buffer(%hub) {{address = 180224 : i32, sym_name = "hub_ffn"}} : memref<{C6R2_HALF_DWORDS}xi32>
+    %hub_ffn = aie.buffer(%hub) {{address = 180224 : i32, sym_name = "hub_ffn"}} : memref<{DOWN_PACKET_DWORDS}xi32>
     %hub_q_empty = aie.lock(%hub, 0) {{init = 4 : i32, sym_name = "hub_q_empty"}}
     %hub_q_full = aie.lock(%hub, 1) {{init = 0 : i32, sym_name = "hub_q_full"}}
     %hub_return_empty = aie.lock(%hub, 2) {{init = 4 : i32, sym_name = "hub_return_empty"}}
     %hub_return_full = aie.lock(%hub, 3) {{init = 0 : i32, sym_name = "hub_return_full"}}
 {lock_pair("hub", "ffn", 4)}
+    %hub_attention_replay = aie.lock(%hub, 6) {{init = 0 : i32, sym_name = "hub_attention_replay"}}
+    %hub_down_replay = aie.lock(%hub, 7) {{init = 0 : i32, sym_name = "hub_down_replay"}}
 
     %hub_dma = aie.memtile_dma(%hub) {{
       %q_in_dma = aie.dma_start(S2MM, {HUB_Q_IN_CHANNEL}, ^q_in, ^q0_start)
@@ -611,22 +605,14 @@ def _hub() -> str:
       %ffn_in_dma = aie.dma_start(S2MM, {HUB_FFN_IN_CHANNEL}, ^ffn_in, ^packet_out_start)
     ^ffn_in:
       aie.use_lock(%hub_ffn_empty, AcquireGreaterEqual, 1)
-      aie.dma_bd(%hub_ffn : memref<{C6R2_HALF_DWORDS}xi32>, 0, {C6R2_HALF_DWORDS}) {{bd_id = {HUB_FFN_IN_BD} : i32}}
+      aie.dma_bd(%hub_ffn : memref<{DOWN_PACKET_DWORDS}xi32>, 0, {DOWN_PACKET_DWORDS}) {{bd_id = {HUB_FFN_IN_BD} : i32}}
       aie.use_lock(%hub_ffn_full, Release, 1)
       aie.next_bd ^ffn_in
 
     ^packet_out_start:
-      %packet_out_dma = aie.dma_start(MM2S, 5, ^attention_out, ^end)
-    ^attention_out:
-      aie.use_lock(%hub_return_full, AcquireGreaterEqual, 4)
-      aie.dma_bd(%hub_return : memref<{Q_DWORDS}xi32>, 0, {Q_DWORDS}) {{bd_id = {HUB_ATTENTION_OUT_BD} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {PACKET_ID_ATTENTION}>}}
-      aie.use_lock(%hub_return_empty, Release, 4)
-      aie.next_bd ^ffn_out
-    ^ffn_out:
-      aie.use_lock(%hub_ffn_full, AcquireGreaterEqual, 1)
-      aie.dma_bd(%hub_ffn : memref<{C6R2_HALF_DWORDS}xi32>, 0, {C6R2_HALF_DWORDS}) {{bd_id = {HUB_FFN_OUT_BD} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {DOWN_ACT_PACKET_ID}>}}
-      aie.use_lock(%hub_ffn_empty, Release, 1)
-      aie.next_bd ^ffn_out
+      %packet_out_dma = aie.dma_start(MM2S, 5, ^attention_out0, ^end)
+{chr(10).join(attention_outs)}
+{chr(10).join(down_outs)}
     ^end:
       aie.end
     }}

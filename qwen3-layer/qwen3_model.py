@@ -315,8 +315,8 @@ class Qwen3Q4NXModel:
                     schedule.append((projection, block, input_chunk))
 
         projection = projection_by_phase["O"]
-        for input_chunk in range(projection.chunks):
-            for block in range(projection.blocks):
+        for block in range(projection.blocks):
+            for input_chunk in range(projection.chunks):
                 schedule.append((projection, block, input_chunk))
 
         up = projection_by_phase["UP"]
@@ -329,8 +329,8 @@ class Qwen3Q4NXModel:
                     schedule.append((projection, block, input_chunk))
 
         projection = projection_by_phase["DOWN"]
-        for input_chunk in range(projection.chunks):
-            for block in range(projection.blocks):
+        for block in range(projection.blocks):
+            for input_chunk in range(projection.chunks):
                 schedule.append((projection, block, input_chunk))
 
         return self._projection_stream_from_schedule(chunk_by_phase, schedule)

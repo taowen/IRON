@@ -21,31 +21,31 @@ from cases.full_layer_engine_reference import (
     RMS_NORM_DWORDS,
     TOTAL_WEIGHT_AND_AUX_I32,
 )
-from cases.currentkv_cache_dataflow import (
+from cases.kv_cache_dataflow import (
     CURRENT_WRITE_BDS,
     CURRENT_WRITE_CHANNEL,
     push_current_cache_write,
 )
-from cases.currentkv_kvscan_attention_kv16_reference import DecodeSchedule
+from cases.decode_cache_reference import DecodeSchedule
 from compact_dataflow import (
+    BRIDGE_COMPACT_OUT_CHANNEL,
     BRIDGE_PACKET_IN_BDS,
     BRIDGE_PACKET_OUT_BDS,
     BRIDGE_RECEIVE_BDS,
+    COLUMN_OUT_CHANNEL,
+    COLUMN_OUT_BDS,
     COLUMN_RECEIVE_BDS,
     COMPACT_OUT_BDS,
     FULL_REPLAY_PACKET_ID,
     K_GLOBAL_PACKET_ID,
     O_GLOBAL_PACKET_ID,
     Q_GLOBAL_PACKET_ID,
-    UPGATE_MAIN_RECORD_DWORDS,
     V_GLOBAL_PACKET_ID,
     WEIGHT_PATCH_INPUT_BDS,
     WEIGHT_ROW_BDS,
     _phase_trace_marker,
-    column_packet,
-    main_packet,
 )
-from contract import CHUNK_BF16, MAIN_COLUMNS, MAIN_ROWS, RECORD_DWORDS, ROWS_PER_PATCH
+from contract import CHUNK_BF16, MAIN_COLUMNS, MAIN_ROWS, ROWS_PER_PATCH
 from mlir_utils import (
     flow,
     npu_address_patch,
@@ -56,12 +56,13 @@ from mlir_utils import (
     npu_writebd,
     packet_flow,
     require_absent_markers,
+    require_compact_record_packet_granularity,
     require_count,
     require_disjoint_bd_ids,
     require_dma_bd_next_ids,
     require_dma_bd_lock_balance,
     require_dma_next_bd_labels,
-    require_main_record_phase_barrier,
+    require_main_record_pingpong,
     require_marker_order,
     require_max_address_patch_arg,
     require_memtile_dma_bd_bank,
@@ -72,18 +73,29 @@ from mlir_utils import (
     require_unique_packet_flows,
 )
 from projection_schedule import (
-    DOWN_BODY_RECORDS,
     FULL_LAYER_DOWN_WEIGHT_CHUNK_BASE,
     FULL_LAYER_O_WEIGHT_CHUNK_BASE,
     FULL_LAYER_UPGATE_WEIGHT_CHUNK_BASE,
-    K_WEIGHT_CHUNK_BASE,
-    Q_WEIGHT_CHUNK_BASE,
-    V_WEIGHT_CHUNK_BASE,
 )
 from resource_manifest import ResourceManifest, validate_manifest_matches_mlir, validate_resource_manifest
 
 CASE_NAME = "full-layer-qkv-prefix"
 MAIN16_KERNEL_OBJECT = full.MAIN16_KERNEL_OBJECT
+
+
+def _q_payload_sink() -> str:
+    return f"""
+    %q_sink_payload = aie.buffer(%q_sink) {{sym_name = "q_sink_payload"}} : memref<{full.Q_DWORDS}xi32>
+
+    %q_sink_mem = aie.memtile_dma(%q_sink) {{
+      %q_sink_dma = aie.dma_start(S2MM, 0, ^q_in, ^end)
+    ^q_in:
+      aie.dma_bd(%q_sink_payload : memref<{full.Q_DWORDS}xi32>, 0, {full.Q_DWORDS}) {{bd_id = 0 : i32}}
+      aie.next_bd ^end
+    ^end:
+      aie.end
+    }}
+"""
 
 
 def resource_manifest(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> ResourceManifest:
@@ -143,10 +155,6 @@ def _runtime_sequence(schedule: DecodeSchedule) -> str:
     lines.extend(_push_qkv_weight_prefix())
     lines.append(npu_set_lock("post_runtime_start", 1))
     lines.extend((npu_sync(0, CURRENT_WRITE_CHANNEL), npu_sync(7, CURRENT_WRITE_CHANNEL)))
-    lines.append(npu_sync(1, 0, direction=1))
-    lines.append(npu_sync(1, 1, direction=1))
-    for column in MAIN_COLUMNS:
-        lines.extend((npu_sync(column, 0, direction=1), npu_sync(column, 1, direction=1)))
     lines.append("    }")
     return "\n".join(lines)
 
@@ -159,6 +167,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
         "    %bridge = aie.tile(1, 1)",
         "    %full = aie.tile(1, 2)",
         "    %post = aie.tile(1, 3)",
+        "    %q_sink = aie.tile(6, 1)",
         "    %shim_right = aie.tile(7, 0)",
     ]
     for group, column in enumerate(MAIN_COLUMNS):
@@ -177,17 +186,18 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
     )
     for group in range(len(MAIN_COLUMNS)):
         for row in range(len(MAIN_ROWS)):
-            flows.append(packet_flow(main_packet(group, row), full._main_symbol(group, row), 1, f"mt{group}", row))
+            flows.append(flow(full._main_symbol(group, row), 1, f"mt{group}", row))
             flows.append(flow("bridge", 1, full._main_symbol(group, row), 0))
             flows.append(flow(f"mt{group}", row, full._main_symbol(group, row), 1))
-        flows.append(packet_flow(column_packet(group), f"mt{group}", 5, "bridge", group))
+        flows.append(flow(f"mt{group}", COLUMN_OUT_CHANNEL, "bridge", group))
         flows.append(flow(f"shim{group}", 0, f"mt{group}", 4))
         flows.append(flow(f"shim{group}", 1, f"mt{group}", 5))
     for packet in (Q_GLOBAL_PACKET_ID, K_GLOBAL_PACKET_ID, V_GLOBAL_PACKET_ID):
-        flows.append(packet_flow(packet, "bridge", 5, "post", 0))
+        flows.append(packet_flow(packet, "bridge", BRIDGE_COMPACT_OUT_CHANNEL, "post", 0))
     flows.extend(
         (
-            packet_flow(O_GLOBAL_PACKET_ID, "bridge", 5, "full", 0),
+            flow("post", 0, "q_sink", 0),
+            packet_flow(O_GLOBAL_PACKET_ID, "bridge", BRIDGE_COMPACT_OUT_CHANNEL, "full", 0, keep_pkt_header=True),
             packet_flow(full.CURRENT_PACKET_K, "post", 1, "shim_left", 1),
             packet_flow(full.CURRENT_PACKET_V, "post", 1, "shim_right", 1),
         )
@@ -197,6 +207,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
         full._bridge(full.QKV_PREFIX_PHASE_TRACE),
         full._postprocess_qkv_body(),
         full._full_vector_q4nx_output(),
+        _q_payload_sink(),
     ]
     for group in range(len(MAIN_COLUMNS)):
         blocks.append(full.q4nx_weight_column_memtile(group, full.QKV_PREFIX_PHASE_TRACE))
@@ -209,17 +220,13 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
 
 {chr(10).join(flows)}
 
+    func.func private @qwen3_postprocess_absorb_qkv_payload_record(memref<{full.COMPACT_PACKET_DWORDS - 1}xi32>, memref<{full.Q_DWORDS}xi32>, memref<{full.CURRENT_DWORDS}xi32>, memref<{full.CURRENT_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/postprocess_qkv.o"}}
     func.func private @qwen3_postprocess_q4nx_body_payload(memref<{full.Q_DWORDS}xi32>, memref<{full.CURRENT_DWORDS}xi32>, memref<{full.CURRENT_DWORDS}xi32>, memref<{QK_ROPE_DWORDS}xi32>, memref<{full.Q_DWORDS}xi32>, memref<{full.CURRENT_DWORDS}xi32>, memref<{full.CURRENT_DWORDS}xi32>, memref<1xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/postprocess_qkv.o"}}
     func.func private @full_c1r2_make_input_norm_payload(memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
     func.func private @full_c1r2_add_o_compact_to_residual(memref<{HIDDEN_DWORDS}xi32>, memref<{full.COMPACT_PACKET_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
     func.func private @full_c1r2_make_post_norm_payload(memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
     func.func private @full_c1r2_write_down_block(memref<{HIDDEN_DWORDS}xi32>, memref<{full.COMPACT_PACKET_DWORDS}xi32>, memref<{OUTPUT_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
-    func.func private @clear_summary_fast(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_chunk_accum_slice_i32_fast(memref<{CHUNK_BF16}xbf16>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_flush_output_fast(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_emit_q_body_record(memref<{full.Q_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_emit_k_body_record(memref<{full.KV_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_emit_v_body_record(memref<{full.KV_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_main16_qkv_scheduler(memref<{CHUNK_BF16}xbf16>, memref<{CHUNK_BF16}xbf16>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
 
 {chr(10).join(blocks)}
 {_runtime_sequence(schedule)}
@@ -233,19 +240,17 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     required = (
         f"case marker {CASE_NAME}",
         f"compact phase trace {_phase_trace_marker(full.QKV_PREFIX_PHASE_TRACE)}",
+        "qwen3_postprocess_absorb_qkv_payload_record",
         "qwen3_postprocess_q4nx_body_payload",
         "full_c1r2_make_input_norm_payload",
         "full_c1r2_add_o_compact_to_residual",
-        "q4nx_emit_q_body_record",
-        "q4nx_emit_k_body_record",
-        "q4nx_emit_v_body_record",
-        f"%c{Q_WEIGHT_CHUNK_BASE}_i32 = arith.constant {Q_WEIGHT_CHUNK_BASE} : i32",
-        f"%c{K_WEIGHT_CHUNK_BASE}_i32 = arith.constant {K_WEIGHT_CHUNK_BASE} : i32",
-        f"%c{V_WEIGHT_CHUNK_BASE}_i32 = arith.constant {V_WEIGHT_CHUNK_BASE} : i32",
+        "q4nx_main16_qkv_scheduler",
         f"aie.packet_flow({full.CURRENT_PACKET_K})",
         f"aie.packet_flow({full.CURRENT_PACKET_V})",
         f"pkt_id = {full.CURRENT_PACKET_K}",
         f"pkt_id = {full.CURRENT_PACKET_V}",
+        "aie.flow(%post, DMA : 0, %q_sink, DMA : 0)",
+        f"memref<{full.Q_DWORDS}xi32>",
         f"memref<{schedule.kv_cache_dwords}xi32>",
         f"memref<{TOTAL_WEIGHT_AND_AUX_I32}xi32>",
         f"memref<{HIDDEN_DWORDS}xi32>",
@@ -264,8 +269,8 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     errors.extend(validate_manifest_matches_mlir(CASE_NAME, ownership, mlir))
     if tuple(phase.label for phase in full.QKV_PREFIX_PHASE_TRACE) != ("q", "k", "v"):
         errors.append("full-layer qkv-prefix phase trace must be q,k,v")
-    if mlir.count(MAIN16_KERNEL_OBJECT) != 6:
-        errors.append(f"full-layer qkv-prefix expected 6 declarations linked with {MAIN16_KERNEL_OBJECT}")
+    if mlir.count(MAIN16_KERNEL_OBJECT) != 1:
+        errors.append(f"full-layer qkv-prefix expected 1 declaration linked with {MAIN16_KERNEL_OBJECT}")
     errors.extend(
         require_marker_order(
             CASE_NAME,
@@ -279,18 +284,22 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
             ),
         )
     )
-    expected_packets = len(MAIN_COLUMNS) * (len(MAIN_ROWS) + 1) + 7
+    expected_packets = 7
     errors.extend(require_count(CASE_NAME, "packet flow", mlir.count("aie.packet_flow("), expected_packets))
+    errors.extend(require_count(CASE_NAME, "qwen3 compact record absorb", mlir.count("qwen3_postprocess_absorb_qkv_payload_record"), 2))
     errors.extend(require_count(CASE_NAME, "qwen3 q4nx body postprocess", mlir.count("qwen3_postprocess_q4nx_body_payload"), 2))
-    errors.extend(require_count(CASE_NAME, "q4nx q emit calls", mlir.count("func.call @q4nx_emit_q_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
-    errors.extend(require_count(CASE_NAME, "q4nx k emit calls", mlir.count("func.call @q4nx_emit_k_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
-    errors.extend(require_count(CASE_NAME, "q4nx v emit calls", mlir.count("func.call @q4nx_emit_v_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
+    main_tile_count = len(MAIN_COLUMNS) * len(MAIN_ROWS)
+    errors.extend(require_count(CASE_NAME, "q4nx qkv scheduler calls", mlir.count("func.call @q4nx_main16_qkv_scheduler"), main_tile_count))
+    errors.extend(require_count(CASE_NAME, "old q4nx q emit calls", mlir.count("func.call @q4nx_emit_q_accum_body_record"), 0))
+    errors.extend(require_count(CASE_NAME, "old q4nx k emit calls", mlir.count("func.call @q4nx_emit_k_accum_body_record"), 0))
+    errors.extend(require_count(CASE_NAME, "old q4nx v emit calls", mlir.count("func.call @q4nx_emit_v_accum_body_record"), 0))
     errors.extend(require_count(CASE_NAME, "Q/K/V weight arg2 address patches", mlir.count("arg_idx = 2 : i32"), 10))
     errors.extend(require_count(CASE_NAME, "hidden arg3 address patch", mlir.count("arg_idx = 3 : i32"), 1))
     errors.extend(require_unique_packet_flows(CASE_NAME, mlir))
     errors.extend(require_dma_next_bd_labels(CASE_NAME, mlir))
     errors.extend(require_dma_bd_next_ids(CASE_NAME, mlir))
-    errors.extend(require_main_record_phase_barrier(CASE_NAME, mlir, 3))
+    errors.extend(require_main_record_pingpong(CASE_NAME, mlir))
+    errors.extend(require_compact_record_packet_granularity(CASE_NAME, mlir))
     errors.extend(require_dma_bd_lock_balance(CASE_NAME, mlir))
     errors.extend(require_memtile_dma_bd_bank(CASE_NAME, mlir))
     errors.extend(full.validate_main_buffer_residency(CASE_NAME, mlir))
@@ -301,9 +310,10 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         errors.extend(require_unique_bd_ids(f"{CASE_NAME} bridge compact receive group {group}", bd_ids))
     for row, bd_ids in enumerate(COLUMN_RECEIVE_BDS):
         errors.extend(require_unique_bd_ids(f"{CASE_NAME} row compact receive row {row}", bd_ids))
+    errors.extend(require_unique_bd_ids(f"{CASE_NAME} row compact output", COLUMN_OUT_BDS))
     errors.extend(require_unique_bd_ids(CASE_NAME, COMPACT_OUT_BDS))
     all_weight_bds = tuple(bd for pair in WEIGHT_PATCH_INPUT_BDS + WEIGHT_ROW_BDS for bd in pair)
-    compact_bds = tuple(bd for row_bds in COLUMN_RECEIVE_BDS for bd in row_bds) + COMPACT_OUT_BDS
+    compact_bds = tuple(bd for row_bds in COLUMN_RECEIVE_BDS for bd in row_bds) + COLUMN_OUT_BDS
     errors.extend(require_unique_bd_ids(f"{CASE_NAME} row1 weight stream", all_weight_bds))
     errors.extend(require_disjoint_bd_ids(CASE_NAME, all_weight_bds, compact_bds))
     errors.extend(require_npu_writebd_id_limit(CASE_NAME, mlir, 15))
@@ -316,9 +326,14 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
             (
                 "qwen3_attention_bf16",
                 "ffn_swiglu",
+                "q4nx_chunk_accum_slice_i32_fast",
                 "q4nx_clear_block_summaries_fast",
                 "q4nx_chunk_accum_block_slice_i32_fast",
+                "q4nx_flush_output_fast",
                 "q4nx_flush_block_output_fast",
+                "q4nx_emit_q_body_record",
+                "q4nx_emit_k_body_record",
+                "q4nx_emit_v_body_record",
                 "q4nx_emit_o_body_record",
                 "q4nx_emit_upgate_record",
                 "q4nx_emit_down_body_record",

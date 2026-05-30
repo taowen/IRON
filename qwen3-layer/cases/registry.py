@@ -11,10 +11,12 @@ from cases import (
     full_layer_qkv_prefix_runner,
     main16_q4nx_compute_perf_runner,
     qwen3_8b_c1r2_input_norm_runner,
+    qwen3_8b_qkv_compact_output_runner,
     qwen3_8b_decode_layer_runner,
     qwen3_8b_qkv_cache_write_runner,
     row1_weight_stream_perf_runner,
 )
+from cases.case_names import CASE_NAMES, DEFAULT_CASE_NAME
 
 CaseFn = Callable[[int | None, Path | None, int, bool], bool]
 
@@ -39,6 +41,12 @@ CASES = (
         qwen3_8b_c1r2_input_norm_runner.check_only,
         qwen3_8b_c1r2_input_norm_runner.build_only,
         qwen3_8b_c1r2_input_norm_runner.run,
+    ),
+    CaseEntry(
+        qwen3_8b_qkv_compact_output_runner.CASE_NAME,
+        qwen3_8b_qkv_compact_output_runner.check_only,
+        qwen3_8b_qkv_compact_output_runner.build_only,
+        qwen3_8b_qkv_compact_output_runner.run,
     ),
     CaseEntry(
         qwen3_8b_qkv_cache_write_runner.CASE_NAME,
@@ -71,8 +79,8 @@ CASES = (
         main16_q4nx_compute_perf_runner.run,
     ),
 )
-CASE_NAMES = tuple(case.name for case in CASES)
-DEFAULT_CASE_NAME = qwen3_8b_decode_layer_runner.CASE_NAME
+if tuple(case.name for case in CASES) != CASE_NAMES:
+    raise ValueError("case registry order does not match cases.case_names")
 _CASE_BY_NAME = {case.name: case for case in CASES}
 
 

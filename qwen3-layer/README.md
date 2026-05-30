@@ -42,7 +42,7 @@ The current implementation is the active qwen3 full-layer NPU integration path:
 - `cases/full_layer_engine_reference.py`: shared physical reference helpers,
   constants, weight layout, cache writeback, attention, O/FFN, and final hidden
   validation used by the active runners.
-- `cases/currentkv_cache_dataflow.py`: shared current-token K/V cache
+- `cases/kv_cache_dataflow.py`: shared current-token K/V cache
   writeback, rounded KV scan, and Shape-A/B runtime-start helper generation.
 - `q4nx_reference.py`: shared Q4NX chunk reference math used by integration
   checks. It now follows the MyLM 5120-byte Q4NX chunk layout instead of the
@@ -60,7 +60,39 @@ The current implementation is the active qwen3 full-layer NPU integration path:
 - `tools/compare_bf16_dump.py`: compares raw bf16 dumps and reports top-k,
   max error, mean error, and the first mismatching lane.
 - `tools/compare_main16_q4nx_disasm.py`: compares MyLM c2r2 raw main16 Q4NX
-  disassembly with the active IRON main16 object.
+  disassembly with the active IRON main16 object and full-core phase-control
+  shape.
+- `tools/check_main16_raw_abi.py`: compares the active generated main16
+  BD/lock/buffer ABI against the extracted MyLM raw-main16 contract.
+- `tools/check_main16_program_shape.py`: rejects replacement main16 ELFs that
+  still look like MLIR-expanded per-chunk C++ helper control instead of a
+  MyLM-style fixed tile-local core program.
+- `tools/probe_aiecc_core_codegen.py`: inspects one generated core's aiecc
+  LLVM/Peano pipeline and optionally replays a manual no-unroll core compile.
+- `tools/audit_aiecc_driver.py`: runs a fast-fail `aiecc -n -v` audit and
+  checks which driver flags actually change the child Peano `opt/llc`
+  commands.
+- `tools/probe_external_lock_dispatcher.py`: proves that a linked C++ AIE core
+  dispatcher can compile AIE2P lock builtins and generate a hardware loop. It
+  is a compile-shape probe; final linked ELFs still need packet/BD/lock
+  contract checks and hardware validation.
+- `tools/replay_main16_core_compile.py`: replays all 16 generated main16 core
+  compiles with Peano `opt -disable-loop-unrolling`, producing replacement
+  ELFs for ELF-backed package probes.
+- `tools/inspect_core_program_txn.py`: inspects transaction MLIR and confirms
+  which `elf_file` payloads become core-program `config_blockwrite_data`.
+- `tools/repack_core_program_txn.py`: strips stale core-program transaction
+  payloads and regenerates them from the current `aie.core` `elf_file` ELFs.
+- `tools/externalize_core_programs.py`: replaces generated source MLIR core
+  bodies with ELF-backed `aie.core` declarations copied from a donor
+  transaction, so `aiecc --no-compile` can package replacement core ELFs.
+- `tools/package_externalized_design.py`: copies the donor project directory,
+  optionally replaces all 16 main16 ELFs, runs the all-core ELF-backed
+  `aiecc --no-compile` package step, and checks the resulting transaction
+  payloads.
+- `tools/wrap_raw_aie_program.py`: wraps raw AIE2P program bytes as an
+  ET_EXEC ELF with a loadable `.text` `PT_LOAD` segment for replacement-core
+  package probes.
 - `main16_q4nx_mylm_compare.md`: current main16 performance/reverse-analysis
   conclusion and the next raw Q4NX microkernel direction.
 - `npu_build.py`: shared MLIR, xclbin, and NPU runtime helpers. It scans
@@ -170,14 +202,203 @@ dataflow artifact.
 Recent token31 measurements with the single active `main_projection_q4nx_fast.cc`
 role:
 
-- `main16-q4nx-compute-perf`: `14.263 ms`
-- `full-layer-attention-o-bf16`: `13.202 ms`
-- `qwen3-8b-decode-layer`: `29.236 ms`, `final_hidden_out max_abs=0.0078125`
+- `main16-q4nx-compute-perf`: `14.249 ms`
+- `full-layer-attention-o-bf16`: `12.194 ms`
+- `qwen3-8b-decode-layer`: `25.067 ms` after record-granular compact and
+  source-side down replay, `final_hidden_out max_abs=0.0078125`
 
 Older C++ unroll probes were removed from the code path. They improved narrow
 slices but either did not fit full-layer program memory or regressed full decode
 to `30.092-30.963 ms`. The repository now keeps one main16 C++ implementation:
 the fastest verified full-decode version.
+
+The full-layer generator now emits 17-dword compact records directly from the
+active accumulator. The old `q4nx_output` scratch buffer, block-accumulator
+variant, and `q4nx_flush_output_fast` ABI are gone from the active path. The
+main remaining gap is still the Q4NX microkernel instruction shape, not another
+record-copy helper.
+
+The aiecc core-codegen boundary is now explicit. A generated QKV-prefix
+main16 core enters Peano as compact LLVM IR with four `q4nx` references, then
+the stock aiecc child pipeline runs:
+
+```text
+opt --passes=default<O1> -inline-threshold=10
+llc -O2 --march=aie2p --function-sections
+```
+
+That `opt` step fully unrolls the constant-trip phase loops before `llc` can
+turn them into the MyLM-style phase body. `tools/probe_aiecc_core_codegen.py`
+checks this against the generated project:
+
+```bash
+.venv/bin/python qwen3-layer/tools/probe_aiecc_core_codegen.py \
+  --manual-output-dir /tmp/iron_aiecc_core_codegen_probe
+```
+
+The driver flag audit is separate from that generated-project probe:
+
+```bash
+.venv/bin/python qwen3-layer/tools/audit_aiecc_driver.py
+```
+
+It confirms that `--disable-loop-unrolling` and
+`--opt-disable=loop-unroll` do not reach the child Peano `opt` command. The
+Peano `llc` hidden help exposes AIE loop-scheduler/hardware-loop controls such
+as `--aie-loop-aware`, but passing those flags to this `aiecc` driver also does
+not change the child `llc` command. `-O0` and `-O3` do change the child
+optimization level, but they still do not provide the MyLM-style scheduled
+phase body.
+
+The important nuance is that LLVM-AIE/Peano itself can still emit AIE hardware
+loops. The stock aiecc problem is specifically the MLIR-core phase control
+being optimized by the fixed child `opt` command before `llc`. This probe puts
+the phase control in a linked C++ AIE core object instead:
+
+```bash
+.venv/bin/python qwen3-layer/tools/probe_external_lock_dispatcher.py --force
+```
+
+It compiles a tiny linked C++ AIE dispatcher with AIE2P
+`acquire_greater_equal()` and `release()` builtins. The expected shape is one
+`acq`, one `rel`, and `lc/ls/le`
+hardware-loop setup in the object disassembly. AIE branches have delay slots,
+so lock instructions printed after `j/jl/ret` are not automatically outside the
+loop. The latest QKV-prefix timeout was traced to a different issue: main16 and
+row1 now decode as unpacketized compact sources, and row1 has the MyLM-style
+`17+16+16+16 -> 65` packer. c1r1 now has the matching
+`65+64+64+64 -> 257` record packer. The runnable
+`qwen3-8b-qkv-compact-output` slice drains all 12 Q/K/V global compact records
+to host as a 3084-dword stream, so it does not leave the AIE graph blocked after
+the first record. Headers are bit-exact and the current Q4NX payload delta is
+bounded to 1 bf16 ULP, which is a microkernel/reference rounding issue rather
+than a compact transport failure. The static contract check rejects the old
+mixed phase-sized bridge before another hardware timeout.
+
+That means the next production direction does not have to throw away MLIR-AIE
+topology generation: keep MLIR for buffers, locks, BD rings, stream routes,
+runtime sequence, PDI, and xclbin packaging. The MyLM-style main16 source is
+now paired with a record-granular c1r1 compact tree before the phase
+dispatcher is moved out of the MLIR `aie.core` body into a linked C++ AIE core
+kernel or raw core program.
+
+On the latest full-decode probe after the 17-dword record ping/pong migration,
+stock aiecc reports `llvm_q4_refs=16` but `opt_q4_refs=260`, with
+`.text=14416`, `disasm_jl=157`, and `disasm_acq=250`. Earlier manual replay of
+the same aiecc core compile shape with `opt -disable-loop-unrolling` proved the
+child `opt` unroll can be avoided outside the stock driver, but passing
+`--disable-loop-unrolling` to `aiecc` itself does not change the printed child
+`opt` command. This makes the boundary clear: either patch/replay the core
+compile and package replacement ELFs, or move to raw/scheduled main16 programs;
+generator cleanup alone will not produce the desired phase body.
+
+`tools/replay_main16_core_compile.py` makes the useful part of that manual
+path repeatable for all 16 main tiles:
+
+```bash
+.venv/bin/python qwen3-layer/tools/replay_main16_core_compile.py \
+  --project-dir /tmp/iron_full_decode_txn_probe/prj \
+  --output-dir /tmp/iron_full_decode_main16_disable_unroll_elfs \
+  --force
+```
+
+Packaging those replacement ELFs through
+`tools/package_externalized_design.py` preserves the generated topology and
+runtime sequence while changing only the main16 core programs. The hardware
+result is correct but small:
+
+- Older phase-sized compact donor, `full-layer-qkv-prefix` token31:
+  `124872.8 us`, PASS, versus stock `142702.9 us`.
+- `qwen3-8b-decode-layer` token31: `28990.9 us`, PASS, versus the same rebuilt
+  stock design at `29404.6 us`.
+
+This proves replacement-ELF packaging works and stock `opt` loop unrolling
+costs real time. It also proves this alone is not the MyLM-class fix: the
+replacement no-unroll core still uses ordinary branch loops around the C++
+Q4NX helper instead of a raw scheduled phase body.
+
+For runnable raw main16 experiments, use the all-core ELF-backed package tool
+rather than feeding transaction MLIR back into `aiecc`:
+
+```bash
+.venv/bin/python qwen3-layer/tools/package_externalized_design.py \
+  --input-mlir /tmp/iron_fresh_qkv_prefix/design.mlir \
+  --donor-transaction-mlir /tmp/iron_txn_probe_fresh/design.txn.mlir \
+  --donor-project-dir /tmp/iron_txn_probe_fresh/prj \
+  --output-dir /tmp/iron_raw_main16 \
+  --force
+```
+
+This path keeps the MLIR-AIE generated topology, routing, BD/lock setup,
+runtime sequence, PDI, and xclbin packaging, but it does not let aiecc recompile
+or overwrite the core ELFs. The package tool records
+`core_program_inspection.txt` and fails if the 16 main16 ELF text sizes change
+during `--no-compile`, or if the transaction does not contain 16 matching
+main16 payloads. The verified probe produced a `2372`-byte runtime instruction
+stream, a `213952`-byte xclbin, and 16 main16 `9952`-byte payloads.
+
+Do not convert only main16 to an `elf_file` empty-core and then run a normal
+compile. In the probe, aiecc compiled the empty main16 core and overwrote the
+donor ELF with a tiny `160`-byte `.text` program. The safe path is all-core
+ELF-backed source MLIR plus `--no-compile`, using a throwaway copied project
+directory when replacing selected ELFs.
+
+The lower-level transaction-only repack path is still useful for inspecting
+payload regeneration:
+
+```bash
+.venv/bin/python qwen3-layer/tools/repack_core_program_txn.py \
+  --txn /tmp/iron_txn_probe_fresh/design.txn.mlir \
+  --elf-dir /tmp/iron_txn_probe_fresh/prj \
+  --source-output /tmp/iron_txn_probe_fresh/repack_source.mlir \
+  --output-txn /tmp/iron_txn_probe_fresh/repacked.txn.mlir
+.venv/bin/python qwen3-layer/tools/inspect_core_program_txn.py \
+  --txn /tmp/iron_txn_probe_fresh/repacked.txn.mlir
+```
+
+This intentionally strips stale `config_blockwrite_data_*` globals and the old
+`@configure()` transaction sequence before rerunning
+`aie-opt --convert-aie-to-transaction=elf-dir=...`. Running that pass directly
+on an already-converted transaction duplicates core-program payloads.
+
+Raw replacement ELFs must be loadable executables. A minimal ET_REL wrapper with
+only a `.text` section is enough for disassembly, but `aiecc --no-compile` does
+not convert it into core-program blockwrite payloads. The wrapper used for
+package probes is:
+
+```bash
+.venv/bin/python qwen3-layer/tools/wrap_raw_aie_program.py \
+  /tmp/mylm_solidify_L31/programs/c2r2_program.bin \
+  /tmp/iron_mylm_main16_exec_elfs/main_core_2_2.elf
+```
+
+Using ET_EXEC plus `PT_LOAD`, the package tool successfully generated 16
+main16 `14868`-byte payloads from the extracted MyLM raw main16 images. This is
+a toolchain proof only, not a runnable replacement: the MyLM raw core assumes
+the same outer main16 ABI that IRON now matches, but it also assumes MyLM's raw
+whole-core phase program, row1 compact timing, and hand-written Q4NX microkernel
+body.
+
+Check the raw-core ABI gap explicitly with:
+
+```bash
+.venv/bin/python qwen3-layer/tools/check_main16_raw_abi.py
+```
+
+Current output is `raw_main16_abi_ready=true` for the checked row0 main16 tile:
+
+- activation now matches MyLM: BD0/1, length 128 dwords, bases
+  `0x8000/0xc000`, locks L0->L1.
+- weight now matches MyLM: BD2/3, length 1280 dwords, bases
+  `0x2800/0x4000`, locks L2->L3.
+- record now matches MyLM: BD4/5, length 17 dwords, bases
+  `0x3c1c/0x541c`, locks L5->L4.
+
+The next raw-main16 migration is not more main16 source-side ABI work. It is
+first converting row1/bridge compact gather to the same record-granular
+65/257-dword quanta, then replacing the MLIR-generated main16 phase control
+with a MyLM-style raw scheduled phase body that consumes the matching
+activation, weight, and record rings.
 
 MyLM and this implementation are aligned on the layer dataflow principle:
 main16 consumes activation/weight/record rings, row1 splits compact and weight
@@ -185,7 +406,11 @@ traffic onto separate channels, c1r2/c6r1 act as source-side replay stations,
 and attention feeds O through packet2 without host/debug drain. The remaining
 gap is implementation hardness: MyLM uses raw scheduled core programs and
 static BD/lock bodies, while this tree still emits MLIR phase control around the
-single role-level AIE C++ kernel.
+single role-level AIE C++ kernel. The hard disassembly evidence is that MyLM
+`c2r2` has 5 calls into the shared Q4NX loop, 11 total `jl`, and 16/15
+`acq`/`rel` instructions; the current IRON full main core has 129 Q4 helper
+calls, 157 total `jl`, and 232/232 `acq`/`rel`. That is why small Python
+generator cleanup cannot plausibly produce a 5x gain.
 
 The CPU decode reference is not yet the final multi-layer oracle. It now uses
 the correct MyLM Q4NX formula `weight = int4 * scale + offset`, where the second
@@ -261,7 +486,7 @@ patched through `aiex.npu.rtp_write` into a c1r3-local `post_current_token`
 buffer consumed by the `postprocess_qkv.cc` role.
 That RTP write must be paired with a runtime-start lock. Without the lock,
 main16 can produce Q/K/V compacts and c1r3 can enter
-`currentkv_postprocess_payload` before the runtime sequence writes the RTP; the
+`qwen3_postprocess_q4nx_body_payload` before the runtime sequence writes the RTP; the
 observed failure was a clean token0 current-slot writeback while the descriptor
 path and cache scatter were otherwise correct. The current-token RTP is consumed
 by the c1r3 postprocess role, not by a shared bridge object. The old token15
@@ -328,13 +553,15 @@ The full-layer generator now has an explicit compact phase trace shared by main
 record DMA, row1 compact DMA, and bridge compact DMA. Each trace item carries a
 unique MLIR label, logical phase, record slot, packet id, and payload slice. The
 validated trace is now the body-level `q,k,v,o,upgate,down` schedule. `upgate`
-is a 48-record long body, not two single-record phases: main16 writes
-interleaved up/gate records into an `upgate_records` buffer, row1/c1r1 use
-2D BD strides to build `48 x 65` and `48 x 257` compact layouts, and the final
-c1r1 output BD skips every compact header so c6r2 consumes 48 payload halves as
-24 distinct adjacent pairs. This avoids both the invalid 53-phase materialized
-trace and the standalone `up -> gate -> up` ring that cannot transition to
-down.
+is a 48-record long body, not two single-record phases: main16 emits
+interleaved up/gate records through the same 17-dword record ping/pong stream,
+row1 uses a 65-dword ping/pong record packer, and c1r1 uses a 257-dword
+ping/pong global record packer. The `qwen3-8b-qkv-compact-output` NPU slice
+proves the Q/K/V prefix can drain all 12 global compact records without a debug
+drain or phase-sized bridge. c1r3 should receive the 12 Q/K/V payload records as
+one 3072-dword local buffer and c6r2 should consume adjacent up/gate payload
+pairs. This avoids both the invalid 53-phase materialized trace and the
+standalone `up -> gate -> up` ring that cannot transition to down.
 The c1r2 bridge also captures the lock rule needed for that port: a memtile DMA
 BD block can release only one lock. Reusable row/group fan-in therefore uses a
 stage-level counting empty lock, acquired once by each input row/group and

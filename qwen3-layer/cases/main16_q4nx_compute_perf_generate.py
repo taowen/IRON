@@ -41,7 +41,6 @@ def _main_compute_tile(group: int, row: int) -> str:
     return f"""
     %{tile}_wt = aie.buffer(%{tile}) {{sym_name = "{tile}_wt"}} : memref<{CHUNK_BF16}xbf16>
     %{tile}_chunk = aie.buffer(%{tile}) {{sym_name = "{tile}_chunk"}} : memref<{MAIN_CHUNK_DWORDS}xi32>
-    %{tile}_q4nx_output = aie.buffer(%{tile}) {{sym_name = "{tile}_q4nx_output"}} : memref<32xbf16>
     %{tile}_done = aie.buffer(%{tile}) {{sym_name = "{tile}_done"}} : memref<1xi32>
     %{tile}_done_empty = aie.lock(%{tile}, 0) {{init = 1 : i32, sym_name = "{tile}_done_empty"}}
     %{tile}_done_full = aie.lock(%{tile}, 1) {{init = 0 : i32, sym_name = "{tile}_done_full"}}
@@ -56,14 +55,12 @@ def _main_compute_tile(group: int, row: int) -> str:
       %m_i32 = arith.constant {M_PER_TILE} : i32
       func.call @q4nx_fill_perf_inputs(%{tile}_wt, %{tile}_chunk, %chunk_bf16_i32, %act_dwords_i32)
         : (memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32, i32) -> ()
-      func.call @clear_summary_fast(%{tile}_q4nx_output, %m_i32)
-        : (memref<32xbf16>, i32) -> ()
+      func.call @q4nx_clear_accum_fast(%m_i32)
+        : (i32) -> ()
       scf.for %chunk = %c0 to %chunks step %c1 {{
         func.call @q4nx_chunk_accum_slice_i32_fast(%{tile}_wt, %{tile}_chunk, %m_i32)
           : (memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32) -> ()
       }}
-      func.call @q4nx_flush_output_fast(%{tile}_q4nx_output, %m_i32)
-        : (memref<32xbf16>, i32) -> ()
       aie.use_lock(%{tile}_done_empty, AcquireGreaterEqual, 1)
       memref.store %chunks_i32, %{tile}_done[%c0] : memref<1xi32>
       aie.use_lock(%{tile}_done_full, Release, 1)
@@ -166,9 +163,8 @@ def generate_mlir() -> str:
 {chr(10).join(flows)}
 
     func.func private @q4nx_fill_perf_inputs(memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @clear_summary_fast(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_clear_accum_fast(i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
     func.func private @q4nx_chunk_accum_slice_i32_fast(memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_flush_output_fast(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
 
 {chr(10).join(blocks)}
 {_runtime_sequence()}
@@ -181,15 +177,16 @@ def validate_generated_mlir(mlir: str) -> list[str]:
     required = (
         f"case marker {CASE_NAME}",
         "q4nx_fill_perf_inputs",
+        "q4nx_clear_accum_fast",
         "q4nx_chunk_accum_slice_i32_fast",
         f"%chunks = arith.constant {FULL_LAYER_TOTAL_WEIGHT_CHUNKS} : index",
         f"memref<{DONE_DWORDS}xi32>",
         MAIN16_KERNEL_OBJECT,
     )
     errors = [f"missing main16 q4nx compute perf marker: {marker}" for marker in required if marker not in mlir]
-    if mlir.count(MAIN16_KERNEL_OBJECT) != 4:
-        errors.append(f"main16 q4nx perf expected 4 declarations linked with {MAIN16_KERNEL_OBJECT}")
-    errors.extend(require_count(CASE_NAME, "main16 compute tiles", mlir.count("_q4nx_output = aie.buffer"), MAIN16_TILES))
+    if mlir.count(MAIN16_KERNEL_OBJECT) != 3:
+        errors.append(f"main16 q4nx perf expected 3 declarations linked with {MAIN16_KERNEL_OBJECT}")
+    errors.extend(require_count(CASE_NAME, "main16 compute tiles", mlir.count("_wt = aie.buffer"), MAIN16_TILES))
     errors.extend(require_count(CASE_NAME, "main-to-row1 plus row1-to-shim flows", mlir.count("aie.flow("), MAIN16_TILES + len(MAIN_COLUMNS)))
     errors.extend(require_count(CASE_NAME, "done output queues", mlir.count("S2MM : "), len(MAIN_COLUMNS)))
     errors.extend(require_count(CASE_NAME, "q4nx fast kernel call sites", mlir.count("func.call @q4nx_chunk_accum_slice_i32_fast"), MAIN16_TILES))

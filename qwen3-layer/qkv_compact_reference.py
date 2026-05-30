@@ -31,6 +31,8 @@ Q_GLOBAL_PACKET_ID = 10
 K_GLOBAL_PACKET_ID = 11
 V_GLOBAL_PACKET_ID = 12
 O_GLOBAL_PACKET_ID = 13
+FFN_GLOBAL_PACKET_ID = 14
+DOWN_GLOBAL_PACKET_ID = 15
 MAIN_PACKET_BASE = 16
 COLUMN_PACKET_BASE = 4
 
@@ -43,8 +45,28 @@ def column_packet(group: int) -> int:
     return COLUMN_PACKET_BASE + group
 
 
+def phase_packet_id(phase: int) -> int:
+    if phase == Q_PHASE:
+        return Q_GLOBAL_PACKET_ID
+    if phase == K_PHASE:
+        return K_GLOBAL_PACKET_ID
+    if phase == V_PHASE:
+        return V_GLOBAL_PACKET_ID
+    if phase == O_PHASE:
+        return O_GLOBAL_PACKET_ID
+    if phase in (4, 5):
+        return FFN_GLOBAL_PACKET_ID
+    if phase == 6:
+        return DOWN_GLOBAL_PACKET_ID
+    raise ValueError(f"unknown compact record phase: {phase}")
+
+
 def record_header(phase: int, group: int, row: int) -> int:
-    return (phase << 24) | (group << 16) | (row << 8) | 0xC3
+    return (phase << 24) | (group << 16) | (row << 8) | phase_packet_id(phase)
+
+
+def body_record_header(phase: int, block: int, group: int, row: int) -> int:
+    return (phase << 24) | (block << 20) | (group << 16) | (row << 8) | phase_packet_id(phase)
 
 
 def qkv_payload_value(phase: int, group: int, row: int, lane: int) -> int:

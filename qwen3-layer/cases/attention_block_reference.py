@@ -1,4 +1,4 @@
-"""CPU reference for the 16-token Shape-A/B attention bridge."""
+"""CPU reference helpers for one rounded 16-token attention block."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from qkv_compact_reference import (
     WINDOW_DWORDS,
 )
 
-CASE_NAME = "attention-kv16-o-bridge"
+CASE_NAME = "attention-block-reference"
 PACKET_ID = PACKET_ID_ATTENTION
 HEADS_PER_WINDOW = 8
 KV_HEADS_PER_WINDOW = 2

@@ -29,7 +29,7 @@ from cases.full_layer_engine_reference import (
     validate_cache_writeback,
     validate_expected_output,
 )
-from cases.currentkv_kvscan_attention_kv16_reference import (
+from cases.decode_cache_reference import (
     DecodeSchedule,
     make_decode_schedule,
     validate_cache_layout_contract,

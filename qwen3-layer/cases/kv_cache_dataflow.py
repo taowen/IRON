@@ -1,9 +1,9 @@
-"""Shared current-token K/V cache writeback and rounded KV scan dataflow."""
+"""Shared K/V cache writeback and rounded KV scan dataflow."""
 
 from __future__ import annotations
 
 from attention_dataflow import KV_OUT_BDS
-from cases.currentkv_kvscan_attention_kv16_reference import (
+from cases.decode_cache_reference import (
     CACHE_BLOCK_DWORDS,
     CURRENT_DWORDS,
     DecodeSchedule,

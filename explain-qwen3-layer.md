@@ -40,11 +40,44 @@ Q投影 → K投影 → V投影 → attention → O投影 → up → gate → Sw
 
 当前 IRON 设计和 MyLM 在 operator 级数据流上已经对齐：hidden/RMSNorm replay → main16 Q/K/V → c1r3 postprocess/current K/V → Shape-A/B attention → packet2/O replay → main16 O/up/gate/down → final hidden。真正差距在 AIE 物理执行形态：
 
+- 术语约定：后文正式用 AMD/MLIR-AIE 机制来描述，不再使用我们之前的工程别名当成架构术语。准确分层是：MLIR-AIE/IRON 描述 tile、buffer、BD、lock、stream route 和 runtime sequence；`aie.core` region 是 tile-local core program；`func.func ... attributes {link_with = "...o"}` 把 C++/AIE API/Peano 编译出的 linked AIE core kernel 链进该 tile 的 core ELF；更低层的 `elf_file`/raw ET_EXEC ELF 则是直接指定完整 core program。
 - MyLM 的 `layer.xclbin` 是 raw fused engine：core program、BD ring、stream switch、lock phase 预配置，runtime 只 patch descriptor/RTP。
 - MyLM main16 是统一的 14,868-byte raw segmented program，`0x1f0` 处加载一次 Q4NX microkernel，各 phase body 调用它。
-- IRON 当前 main16 仍是 MLIR phase control 调 AIE C++ role kernel；它可运行、可验证，但不是最终性能形态。
+- IRON 当前 main16 已经不是大段 MLIR phase control。active full-decode 里 MLIR core 基本只是一条 `func.call @q4nx_main16_full_scheduler(...)`，该函数通过 `link_with` 链接进每个 main16 tile 的 C++ AIE core object，作为 tile-local core program entry 实现 phase dispatch。fresh full-decode `main_core_2_2.elf` 反汇编是 `.text=6080`、1 个 core-entry 引用、`jl=14`、`acq=18`、`rel=18`。因此旧的“MLIR 展开 phase loop”问题已经基本迁移到 linked AIE core kernel 中。
+- 最新差距集中在 Q4NX microkernel 指令形态：MyLM `0x1f0..0x1850` hot loop 有 `vmac.f=264`、`vextbcst.16=256`、`vups.4x=64`；IRON 当前 `q4nx_chunk_accum_fast` hot body 只有 `vmac.f=44`，没有 `vextbcst.16`，并且有大量 `vst` 和 bf16/fp32 转换。5x 级性能差距现在主要不是 Python generator 或 MLIR loop annotation，而是 linked C++ AIE Q4NX microkernel 没有生成 MyLM 的 raw scheduled loop。
+- MLIR-AIE 工具链探针确认：当前 wheel 的 `bin/aiecc.py` 只是转发到 C++ `bin/aiecc`，core compile 子命令由 C++ driver 生成。aiecc 把 core lowering 成 `main_core_*.peanohack.ll`，再固定调用 Peano `opt --passes=default<O1> -inline-threshold=10` 和 `llc -O2 --march=aie2p --function-sections`。`tools/audit_aiecc_driver.py` 的 fast-fail dry-run 证明把 `--disable-loop-unrolling` 或 `--opt-disable=loop-unroll` 传给 `aiecc` 本身都不会改变子 `opt` 命令，`--aie-loop-aware`/hardware-loop forcing 这类 Peano `llc` flag 也不会被当前 `aiecc` driver 转发到子 `llc`。所以 MLIR-AIE 继续负责 topology/BD/lock/route/runtime/package；main16 性能核心继续走 linked C++ AIE core kernel 或 raw ET_EXEC ELF。
+- `tools/replay_main16_core_compile.py` 已把手动 core compile 重放扩展到 16 个 main tile，并通过 `tools/package_externalized_design.py` 跑了真机 ELF-backed packaging。QKV-prefix token31 从 stock `142702.9 us` 到 replacement `124872.8 us`，full decode token31 从同次 rebuilt stock `29404.6 us` 到 replacement `28990.9 us`，数值均 PASS。这证明绕过 stock loop unroll 有真实收益，但 full decode 只提升约 1.4%，仍不是 MyLM 级性能路径。
+- transaction packaging probe 确认：aiecc 会把每个 compiled core ELF 写回 `aie.core` 的 `elf_file`，再把 ELF `.text` 降成 `config_blockwrite_data`。fresh QKV prefix 中 16 个 main16 core 的 `.text=9952 bytes`，transaction 里正好有 16 个同尺寸 payload；MyLM main16 raw image 是 `14868 bytes`。因此不能靠 in-place transaction patch 扩容，正确路线是生成替换 main16 ELF 后重新打包 transaction/xclbin。
+- `tools/repack_core_program_txn.py` 已经把 transaction-level 重新打包固化：先删除旧 `config_blockwrite_data_*` 和旧 `aie.runtime_sequence @configure()`，保留 `aie.core {elf_file=...}` 与 runtime sequence，然后用 `aie-opt --convert-aie-to-transaction=elf-dir=...` 从当前 ELF 重建 core-program blockwrite。直接对已 transaction 化的 MLIR 再跑 pass 会复制 payload；`aie-translate --aie-npu-to-binary` 生成的也不是 aiecc 的小 `design.bin` runtime instruction artifact。
+- 可运行的 raw core 接入点已经确认并固化：`tools/package_externalized_design.py` 会复制 donor project，生成 all-core ELF-backed source MLIR，必要时替换 16 个 `main_core_X_Y.elf`，再用 `aiecc --no-compile` 重新生成 runtime inst、transaction、PDI 和 xclbin。probe 里 ELF-backed build 保持 `design.bin=2372 bytes`、16 个 main16 `9952-byte` payload 和 `213952-byte` xclbin。工具会检查 main16 ELF 没被覆盖、transaction 里有 16 个匹配 payload。不能只把 main16 改成 `elf_file` empty-core 后再正常编译；aiecc 会把空 core 编译回 donor ELF，曾观察到 main16 `.text` 被覆盖成 `160 bytes`。
+- replacement ELF 还必须是 ET_EXEC + `PT_LOAD`。MyLM disasm helper 那种 ET_REL `.text` wrapper 虽然 `llvm-size` 能看到 `14868 bytes`，但 `aiecc --no-compile` 不会把它降成 core-program blockwrite。新增 `tools/wrap_raw_aie_program.py` 后，MyLM main16 raw image 能被打包成 16 个 `14868-byte` payload，`design.xclbin=290240 bytes`。这只证明工具链能承载 MyLM-sized raw core，不代表能直接运行 MyLM raw image：MyLM raw core 还假设自己的 whole-core phase program、row1 compact timing 和 Q4NX microkernel body。
+- 新的工具链边界已经更精确：Peano/LLVM-AIE 不是完全生成不了硬件 loop。`tools/probe_external_lock_dispatcher.py` 用 Peano `clang++ --target=aie2p-none-unknown-elf -O2` 编译一个 linked C++ AIE core kernel，里面直接调用 AIE2P `acquire_greater_equal()` / `release()` builtin；反汇编结果是 `disasm_acq=1`、`disasm_rel=1`、`disasm_lc_ls_le=3`。这证明 linked C++ AIE core code 可以自己持有 lock 和硬件 loop。当前 active main16 phase control 已经在 linked C++ AIE core object 里；剩余失败点是 Q4NX microkernel 的指令调度没有达到 MyLM raw loop 形态。
+- AIEVec/XLLVM 路线可以作为 raw binary 前的中间层。`qwen3-layer/tools/probe_aievec_q4nx_codegen.py` 已确认 `aievec.matmul` 能降到 `xllvm.intr.aie2p.I512.I512.ACC2048.mac.conf`，`aievec.ups/srs` 能降到 BF16 accumulator conversion；但当前 AIEVec/XLLVM op 面只有 `cast/ext/matmul/shift/shuffle/srs/ups`，没有直接暴露 MyLM hot loop 需要的 `vunpack` 和 `vextbcst.16`。因此 AIEVec 可用于 fixed-schedule microkernel 探针，但完整 Q4NX parity 仍需要 Peano compatibility intrinsics 或扩展 AIEVec/XLLVM。
+- `tools/check_main16_raw_abi.py` 已把 main16 外层 ABI 变成机器检查。当前 row0 main16 结果是 `raw_main16_abi_ready=true`：activation 是 BD0/1、base `0x8000/0xc000`、L0->L1；weight 是 BD2/3、base `0x2800/0x4000`、L2->L3；record 是 BD4/5、base `0x3c1c/0x541c`、17 dword ping/pong、L5->L4。row1/c1r1 compact tree 也已经迁到 record-granular：main16 17-dword record → row1 65-dword column record → c1r1 257-dword global record。
+- 直接替换成 MyLM whole-core main16 ELF 的卡点已经收窄：不是 DMA0/DMA1/record ring，而是 MyLM raw whole-core program 的隐藏 contract。MyLM CDO 会为每个 main tile 初始化 `0x3c60/0x3c64/0x3c68/0x3c80/0x3d00`，其中 `0x3c60..0x3d00` 是 record ping 后面的本地控制/scratch 区；MyLM main16 程序会直接读写这些地址。MyLM c1r2 还通过 `bd3 len=2049` 发出 `1 control dword + 2048 payload` 的 full-vector replay，main16 core program 依赖这个 activation-side control 选择 normal phase chain。IRON 当前 active c1r2 语义上有相同 replay count，但 linked AIE core kernel 仍按 IRON ABI 接收 2048-dword payload，并不等价于 MyLM whole-core program ABI。
+- MyLM main16 的 record header 是小 phase word：QKV=`0x1`、O=`0x4`、upgate=`0x8`、down=`0x4`。IRON 当前 header 是 richer debug/value contract：`phase/block/group/row/packet_id`，低位 packet id 为 `10..15`。不过 active IRON 的硬件路由不是直接读这个数据 header；bridge 端 `aie.dma_bd(... packet=#aie.packet_info<...>)` 和 `aie.packet_flow(...)` 决定 packet routing。header mismatch 主要会影响 value contract、debug/reference，以及任何读取 `compact[0]` 的 kernel。c1r3/c6r2 当前接收 header-stripped payload，c1r2 O/down 当前从 `compact+1` 读 payload。
+- MyLM 的 16 个 main tile 使用同一个程序并不是因为还有未解的 tile metadata RTP，而是因为生产数据流把 `group/row/block` 隐含在物理 tile、row1 fanout、权重 chunk 顺序和 compact gather 位置里。IRON 的 `group/row/block` header 是调试友好设计，不是 MyLM 必需机制。
 
-因此后续性能优化的主线是 MyLM-style raw/scheduled main16 kernel，而不是继续增加临时 debug dataflow 或重新设计 row1 weight/compact 通路。
+因此后续性能优化的主线仍是 MyLM-style raw/scheduled main16 kernel，但重点已经从
+“修 compact 粒度/移动 phase control”转成“替换 Q4NX microkernel 的指令形态”。如果之后选择直接采用 MyLM whole-core AIE program，而不是只替换 Q4NX microkernel，就必须同时迁移 c1r2 2049-dword activation control、main16 `0x3c60..0x3d20` 本地控制区、小 phase header contract 和严格的 MyLM weight schedule。
+
+### MLIR-AIE 工具链审计结论
+
+当前问题不是“MLIR-AIE 完全不能用”，而是边界要切准：
+
+- 继续用 MLIR-AIE 生成 topology：tile、buffer 地址、BD ring、lock、stream switch、runtime sequence、transaction、PDI/xclbin。
+- 不再指望 `aie.core` 里的 `scf.for` phase control 被 stock `aiecc` 编译成 MyLM 那种 raw phase body。源码和 probe 都确认，当前 C++ `aiecc` 会固定走 `AIECoreToStandard -> LLVM lowering -> peanohack -> Peano opt --passes=default<O1> -inline-threshold=10 -> llc -O2 --march=aie2p`。这个 child `opt` 会展开 constant-trip phase loop，`aiecc --disable-loop-unrolling`、`--opt-disable=loop-unroll`、Peano `--aie-loop-aware`/hardware-loop forcing 这类参数不会转发到 child `opt/llc`。
+- Peano/LLVM-AIE 本身可以生成 AIE hardware loop。`probe_external_lock_dispatcher.py` 已证明 linked C++ AIE core code 里直接调用 AIE2P lock builtin 可以得到 `acq/rel` 和 `lc/ls/le` loop 形态。失败点是 stock MLIR `aie.core` compile path，不是 AIE2P backend 没能力。
+- 官方可用的替换入口是 `aie.core { aie.end } {elf_file = ...}`。`AIE_CoreOp` verifier 要求带 `elf_file` 的 core body 必须为空；`convert-aie-to-transaction{elf-dir=...}` 会读取这些 ELF 并生成 core-program blockwrite。
+- 可运行 packaging 路线已经固定为 all-core ELF-backed source MLIR + `aiecc --no-compile`。只把 main16 改成 `elf_file` empty-core 再让 `aiecc` 正常编译会把空 core 覆盖成无效小 ELF；直接 patch 已 transaction 化 MLIR 也会遇到 payload 重复或 routing/resource pipeline 重入问题。
+
+所以接下来不是再调 MLIR loop annotation，也不是继续堆 C++ kernel 变种。工程路线是：保留 MLIR-AIE 生成的 topology/BD/lock/route/runtime/package，保留当前 linked AIE core kernel ABI，把 `q4nx_chunk_accum_fast` 改成更接近 MyLM raw loop 的 lower-level scheduled intrinsic kernel。优先试 AIEVec/XLLVM 能覆盖的 MAC/UPS/SRS 部分；缺失的 unpack/broadcast 先用 AIE2P compatibility intrinsic 或扩展 AIEVec/XLLVM。若这条路仍然达不到 MyLM 指令形态，再走 raw ET_EXEC ELF 生成。
+
+本机 MyLM 8B benchmark probe 约 `4.93 tok/s`，即约 `203 ms/token`。按
+36 层粗分是 `5.6 ms/layer`，还不扣 lm_head/runtime 等非层开销；MyLM 文档公开数
+据 `11.9 tok/s @1k` 则对应约 `2.3 ms/layer` 的更紧预算。当前 IRON 单层
+`25.067 ms`，所以“4-5x 提升”不是夸张目标，而是至少要追上本机 MyLM probe
+才成立。
 
 ## 类比
 
@@ -188,6 +221,11 @@ row2          ┃[M01][M02][M03][M04]┃
 
 MyLM 证明这个 ABI 可以做成更硬的 raw core program：16 个 main tile 都加载同一个 14,868-byte program image，其中 `0x1f0..0x1850` 是共享 Q4NX microkernel，`0x1870/0x1e80/0x2490/0x2aa0` 分别是 QKV/O/upgate/down phase body，`0x36d0` 是 dispatcher。IRON 当前的 `main_projection_q4nx_fast.cc` 是正确性 baseline；后续优化目标是在不改 DMA0/DMA1/record ABI 的前提下替换 compute body。
 
+这里要区分两种替换粒度：
+
+- **只替换 Q4NX microkernel**：保留 IRON 当前 linked AIE core kernel ABI、record header、c1r2 replay 和 bridge packet ABI，只把 `q4nx_chunk_accum_fast` 变成更接近 MyLM `0x1f0..0x1850` 的 scheduled loop。这是当前最短路径。
+- **替换 MyLM whole-core AIE program**：必须同时匹配 MyLM 的 activation control word、`0x3c60..0x3d20` 本地 control/scratch、phase header `0x1/0x4/0x8/0x4`、weight schedule 和 phase replay order。这不是 C 函数级替换。
+
 每个 tile 有两个 DMA 输入：
 - **DMA0**：激活输入（128 dword = 256 bf16）
 - **DMA1**：权重输入（1280 dword = 5120 字节 Q4NX chunk）
@@ -265,7 +303,7 @@ row0  [K写回]    [────────── shim ────────
 - 把 carrier（权重+统计量）交给配对的 Shape-B
 - 最后一个 block 用 tail-token RTP 把 padding token 权重清零
 
-**当前状态**：`edge_attention.cc` 保留旧 kv16 helper，但 active full-layer attention-O slice 已经走 `qwen3_attention_bf16_*`：Q/K/V 为 bf16 payload，Shape-A 生成 bf16 block weights + float scalar carrier。生产差距是 `fast_exp`、online merge 和 bf16 舍入误差仍需和 Qwen3 reference 校准。
+**当前状态**：`edge_attention.cc` 只保留 active `qwen3_attention_bf16_*` kernel ABI：Q/K/V 为 bf16 payload，Shape-A 生成 bf16 block weights + float scalar carrier。生产差距是 `fast_exp`、online merge 和 bf16 舍入误差仍需和 Qwen3 reference 校准。
 
 ### Shape-B × 4（求和）
 
@@ -660,7 +698,7 @@ up/gate 共 48 条 record（24 对），不能展开成 48 个独立 BD phase（
 **方案**：body-level trace = `q,k,v,o,upgate,down`
 
 - `upgate` 是一个 48-record 长 body
-- main16 把 48 条 record 写入本地 `upgate_records` buffer
+- main16 把 48 条 record 逐条写入 17-dword record ping/pong stream
 - row1 用 2D BD stride scatter 成 `48 × 65` column compact
 - c1r1 scatter 成 `48 × 257` global compact
 - c1r1 output BD 跳过每个 header，把 48 个 payload half 连续送进 c6r2
@@ -779,6 +817,8 @@ c1r2 发出的 full-vector replay 格式：
 ```
 
 payload 采用自然 dim-major：`payload[i].lo16 = hidden[2i]`, `payload[i].hi16 = hidden[2i+1]`。
+
+MyLM 的 whole-core main16 program 依赖这个 control dword 选择 normal full-layer phase path。当前 IRON active linked AIE core kernel 语义上保留 `+12/+48` replay count，但不是直接执行 MyLM whole-core program，所以不能把 MyLM raw main16 ELF 当作普通 `link_with` 函数塞进来。
 
 **replay 次数**：
 - Q/K/V 阶段：12 次（Q 8 N-block + K 2 + V 2）
@@ -975,8 +1015,8 @@ token 共享同一个 `design.xclbin`，只切换 patched instruction stream。
 - c1r2 packet0 full-vector replay → c1r1 bridge → main16 DMA0 activation ring
 - c6r1 packet2（attention）和 packet1（FFN）复用 c1r1 shared bridge
 - 48-record upgate body trace + reusable-slot compact + c6r2 payload-half ABI
-- `qwen3-8b-decode-layer` 能用真实 MyLM Qwen3-8B-NPU2 权重跑通单层 full-layer frontier，并输出 2048-dword hidden payload。当前比较已经接到 `Qwen3LayerReference`，hidden_out 使用 `abs_tol=0.01, rel_tol=0.05`；token31 最新真机结果是 `29.236 ms`、`final_hidden_out max_abs=0.0078125`，current K/V、valid cache 和 capacity-unchanged cache 都是 0 mismatch。这已经是可运行的单层 decode frontier，但还不是多层 production 数值预算
-- main16 projection 已收敛为单一 active role `main_projection_q4nx_fast.cc`；旧 `main_projection_q4nx.cc` 已从 active generator/link path 删除。`full-layer-qkv-prefix`、`full-layer-attention-o-bf16` 和 `qwen3-8b-decode-layer` 都能重新编译并真机通过，说明之前的 program-memory overflow 是双版本 main projection 同时链接造成的
+- `qwen3-8b-decode-layer` 能用真实 MyLM Qwen3-8B-NPU2 权重跑通单层 full-layer frontier，并输出 2048-dword hidden payload。当前比较已经接到 `Qwen3LayerReference`，hidden_out 使用 `abs_tol=0.01, rel_tol=0.05`；token31 最新真机结果是 `25.067 ms`、`final_hidden_out max_abs=0.0078125`，current K/V、valid cache 和 capacity-unchanged cache 都是 0 mismatch。这已经是可运行的单层 decode frontier，但还不是多层 production 数值预算
+- main16 projection 已收敛为单一 active role `main_projection_q4nx_fast.cc`；旧 `main_projection_q4nx.cc` 已从 active generator/link path 删除。MyLM-style 17-dword ping/pong record、row1 65-dword column compact、c1r1 257-dword global compact 都已进入 active generator。之前的 program-memory overflow 是双版本 main projection 同时链接造成的；之前的 phase-sized compact mismatch 是历史问题，后续只保留 record-granular compact contract
 - `run_stage_budget.py` 已把 c1r2 input norm、current-slot K/V、valid-cache K/V、capacity-unchanged K/V、attention-O 和 full hidden_out 的真机统计统一成 `stage_budget:` 输出；K/V 行会打印最大误差坐标，失败时打印首个 mismatch 坐标；token31/token91 已覆盖 qkv、attention、full stage
 - `run_reference_decode.py` 已能跑真实 Qwen3-8B 多层 CPU reference 和 MyLM prefix dump 对照。当前确认 Q4NX 解码公式是 `int4 * scale + offset`，不是旧的 `(int4 - zero_point) * scale`；raw token `9707` 的 layer1/layer4/layer8/layer16/layer24/layer32 top token 与 MyLM probe 对齐。尚未确认 full 36-layer Python reference 是最终 oracle：layer35 开始出现近似误差放大，layer36 目前 Python top token 是 `11`，MyLM probe top token 是 `323`
 
@@ -1018,7 +1058,7 @@ token 共享同一个 `design.xclbin`，只切换 patched instruction stream。
 | c1r2 RMSNorm/replay/final output | hidden replay、O residual/postnorm、down residual 和 2048-dword hidden_out 已在物理路径闭环 | 收紧 RMSNorm/residual stage budget，确认输出可直接作为下一层输入 |
 | c6r2 SwiGLU | bf16 输入/输出 ABI 已对齐，`slice_scale` 已删除，执行 AIE-local bounded table `SiLU(gate) * up` | 校准到 Qwen3 SiLU/SwiGLU production budget，并优化 table/compute cost |
 | c1r3 Q/K norm + RoPE | Q/K/V body payload、packet8/9 current K/V、attention ABI 和 full decode hidden_out 已接通 | 收紧 Q/K RMSNorm、RoPE、scale/rotation constant 的 stage-local budget |
-| Main16 Q4NX kernel | 真 Q4NX transport/MAC 和真实模型权重 stream 已跑通；当前只保留 `main_projection_q4nx_fast.cc` 一个 C++ role。旧 C++ unroll/scheduled probes 已删除：它们能让窄 slice 变快，但不能让 full decode 变快，22-dim full-layer probe 反而回归到 `30.092-30.963 ms` | 沿 MyLM-style shared microkernel 方向继续，但不能靠维护多个 C++ 变种；下一步应减少 MLIR phase-control/body text 或走 raw core program |
+| Main16 Q4NX kernel | 真 Q4NX transport/MAC 和真实模型权重 stream 已跑通；当前只保留 `main_projection_q4nx_fast.cc` 一个 C++ role。当前 full-layer generator 从 `accum` 直接 emit 17-dword compact record ping/pong，activation/weight/record BD、lock、base 已迁到 MyLM ABI，`check_main16_raw_abi.py` 显示 row0 ready=true。row1/c1r1 compact tree 已经改成 MyLM-style record granularity：main16 17-dword record、row1 `17+16+16+16 -> 65`、c1r1 `65+64+64+64 -> 257`。active full-decode main16 ELF 只调用一次 linked AIE core kernel 入口，旧 MLIR phase-control 展开不再是当前根因。剩余最大差距是 `q4nx_chunk_accum_fast` 指令形态：`vmac.f` 密度远低于 MyLM raw loop，且缺少 `vextbcst.16` | 下一步保留 topology/linked-core ABI，重写 Q4NX microkernel 为 lower-level scheduled C++/intrinsic kernel；如果 Peano C++ 仍达不到 MyLM 指令形态，再生成 raw ET_EXEC ELF |
 
 ### MyLM-style 主性能方向
 
@@ -1031,7 +1071,14 @@ token 共享同一个 `design.xclbin`，只切换 patched instruction stream。
    - DMA1 Q4NX weight chunk：1280 dword
    - output compact record：17 dword
 4. full-layer 22-dim scheduled probe 证明“能放下”不等于“更快”：它保持数值正确，但 token31 full decode 从 baseline `29.236 ms` 回归到 `30.092-30.963 ms`。这个 probe 已删除，active full decode 保持 `main_projection_q4nx_fast.o`。
-5. 下一步不是再加 C++ 变种，而是继续缩短 main16 phase-control/body text，或者把 Q4NX body 推向 MyLM-style raw core program。只有当新实现通过现有 reference 且 end-to-end 变快后，才替换这个唯一 active main16 implementation。
+5. C++ helper 内部不能随意“删防御分支”：一次尝试把 partial-row/bounds branch 改成无条件写，导致 full-layer main16 ELF `.text = 0x4760` 并触发 AIE program-memory overflow，已回退。当前保留的是更小的 generator-level phase-body 清理。
+6. 最新 root cause 已经从旧 phase-control 形态下移到 Q4NX microkernel 形态。fresh active full-decode `main_core_2_2.elf` 只有一次 `q4nx_main16_full_scheduler` 调用，`.text=6080`、`jl=14`、`acq=18`、`rel=18`；旧的 `129` 次 Q4 helper call/`232` 次 lock control 是历史 direct-emit 问题。工具链 probe 仍然有价值：stock aiecc 的 child `opt/llc` flags 不可透传，`elf_file` 是正确替换入口；但下一步不是再调 no-unroll metadata/replay，而是把 `q4nx_chunk_accum_fast` 改成 MyLM-style raw/scheduled Q4NX loop。只有当新 microkernel 通过现有 reference 且 end-to-end 变快后，才替换这个唯一 active main16 linked-core implementation。
+7. core program packaging 路径已经明确：transaction MLIR 里的 `aie.core` 会带 `elf_file`，随后 `.text` 被降成 `config_blockwrite_data`。fresh QKV prefix 证明 16 个 `main_projection_q4nx_fast.o` core 的 `.text=9952 bytes` 对应 16 个同尺寸 blockwrite payload；MyLM main16 image 是 `14868 bytes`。所以 raw main16 不能靠简单扩大已有 transaction payload，应该生成替换 ELF 并重新走 transaction/xclbin packaging。
+8. 已新增 `tools/repack_core_program_txn.py` 作为 transaction 层检查工具：它对 fresh QKV-prefix probe 重新生成了 286 个 blockwrite global，其中 16 个 main16 payload 仍是 9952 bytes，证明没有重复 payload。但它不是最终 runner 入口，`aie-translate --aie-npu-to-binary` 输出也不是 aiecc 的小 `design.bin`。
+9. 可运行入口是 `tools/package_externalized_design.py`：先从 donor transaction 复制所有 core 的 `elf_file/link_files` 回 source MLIR，把 core body 替换成 `elf_file` empty-core；再在 throwaway project dir 中替换选中的 `main_core_X_Y.elf`，最后让 aiecc 只做 packaging。probe 证明这条路能生成 `design.bin`、transaction、PDI 和 xclbin，且不会重复 core-program payload。不要只把 main16 改成 `elf_file` 后正常编译；这会把空 core 重新编译并覆盖 donor ELF。
+10. raw image 包装格式已经确认：replacement core 需要 ET_EXEC + loadable `.text` `PT_LOAD`。新增 `tools/wrap_raw_aie_program.py` 后，MyLM 的 14,868-byte main16 raw image 能打进我们的 xclbin package，transaction 里出现 `bytes=14868 count=16`。但直接把 MyLM raw main16 放进 IRON 仍不会自洽，因为 raw 程序不只是 ABI，还包含 MyLM 自己的 whole-core phase program、lock phase order 和 Q4NX microkernel 内部调度。
+11. IRON main16 record ABI 已迁到 MyLM-style 17-dword ping/pong：BD4/5、`0x3c1c/0x541c`、L5->L4。row1/c1r1 也已迁到 per-record compact tree：4 个 main row 先合成一个 65-dword column record，再由 c1r1 合成一个 257-dword global record；c1r3 以 3072-dword QKV payload buffer 接收 12 个 global payload。后续 compact 方向是保持这套 contract 并用静态检查防回退，不再回到旧 phase-sized receive/output 聚合。
+12. MLIR-AIE/Peano 工具链结论也要更精确：`acquire_greater_equal()`/`release()` 反汇编里常出现在 `j/jl/ret` 后面，是 AIE 分支延迟槽，不能直接当作“被 hoist 到循环外”。空 `asm volatile("" ::: "memory")` 会让 AIE2P backend 崩在 IRTranslator，不能当 barrier。真正稳定的检查应该从 packet/BD/lock ABI 和最终 ELF shape 两边做，而不是只数 `acq/rel` 总数。
 
 MyLM 公开仓库不提供 Qwen3 NPU kernel 源码；`qwen3_npu`/`qwen3_npu_sequence` 的实现来自 `src/lib/libqwen3_npu.so`，AIE 程序来自 `src/xclbins/Qwen3-8B-NPU2/layer.xclbin`。我们只复用其 ABI、program layout 和调度形态，不复用 proprietary binary。当前证据记录在 `qwen3-layer/main16_q4nx_mylm_compare.md` 和 `qwen3-layer/main16_q4nx_mylm_secret.md`。
 

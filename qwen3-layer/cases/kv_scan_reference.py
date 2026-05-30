@@ -1,12 +1,12 @@
-"""CPU reference for streaming KV scan into 16-token attention."""
+"""CPU reference helpers for rounded KV scan windows."""
 
 from __future__ import annotations
 
 import numpy as np
 
-from cases import attention_kv16_reference as base
+from cases import attention_block_reference as base
 
-CASE_NAME = "kvscan-attention-kv16-o-bridge"
+CASE_NAME = "kv-scan-reference"
 K_CACHE_SIDE_DWORDS = base.K_WINDOW_DWORDS * 2
 V_CACHE_SIDE_DWORDS = base.V_WINDOW_DWORDS * 2
 KV_CACHE_SIDE_DWORDS = K_CACHE_SIDE_DWORDS + V_CACHE_SIDE_DWORDS

@@ -1,12 +1,12 @@
-"""CPU reference for main16-produced Q into streaming KV-scan attention."""
+"""CPU reference for Q projection payloads entering KV-scan attention."""
 
 from __future__ import annotations
 
 import numpy as np
 
 from contract import MAIN_COLUMNS, MAIN_ROWS, RECORD_DWORDS, RECORD_PAYLOAD_DWORDS, ROWS_PER_COLUMN
-from cases import attention_kv16_reference as attention
-from cases import kvscan_attention_kv16_reference as kvscan
+from cases import attention_block_reference as attention
+from cases import kv_scan_reference as kvscan
 from qkv_compact_reference import (
     Q_PHASE,
     column_compact_from_records,
@@ -15,7 +15,7 @@ from qkv_compact_reference import (
     record_header,
 )
 
-CASE_NAME = "mainq-kvscan-attention-kv16-o-bridge"
+CASE_NAME = "q-projection-attention-reference"
 O_PHASE = 3
 STAGES = ("q", "o")
 MAIN_RECORD_DWORDS = RECORD_DWORDS * len(STAGES)
@@ -276,6 +276,6 @@ def route_summary() -> list[str]:
         "main16 emits Q compact records; c1r3 expands them into packed Q[2048]",
         f"KV cache sides stay external: {KV_CACHE_SIDE_DWORDS} dwords each as K0,K1,V0,V1",
         "shim BD slices rebuild K,V,K,V row1 scan layout with per-slot locks",
-        "kv16 Shape-A/B returns packet2 to main16 O chunks, then O compact reaches c1r2",
+        "Shape-A/B returns packet2 to main16 O chunks, then O compact reaches c1r2",
         f"host_output={HOST_OUTPUT_DWORDS} dwords",
     ]

@@ -1,4 +1,4 @@
-"""CPU reference for current K/V cache writeback before streaming KV-scan attention."""
+"""CPU reference for current K/V cache writeback and rounded KV scan."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from cases import attention_kv16_reference as attention
-from cases import kvscan_attention_kv16_reference as kvscan
-from cases import mainq_kvscan_attention_kv16_reference as mainq
+from cases import attention_block_reference as attention
+from cases import kv_scan_reference as kvscan
+from cases import q_projection_attention_reference as mainq
 from qkv_compact_reference import K_PHASE, V_PHASE, qkv_global_compact
 
-CASE_NAME = "currentkv-cache-layout-reference"
+CASE_NAME = "decode-cache-reference"
 CURRENT_DWORDS = 512
 CURRENT_PACKET_K = 8
 CURRENT_PACKET_V = 9

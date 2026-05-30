@@ -12,7 +12,8 @@ ROW1_WEIGHT_MM2S = (0, 1, 2, 3)
 MAIN_ACTIVATION_S2MM = 0
 MAIN_WEIGHT_S2MM = 1
 MAIN_RECORD_MM2S = 1
-ROW1_COMPACT_MM2S = 5
+ROW1_COMPACT_MM2S = 4
+C1R1_COMPACT_MM2S = 0
 C1R1_PACKET_S2MM = 4
 C1R1_PACKET_MM2S = 1
 
@@ -185,7 +186,7 @@ def validate_compact_only_full_layer_ownership(scope: str, mlir: str) -> list[st
                 scope,
                 f"row1 compact gather S2MM{row}",
                 mlir,
-                f"aie.dma_start(S2MM, {row}, ^row{row}_q",
+                f"aie.dma_start(S2MM, {row}, ^compact_row{row}_ping",
                 groups,
             )
         )
@@ -203,17 +204,26 @@ def validate_compact_only_full_layer_ownership(scope: str, mlir: str) -> list[st
             scope,
             "main16 compact record output",
             mlir,
-            f"aie.dma_start(MM2S, {MAIN_RECORD_MM2S}, ^q_out, ^end)",
+            f"aie.dma_start(MM2S, {MAIN_RECORD_MM2S}, ^record_ping, ^end)",
             main_tiles,
         )
     )
     errors.extend(
         _require_marker_count(
             scope,
-            "row1/c1r1 compact output MM2S5",
+            "row1 compact output MM2S4",
             mlir,
-            f"aie.dma_start(MM2S, {ROW1_COMPACT_MM2S}, ^q_out",
-            groups + 1,
+            f"aie.dma_start(MM2S, {ROW1_COMPACT_MM2S}, ^compact_ping_out",
+            groups,
+        )
+    )
+    errors.extend(
+        _require_marker_count(
+            scope,
+            "c1r1 compact output MM2S0",
+            mlir,
+            f"aie.dma_start(MM2S, {C1R1_COMPACT_MM2S}, ^compact_ping_out",
+            1,
         )
     )
     errors.extend(
@@ -266,7 +276,7 @@ def validate_q4nx_down_full_layer_ownership(scope: str, mlir: str) -> list[str]:
                 scope,
                 f"row1 compact gather S2MM{row}",
                 mlir,
-                f"aie.dma_start(S2MM, {row}, ^row{row}_q",
+                f"aie.dma_start(S2MM, {row}, ^compact_row{row}_ping",
                 groups,
             )
         )
@@ -293,7 +303,7 @@ def validate_q4nx_down_full_layer_ownership(scope: str, mlir: str) -> list[str]:
             scope,
             "main16 compact record output",
             mlir,
-            f"aie.dma_start(MM2S, {MAIN_RECORD_MM2S}, ^q_out, ^end)",
+            f"aie.dma_start(MM2S, {MAIN_RECORD_MM2S}, ^record_ping, ^end)",
             main_tiles,
         )
     )
@@ -328,10 +338,19 @@ def validate_q4nx_down_full_layer_ownership(scope: str, mlir: str) -> list[str]:
     errors.extend(
         _require_marker_count(
             scope,
-            "row1/c1r1 compact output MM2S5",
+            "row1 compact output MM2S4",
             mlir,
-            f"aie.dma_start(MM2S, {ROW1_COMPACT_MM2S}, ^q_out",
-            groups + 1,
+            f"aie.dma_start(MM2S, {ROW1_COMPACT_MM2S}, ^compact_ping_out",
+            groups,
+        )
+    )
+    errors.extend(
+        _require_marker_count(
+            scope,
+            "c1r1 compact output MM2S0",
+            mlir,
+            f"aie.dma_start(MM2S, {C1R1_COMPACT_MM2S}, ^compact_ping_out",
+            1,
         )
     )
     errors.extend(
@@ -406,8 +425,11 @@ def validate_q4nx_down_full_layer_ownership(scope: str, mlir: str) -> list[str]:
             f"{scope}: full-layer row1 weight patch ingress channels are {patch_channels}, "
             f"expected only {ROW1_WEIGHT_S2MM}"
         )
-    if "func.call @q4nx_chunk_accum_slice_i32_fast" not in mlir:
-        errors.append(f"{scope}: missing integrated fast Q4NX chunk call")
+    if (
+        "func.call @q4nx_chunk_accum_slice_i32_fast" not in mlir
+        and "func.call @q4nx_main16_full_scheduler" not in mlir
+    ):
+        errors.append(f"{scope}: missing integrated fast Q4NX main16 call")
     role_objects = (
         "main_projection_q4nx_fast.o",
         "postprocess_qkv.o",

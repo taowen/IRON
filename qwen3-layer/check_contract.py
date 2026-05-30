@@ -24,12 +24,13 @@ from cases import full_layer_qkv_prefix_generate
 from cases import main16_q4nx_compute_perf_generate
 from cases import qwen3_8b_c1r2_input_norm_generate
 from cases import qwen3_8b_qkv_cache_write_generate
+from cases import qwen3_8b_qkv_compact_output_generate
 from cases import row1_weight_stream_perf_generate
-from cases.currentkv_kvscan_attention_kv16_reference import (
+from cases.decode_cache_reference import (
     make_decode_schedule,
     validate_cache_layout_contract,
 )
-from cases.registry import CASE_NAMES
+from cases.case_names import CASE_NAMES
 from resource_manifest import compare_main16_qkv_contracts, validate_manifest_matches_mlir, validate_resource_manifest
 
 TOKEN_GATE_TOKENS = (0, 1, 31, 91, 127)
@@ -42,10 +43,13 @@ FORBIDDEN_ACTIVE_MLIR_MARKERS = (
     "qwen3_layer.o",
     "qwen3_bridge.o",
     "debug_contract.o",
+    "main_projection_q4nx_scheduled",
+    "q4nx_emit_",
 )
 EXPECTED_CASE_NAMES = (
     "qwen3-8b-decode-layer",
     "qwen3-8b-c1r2-input-norm-replay",
+    "qwen3-8b-qkv-compact-output",
     "qwen3-8b-qkv-cache-write-bridge",
     "full-layer-qkv-prefix",
     "full-layer-attention-o-bf16",
@@ -80,6 +84,7 @@ RETIRED_FILES = (
 ACTIVE_CODE_FILES = (
     "run_npu.py",
     "run_stage_budget.py",
+    "cases/case_names.py",
     "cases/registry.py",
     "cases/full_layer_engine_generate.py",
     "cases/full_layer_engine_reference.py",
@@ -91,6 +96,8 @@ ACTIVE_CODE_FILES = (
     "cases/qwen3_8b_decode_layer_runner.py",
     "cases/qwen3_8b_qkv_cache_write_generate.py",
     "cases/qwen3_8b_qkv_cache_write_runner.py",
+    "cases/qwen3_8b_qkv_compact_output_generate.py",
+    "cases/qwen3_8b_qkv_compact_output_runner.py",
     "cases/qwen3_8b_c1r2_input_norm_generate.py",
     "cases/qwen3_8b_c1r2_input_norm_runner.py",
     "cases/row1_weight_stream_perf_generate.py",
@@ -155,6 +162,9 @@ def validate_runnable_boundaries() -> list[str]:
     qkv_cache_write_mlir = qwen3_8b_qkv_cache_write_generate.generate_mlir()
     errors.extend(qwen3_8b_qkv_cache_write_generate.validate_generated_mlir(qkv_cache_write_mlir))
     errors.extend(validate_active_mlir(qwen3_8b_qkv_cache_write_generate.CASE_NAME, qkv_cache_write_mlir))
+    qkv_compact_output_mlir = qwen3_8b_qkv_compact_output_generate.generate_mlir()
+    errors.extend(qwen3_8b_qkv_compact_output_generate.validate_generated_mlir(qkv_compact_output_mlir))
+    errors.extend(validate_active_mlir(qwen3_8b_qkv_compact_output_generate.CASE_NAME, qkv_compact_output_mlir))
     c1r2_replay_mlir = qwen3_8b_c1r2_input_norm_generate.generate_mlir()
     errors.extend(qwen3_8b_c1r2_input_norm_generate.validate_generated_mlir(c1r2_replay_mlir))
     errors.extend(validate_active_mlir(qwen3_8b_c1r2_input_norm_generate.CASE_NAME, c1r2_replay_mlir))
@@ -210,6 +220,9 @@ def validate_decode_token_gate() -> list[str]:
         qkv_cache_write_mlir = qwen3_8b_qkv_cache_write_generate.generate_mlir(target_schedule)
         errors.extend(qwen3_8b_qkv_cache_write_generate.validate_generated_mlir(qkv_cache_write_mlir, target_schedule))
         errors.extend(validate_active_mlir(qwen3_8b_qkv_cache_write_generate.CASE_NAME, qkv_cache_write_mlir))
+        qkv_compact_output_mlir = qwen3_8b_qkv_compact_output_generate.generate_mlir(target_schedule)
+        errors.extend(qwen3_8b_qkv_compact_output_generate.validate_generated_mlir(qkv_compact_output_mlir, target_schedule))
+        errors.extend(validate_active_mlir(qwen3_8b_qkv_compact_output_generate.CASE_NAME, qkv_compact_output_mlir))
     return errors
 
 
@@ -217,9 +230,9 @@ def validate_resource_manifest_negative_checks() -> list[str]:
     errors: list[str] = []
     baseline = full_layer_qkv_prefix_generate.resource_manifest()
     main16 = next(tile for tile in baseline.tiles if tile.role == "main16")
-    q_records = next(buffer for buffer in main16.buffers if buffer.name == "q_records")
+    record_ping = next(buffer for buffer in main16.buffers if buffer.name == "record_ping")
     shifted_buffers = tuple(
-        replace(buffer, address=buffer.address + 4) if buffer.name == q_records.name else buffer
+        replace(buffer, address=buffer.address + 4) if buffer.name == record_ping.name else buffer
         for buffer in main16.buffers
     )
     shifted_tile = replace(main16, buffers=shifted_buffers)
@@ -234,7 +247,7 @@ def validate_resource_manifest_negative_checks() -> list[str]:
         shifted_manifest,
     )
     if not drift_errors:
-        errors.append("resource manifest negative check failed to catch QKV record address drift")
+        errors.append("resource manifest negative check failed to catch main16 record ping address drift")
 
     activation = next(buffer for buffer in main16.buffers if buffer.name == "chunk_ping")
     overlap_buffers = tuple(
@@ -244,7 +257,7 @@ def validate_resource_manifest_negative_checks() -> list[str]:
             size_bytes=activation.size_bytes,
             phases=activation.phases,
         )
-        if buffer.name == q_records.name
+        if buffer.name == record_ping.name
         else buffer
         for buffer in main16.buffers
     )
@@ -260,10 +273,10 @@ def validate_resource_manifest_negative_checks() -> list[str]:
 
     full_layer_mlir = full_layer_engine_generate.generate_mlir()
     wt_pong = "%m0_0_wt_pong = aie.buffer(%m0_0)"
-    k_records = "%m0_0_k_records = aie.buffer(%m0_0)"
+    record_pong = "%m0_0_record_pong = aie.buffer(%m0_0)"
     wt_line = next(line for line in full_layer_mlir.splitlines() if wt_pong in line)
-    k_line = next(line for line in full_layer_mlir.splitlines() if k_records in line)
-    bad_mlir = full_layer_mlir.replace(f"{wt_line}\n{k_line}", f"{k_line}\n{wt_line}", 1)
+    record_line = next(line for line in full_layer_mlir.splitlines() if record_pong in line)
+    bad_mlir = full_layer_mlir.replace(f"{wt_line}\n{record_line}", f"{record_line}\n{wt_line}", 1)
     cursor_errors = validate_manifest_matches_mlir(
         "resource-manifest-negative-bank-cursor",
         full_layer_engine_generate.resource_manifest(),

@@ -17,12 +17,15 @@ DEFAULT_MYLM_BD_CSV = Path("/tmp/mylm_solidify_L31/layer_bd.csv")
 DEFAULT_MYLM_PROGRAM_SEGMENTS = Path("/tmp/mylm_solidify_L31/programs/program_segments.tsv")
 DEFAULT_MYLM_PROGRAM_IMAGES = Path("/tmp/mylm_solidify_L31/programs/program_images.tsv")
 DEFAULT_IRON_BASELINE_OBJECT = Path("qwen3-layer/main_projection_q4nx_fast.o")
+DEFAULT_IRON_FULL_DISASM = Path("qwen3-layer/build/main_core_2_2.after-direct-emit.s")
 DEFAULT_LLVM_OBJDUMP = Path(".venv/lib/python3.12/site-packages/llvm-aie/bin/llvm-objdump")
 DEFAULT_LLVM_SIZE = Path(".venv/lib/python3.12/site-packages/llvm-aie/bin/llvm-size")
 
 ADDRESS_RE = re.compile(r"^\s*([0-9a-fA-F]+):\s+(.*)$")
+LABEL_RE = re.compile(r"^\s*([0-9a-fA-F]+)\s+<([^>]+)>:$")
 SECTION_RE = re.compile(r"^Disassembly of section (?P<section>[^:]+):$")
 INT_RE = re.compile(r"^-?(?:0x[0-9a-fA-F]+|\d+)$")
+JL_TARGET_RE = re.compile(r"\bjl\s+#0x([0-9a-fA-F]+)\b")
 
 MAIN16_BD_ROLES = {
     0: "activation_ping",
@@ -122,10 +125,57 @@ class ProgramImage:
     path: str
 
 
+@dataclass(frozen=True)
+class PhaseBodySpec:
+    name: str
+    start: int
+    end: int
+    records: int
+
+
+@dataclass(frozen=True)
+class PhaseBodySummary:
+    name: str
+    start: int
+    end: int
+    bytes: int
+    records: int
+    q4_calls: int
+    jl: int
+    acq: int
+    rel: int
+    jnz: int
+    loop_register_lines: int
+    instruction_lines: int
+    op_slots: int
+
+
+@dataclass(frozen=True)
+class FullCoreSummary:
+    name: str
+    path: Path
+    q4_calls: int
+    jl: int
+    acq: int
+    rel: int
+    jnz: int
+    loop_register_lines: int
+    instruction_lines: int
+    op_slots: int
+
+
 MYLM_RANGES = (
     RangeSpec("mylm_q4_microkernel", 0x1F0, 0x1850),
     RangeSpec("mylm_q4_hot_loop", 0x260, 0x1850),
     RangeSpec("mylm_qkv_body", 0x1870, 0x1E80),
+)
+
+MYLM_PHASE_BODIES = (
+    PhaseBodySpec("Q/K/V", 0x1870, 0x1E80, 12),
+    PhaseBodySpec("O", 0x1E80, 0x2490, 8),
+    PhaseBodySpec("up/gate", 0x2490, 0x2AA0, 48),
+    PhaseBodySpec("down", 0x2AA0, 0x30C0, 8),
+    PhaseBodySpec("alternate", 0x30C0, 0x36D0, 304),
 )
 
 IRON_FAST_SECTIONS = (
@@ -180,6 +230,16 @@ def _disasm_lines(disasm: str) -> tuple[DisasmLine, ...]:
         address = int(match.group(1), 16)
         lines.append(DisasmLine(address=address, text=line.strip()))
     return tuple(lines)
+
+
+def _symbol_addresses(disasm: str) -> dict[str, int]:
+    symbols: dict[str, int] = {}
+    for line in disasm.splitlines():
+        match = LABEL_RE.match(line)
+        if match is None:
+            continue
+        symbols[match.group(2)] = int(match.group(1), 16)
+    return symbols
 
 
 def _mylm_range_lines(lines: tuple[DisasmLine, ...], spec: RangeSpec) -> tuple[DisasmLine, ...]:
@@ -299,6 +359,83 @@ def _call_sites(lines: tuple[DisasmLine, ...]) -> tuple[CallSite, ...]:
     return tuple(sites)
 
 
+def _jump_targets(lines: tuple[DisasmLine, ...]) -> tuple[int, ...]:
+    targets: list[int] = []
+    for line in lines:
+        match = JL_TARGET_RE.search(line.text)
+        if match is not None:
+            targets.append(int(match.group(1), 16))
+    return tuple(targets)
+
+
+def _loop_register_line_count(lines: tuple[DisasmLine, ...]) -> int:
+    return sum(
+        1
+        for line in lines
+        if re.search(r"\b(?:lc|ls|le)\b", line.text) is not None
+    )
+
+
+def _phase_body_summaries(
+    lines: tuple[DisasmLine, ...],
+    specs: tuple[PhaseBodySpec, ...],
+    q4_targets: tuple[int, ...],
+) -> tuple[PhaseBodySummary, ...]:
+    summaries: list[PhaseBodySummary] = []
+    q4_target_set = set(q4_targets)
+    for spec in specs:
+        body_lines = tuple(line for line in lines if spec.start <= line.address < spec.end)
+        stats = _count_ops(spec.name, body_lines)
+        q4_calls = sum(1 for target in _jump_targets(body_lines) if target in q4_target_set)
+        summaries.append(
+            PhaseBodySummary(
+                name=spec.name,
+                start=spec.start,
+                end=spec.end,
+                bytes=spec.end - spec.start,
+                records=spec.records,
+                q4_calls=q4_calls,
+                jl=stats.counts["jl"],
+                acq=stats.counts["acq"],
+                rel=stats.counts["rel"],
+                jnz=stats.counts["jnz"],
+                loop_register_lines=_loop_register_line_count(body_lines),
+                instruction_lines=stats.instruction_lines,
+                op_slots=stats.op_slots,
+            )
+        )
+    return tuple(summaries)
+
+
+def _q4_symbol_targets(symbols: dict[str, int]) -> tuple[int, ...]:
+    return tuple(
+        sorted(
+            address
+            for name, address in symbols.items()
+            if "q4nx_chunk_accum" in name
+        )
+    )
+
+
+def _full_core_summary(name: str, path: Path, disasm: str) -> FullCoreSummary:
+    lines = _disasm_lines(disasm)
+    stats = _count_ops(name, lines)
+    q4_targets = set(_q4_symbol_targets(_symbol_addresses(disasm)))
+    q4_calls = sum(1 for target in _jump_targets(lines) if target in q4_targets)
+    return FullCoreSummary(
+        name=name,
+        path=path,
+        q4_calls=q4_calls,
+        jl=stats.counts["jl"],
+        acq=stats.counts["acq"],
+        rel=stats.counts["rel"],
+        jnz=stats.counts["jnz"],
+        loop_register_lines=_loop_register_line_count(lines),
+        instruction_lines=stats.instruction_lines,
+        op_slots=stats.op_slots,
+    )
+
+
 def _line_map(lines: tuple[DisasmLine, ...]) -> dict[int, DisasmLine]:
     return {line.address: line for line in lines}
 
@@ -367,6 +504,8 @@ def _render_markdown(
     bd_entries: tuple[BdEntry, ...],
     program_segments: tuple[ProgramSegment, ...],
     main16_images: tuple[ProgramImage, ...],
+    phase_summaries: tuple[PhaseBodySummary, ...],
+    full_core_summary: FullCoreSummary,
     call_sites: tuple[CallSite, ...],
     evidence: tuple[str, ...],
     stats: tuple[OpStats, ...],
@@ -404,6 +543,35 @@ def _render_markdown(
             "<br>".join(line.text for line in site.setup_lines),
         )
         for site in call_sites
+    )
+    phase_rows = tuple(
+        (
+            item.name,
+            f"0x{item.start:x}-0x{item.end:x}",
+            str(item.bytes),
+            str(item.records),
+            str(item.q4_calls),
+            str(item.jl),
+            str(item.acq),
+            str(item.rel),
+            str(item.jnz),
+            str(item.loop_register_lines),
+        )
+        for item in phase_summaries
+    )
+    full_core_rows = (
+        (
+            full_core_summary.name,
+            str(full_core_summary.q4_calls),
+            str(full_core_summary.jl),
+            str(full_core_summary.acq),
+            str(full_core_summary.rel),
+            str(full_core_summary.jnz),
+            str(full_core_summary.loop_register_lines),
+            str(full_core_summary.instruction_lines),
+            str(full_core_summary.op_slots),
+            str(full_core_summary.path),
+        ),
     )
     stat_rows = tuple(
         (
@@ -446,6 +614,21 @@ def _render_markdown(
             "",
             "The c2r2 program is a raw segmented core program. The Q4NX microkernel is loaded once at `0x1f0`; the visible fused phase bodies call into it instead of embedding separate C++-style hot loops per phase.",
             "",
+            "## MyLM Phase Body Shape",
+            "",
+        ]
+    )
+    lines.extend(
+        _markdown_table(
+            ("phase", "range", "bytes", "records", "q4 calls", "jl", "acq", "rel", "jnz", "lc/ls/le lines"),
+            phase_rows,
+        )
+    )
+    lines.extend(
+        [
+            "",
+            "Each normal phase body has one scheduled `jl #0x1f0` into the shared Q4NX microkernel. The compact-record replay count is encoded by the body entry setup, not by cloning the per-chunk lock choreography.",
+            "",
             "## MyLM Main16 BD Contract",
             "",
         ]
@@ -465,6 +648,32 @@ def _render_markdown(
         [
             "",
             "The arguments are prepared in the branch-slot window after `jl #0x1f0`; MyLM is using a raw scheduled core body, not a normal C++ call boundary.",
+            "",
+            "## IRON Full Main Core Shape",
+            "",
+        ]
+    )
+    lines.extend(
+        _markdown_table(
+            (
+                "core",
+                "q4 calls",
+                "jl",
+                "acq",
+                "rel",
+                "jnz",
+                "lc/ls/le lines",
+                "instruction lines",
+                "op slots",
+                "path",
+            ),
+            full_core_rows,
+        )
+    )
+    lines.extend(
+        [
+            "",
+            "This is the active full-layer main core shape produced by MLIR-AIE. It is the gate that must collapse toward the MyLM phase-body shape before a 5x main16 improvement is credible.",
             "",
             "## Fixed Address Evidence",
             "",
@@ -494,9 +703,9 @@ def _render_markdown(
             "",
             "## Conclusion",
             "",
-            "MyLM's main16 advantage is a raw zero-overhead Q4NX loop with scheduled vector dequant/MAC/output packing and caller-side branch-slot setup. The active IRON kernel is numerically correct, but the C++ hot body still exposes scalar loop/control and wrapper structure that the compiler does not turn into the same dynamic schedule.",
+            "MyLM's main16 advantage is a raw zero-overhead Q4NX loop with scheduled vector dequant/MAC/output packing and caller-side branch-slot setup. The active IRON kernel is numerically correct, but the full main core still exposes per-chunk lock/control structure that the compiler does not collapse into the same phase-body schedule.",
             "",
-            "The next performance step should either generate a fixed-schedule main16 core body for the existing DMA0/DMA1/record ABI, or deliberately switch the numerical contract to the MyLM-style subtract-zero dequant and update the reference accordingly. Small Python generator cleanup cannot close this gap by itself.",
+            "The next performance step should generate a fixed-schedule main16 core body for the existing DMA0/DMA1/record ABI while preserving the verified Q4NX numerical contract `int4 * scale + offset`. Small Python generator cleanup cannot close this gap by itself.",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -509,6 +718,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mylm-program-segments", type=Path, default=DEFAULT_MYLM_PROGRAM_SEGMENTS)
     parser.add_argument("--mylm-program-images", type=Path, default=DEFAULT_MYLM_PROGRAM_IMAGES)
     parser.add_argument("--iron-baseline-object", type=Path, default=DEFAULT_IRON_BASELINE_OBJECT)
+    parser.add_argument("--iron-full-disasm", type=Path, default=DEFAULT_IRON_FULL_DISASM)
     parser.add_argument("--llvm-objdump", type=Path, default=DEFAULT_LLVM_OBJDUMP)
     parser.add_argument("--llvm-size", type=Path, default=DEFAULT_LLVM_SIZE)
     parser.add_argument("--markdown", type=Path, default=None)
@@ -524,6 +734,9 @@ def main() -> int:
     mylm_disasm = args.mylm_disasm.read_text()
     mylm_lines = _disasm_lines(mylm_disasm)
     mylm_by_addr = _line_map(mylm_lines)
+    phase_summaries = _phase_body_summaries(mylm_lines, MYLM_PHASE_BODIES, (0x1F0,))
+    iron_full_disasm = args.iron_full_disasm.read_text()
+    full_core_summary = _full_core_summary("iron_full_main_core", args.iron_full_disasm, iron_full_disasm)
     bd_entries = _load_bd_entries(args.mylm_bd_csv, "c2r2")
     program_segments = _load_program_segments(args.mylm_program_segments, 2, 2)
     main16_images = _main16_images(_load_program_images(args.mylm_program_images))
@@ -547,6 +760,7 @@ def main() -> int:
     print(f"mylm_program_images={args.mylm_program_images}")
     for name, path in iron_objects:
         print(f"iron_{name}_object={path}")
+    print(f"iron_full_disasm={args.iron_full_disasm}")
     print()
 
     image_bytes = tuple(sorted({image.bytes for image in main16_images}))
@@ -554,6 +768,28 @@ def main() -> int:
     print(f"  main16_images={len(main16_images)} byte_sizes={image_bytes}")
     for segment in program_segments:
         print(f"  offset=0x{segment.offset:x} bytes={segment.bytes} source={Path(segment.source).name}")
+    print()
+
+    print("[mylm_phase_body_shape]")
+    for item in phase_summaries:
+        print(
+            f"  {item.name}: range=0x{item.start:x}-0x{item.end:x} bytes={item.bytes} "
+            f"records={item.records} q4_calls={item.q4_calls} jl={item.jl} "
+            f"acq={item.acq} rel={item.rel} jnz={item.jnz} "
+            f"lc_ls_le_lines={item.loop_register_lines} "
+            f"instruction_lines={item.instruction_lines} op_slots={item.op_slots}"
+        )
+    print()
+
+    print("[iron_full_main_core_shape]")
+    print(
+        f"  {full_core_summary.name}: q4_calls={full_core_summary.q4_calls} "
+        f"jl={full_core_summary.jl} acq={full_core_summary.acq} "
+        f"rel={full_core_summary.rel} jnz={full_core_summary.jnz} "
+        f"lc_ls_le_lines={full_core_summary.loop_register_lines} "
+        f"instruction_lines={full_core_summary.instruction_lines} "
+        f"op_slots={full_core_summary.op_slots} path={full_core_summary.path}"
+    )
     print()
 
     print("[mylm_main16_bd_contract]")
@@ -608,6 +844,8 @@ def main() -> int:
                 bd_entries,
                 program_segments,
                 main16_images,
+                phase_summaries,
+                full_core_summary,
                 call_sites,
                 evidence,
                 tuple(all_stats),

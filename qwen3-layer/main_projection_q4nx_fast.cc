@@ -5,7 +5,6 @@
 
 namespace {
 
-constexpr int32_t kOutputBlocks = 8;
 constexpr int32_t kGroupsPerRow = qwen3::kQ4KChunk / qwen3::kQ4GroupSize;
 constexpr int32_t kRowsPerLane = qwen3::kMainRowsPerTile / 2;
 constexpr int32_t kRowPairBytes = kRowsPerLane / 2;
@@ -16,43 +15,87 @@ constexpr int32_t kBytesPerLane = qwen3::kQ4KChunk * kRowPairBytes;
 constexpr int32_t kUnrolledGroupDims = QWEN3_MAIN16_UNROLLED_GROUP_DIMS;
 
 static float accum[qwen3::kMainRowsPerTile];
-static float block_accum[kOutputBlocks][qwen3::kMainRowsPerTile];
 
-__attribute__((noinline)) static void write_record_payload(
+static inline bfloat16 *select_weight_buffer(
+    int32_t weight_chunk,
+    bfloat16 *wt_ping,
+    bfloat16 *wt_pong
+) {
+    return (weight_chunk & 1) == 0 ? wt_ping : wt_pong;
+}
+
+static inline int32_t *select_activation_buffer(
+    int32_t activation_chunk,
+    int32_t *chunk_ping,
+    int32_t *chunk_pong
+) {
+    return (activation_chunk & 1) == 0 ? chunk_ping : chunk_pong;
+}
+
+static inline int32_t *select_record_buffer(
+    int32_t block,
+    int32_t *record_ping,
+    int32_t *record_pong
+) {
+    return (block & 1) == 0 ? record_ping : record_pong;
+}
+
+static inline void acquire_activation_and_weight() {
+    acquire_greater_equal(qwen3::kMainActivationFullCoreLock, 1);
+    acquire_greater_equal(qwen3::kMainWeightFullCoreLock, 1);
+}
+
+static inline void release_activation_and_weight() {
+    release(qwen3::kMainActivationEmptyCoreLock, 1);
+    release(qwen3::kMainWeightEmptyCoreLock, 1);
+}
+
+static inline void acquire_record_buffer() {
+    acquire_greater_equal(qwen3::kMainRecordEmptyCoreLock, 1);
+}
+
+static inline void release_record_buffer() {
+    release(qwen3::kMainRecordFullCoreLock, 1);
+}
+
+__attribute__((noinline)) static void write_accum_record_payload(
     bfloat16 *payload,
-    bfloat16 *output,
+    float *target,
     int32_t num_rows
 ) {
     for (int32_t idx = 0; idx < qwen3::kRecordPayloadBf16; idx++) {
-        payload[idx] = idx < num_rows ? output[idx] : static_cast<bfloat16>(0.0f);
+        payload[idx] = idx < num_rows ? static_cast<bfloat16>(target[idx]) : static_cast<bfloat16>(0.0f);
+        if (idx < qwen3::kMainRowsPerTile) {
+            target[idx] = 0.0f;
+        }
     }
 }
 
-__attribute__((noinline)) static void emit_projection_record(
+__attribute__((noinline)) static void emit_accum_projection_record(
     int32_t *records,
-    bfloat16 *output,
+    float *target,
     int32_t phase,
-    int32_t offset,
+    int32_t replay,
     int32_t group,
     int32_t row,
     int32_t num_rows
 ) {
-    records[offset] = qwen3::projection_record_header(phase, group, row);
-    write_record_payload(qwen3::record_payload_bf16(records + offset), output, num_rows);
+    (void)replay;
+    records[0] = qwen3::projection_record_header(phase, group, row);
+    write_accum_record_payload(qwen3::record_payload_bf16(records), target, num_rows);
 }
 
-__attribute__((noinline)) static void emit_body_record(
+__attribute__((noinline)) static void emit_accum_body_record(
     int32_t *records,
-    bfloat16 *output,
+    float *target,
     int32_t phase,
     int32_t block,
     int32_t group,
     int32_t row,
     int32_t num_rows
 ) {
-    const int32_t offset = block * qwen3::kRecordDwords;
-    records[offset] = qwen3::body_record_header(phase, block, group, row);
-    write_record_payload(qwen3::record_payload_bf16(records + offset), output, num_rows);
+    records[0] = qwen3::body_record_header(phase, block, group, row);
+    write_accum_record_payload(qwen3::record_payload_bf16(records), target, num_rows);
 }
 
 template <int32_t Lane, int32_t Dim>
@@ -219,18 +262,96 @@ __attribute__((noinline)) static void q4nx_chunk_accum_fast(
     q4nx_accum_lane<1>(target, scales, offsets, data, activation_slice);
 }
 
+static void run_single_accum_phase(
+    int32_t records,
+    int32_t chunks_per_record,
+    int32_t weight_base,
+    int32_t phase,
+    int32_t group,
+    int32_t row,
+    int32_t num_rows,
+    bfloat16 *wt_ping,
+    bfloat16 *wt_pong,
+    int32_t *chunk_ping,
+    int32_t *chunk_pong,
+    int32_t *record_ping,
+    int32_t *record_pong
+) {
+#pragma clang loop unroll(disable)
+    for (int32_t block = 0; block < records; block++) {
+#pragma clang loop unroll(disable)
+        for (int32_t chunk = 0; chunk < chunks_per_record; chunk++) {
+            const int32_t local_chunk = block * chunks_per_record + chunk;
+            const int32_t weight_chunk = weight_base + local_chunk;
+            acquire_activation_and_weight();
+            q4nx_chunk_accum_fast(
+                accum,
+                select_weight_buffer(weight_chunk, wt_ping, wt_pong),
+                reinterpret_cast<bfloat16 *>(
+                    select_activation_buffer(weight_chunk, chunk_ping, chunk_pong)
+                )
+            );
+            release_activation_and_weight();
+        }
+        acquire_record_buffer();
+        emit_accum_body_record(
+            select_record_buffer(block, record_ping, record_pong),
+            accum,
+            phase,
+            block,
+            group,
+            row,
+            num_rows
+        );
+        release_record_buffer();
+    }
+}
+
+static void run_upgate_phase(
+    int32_t group,
+    int32_t row,
+    int32_t num_rows,
+    bfloat16 *wt_ping,
+    bfloat16 *wt_pong,
+    int32_t *chunk_ping,
+    int32_t *chunk_pong,
+    int32_t *record_ping,
+    int32_t *record_pong
+) {
+#pragma clang loop unroll(disable)
+    for (int32_t replay = 0; replay < qwen3::kUpGateReplays; replay++) {
+#pragma clang loop unroll(disable)
+        for (int32_t chunk = 0; chunk < qwen3::kUpGateChunksPerReplay; chunk++) {
+            const int32_t global_chunk = replay * qwen3::kUpGateChunksPerReplay + chunk;
+            const int32_t weight_chunk = qwen3::kFullLayerUpGateWeightChunkBase + global_chunk;
+            acquire_activation_and_weight();
+            q4nx_chunk_accum_fast(
+                accum,
+                select_weight_buffer(weight_chunk, wt_ping, wt_pong),
+                reinterpret_cast<bfloat16 *>(
+                    select_activation_buffer(weight_chunk, chunk_ping, chunk_pong)
+                )
+            );
+            release_activation_and_weight();
+        }
+        const int32_t phase = (replay & 1) == 0 ? qwen3::kUpPhase : qwen3::kGatePhase;
+        acquire_record_buffer();
+        emit_accum_projection_record(
+            select_record_buffer(replay, record_ping, record_pong),
+            accum,
+            phase,
+            replay,
+            group,
+            row,
+            num_rows
+        );
+        release_record_buffer();
+    }
+}
+
 } // namespace
 
 extern "C" {
-
-void clear_summary_fast(bfloat16 *summary, int32_t num_rows) {
-    for (int32_t idx = 0; idx < qwen3::kMainRowsPerTile; idx++) {
-        if (idx < num_rows) {
-            summary[idx] = static_cast<bfloat16>(0.0f);
-        }
-        accum[idx] = 0.0f;
-    }
-}
 
 void q4nx_fill_perf_inputs(
     bfloat16 *packed_chunk,
@@ -243,6 +364,14 @@ void q4nx_fill_perf_inputs(
     }
     for (int32_t idx = 0; idx < activation_dwords; idx++) {
         activation_words[idx] = 0x3f803f80;
+    }
+}
+
+void q4nx_clear_accum_fast(int32_t num_rows) {
+    for (int32_t idx = 0; idx < qwen3::kMainRowsPerTile; idx++) {
+        if (idx < num_rows) {
+            accum[idx] = 0.0f;
+        }
     }
 }
 
@@ -259,125 +388,199 @@ void q4nx_chunk_accum_slice_i32_fast(
     );
 }
 
-void q4nx_clear_block_summaries_fast(int32_t blocks, int32_t num_rows) {
-    for (int32_t block = 0; block < blocks && block < kOutputBlocks; block++) {
-        for (int32_t row = 0; row < qwen3::kMainRowsPerTile; row++) {
-            block_accum[block][row] = 0.0f;
-        }
-    }
-    (void)num_rows;
-}
-
-void q4nx_chunk_accum_block_slice_i32_fast(
-    bfloat16 *packed_chunk,
-    int32_t *activation_words,
-    int32_t block,
+void q4nx_main16_full_scheduler(
+    bfloat16 *wt_ping,
+    bfloat16 *wt_pong,
+    int32_t *chunk_ping,
+    int32_t *chunk_pong,
+    int32_t *record_ping,
+    int32_t *record_pong,
+    int32_t group,
+    int32_t row,
     int32_t num_rows
 ) {
-    if (block < 0 || block >= kOutputBlocks) {
-        return;
-    }
-    (void)num_rows;
-    q4nx_chunk_accum_fast(
-        block_accum[block],
-        packed_chunk,
-        reinterpret_cast<bfloat16 *>(activation_words)
+    run_single_accum_phase(
+        qwen3::kQBodyRecords,
+        qwen3::kQChunksPerRecord,
+        qwen3::kQWeightChunkBase,
+        qwen3::kQPhase,
+        group,
+        row,
+        num_rows,
+        wt_ping,
+        wt_pong,
+        chunk_ping,
+        chunk_pong,
+        record_ping,
+        record_pong
+    );
+    run_single_accum_phase(
+        qwen3::kKvBodyRecords,
+        qwen3::kKvChunksPerRecord,
+        qwen3::kKWeightChunkBase,
+        qwen3::kKPhase,
+        group,
+        row,
+        num_rows,
+        wt_ping,
+        wt_pong,
+        chunk_ping,
+        chunk_pong,
+        record_ping,
+        record_pong
+    );
+    run_single_accum_phase(
+        qwen3::kKvBodyRecords,
+        qwen3::kKvChunksPerRecord,
+        qwen3::kVWeightChunkBase,
+        qwen3::kVPhase,
+        group,
+        row,
+        num_rows,
+        wt_ping,
+        wt_pong,
+        chunk_ping,
+        chunk_pong,
+        record_ping,
+        record_pong
+    );
+    run_single_accum_phase(
+        qwen3::kOBodyRecords,
+        qwen3::kOChunksPerRecord,
+        qwen3::kFullLayerOWeightChunkBase,
+        qwen3::kOPhase,
+        group,
+        row,
+        num_rows,
+        wt_ping,
+        wt_pong,
+        chunk_ping,
+        chunk_pong,
+        record_ping,
+        record_pong
+    );
+    run_upgate_phase(
+        group,
+        row,
+        num_rows,
+        wt_ping,
+        wt_pong,
+        chunk_ping,
+        chunk_pong,
+        record_ping,
+        record_pong
+    );
+    run_single_accum_phase(
+        qwen3::kDownBodyRecords,
+        qwen3::kDownChunksPerRecord,
+        qwen3::kFullLayerDownWeightChunkBase,
+        qwen3::kDownPhase,
+        group,
+        row,
+        num_rows,
+        wt_ping,
+        wt_pong,
+        chunk_ping,
+        chunk_pong,
+        record_ping,
+        record_pong
     );
 }
 
-void q4nx_flush_output_fast(bfloat16 *output, int32_t num_rows) {
-    for (int32_t row = 0; row < qwen3::kMainRowsPerTile; row++) {
-        if (row < num_rows) {
-            output[row] = static_cast<bfloat16>(accum[row]);
-        }
-        accum[row] = 0.0f;
-    }
-}
-
-void q4nx_flush_block_output_fast(bfloat16 *output, int32_t block, int32_t num_rows) {
-    if (block < 0 || block >= kOutputBlocks) {
-        return;
-    }
-    for (int32_t row = 0; row < qwen3::kMainRowsPerTile; row++) {
-        if (row < num_rows) {
-            output[row] = static_cast<bfloat16>(block_accum[block][row]);
-        }
-        block_accum[block][row] = 0.0f;
-    }
-}
-
-void q4nx_emit_o_body_record(
-    int32_t *records,
-    bfloat16 *output,
+void q4nx_main16_qkv_scheduler(
+    bfloat16 *wt_ping,
+    bfloat16 *wt_pong,
+    int32_t *chunk_ping,
+    int32_t *chunk_pong,
+    int32_t *record_ping,
+    int32_t *record_pong,
     int32_t group,
     int32_t row,
-    int32_t block,
     int32_t num_rows
 ) {
-    emit_body_record(records, output, qwen3::kOPhase, block, group, row, num_rows);
+    run_single_accum_phase(
+        qwen3::kQBodyRecords,
+        qwen3::kQChunksPerRecord,
+        qwen3::kQWeightChunkBase,
+        qwen3::kQPhase,
+        group,
+        row,
+        num_rows,
+        wt_ping,
+        wt_pong,
+        chunk_ping,
+        chunk_pong,
+        record_ping,
+        record_pong
+    );
+    run_single_accum_phase(
+        qwen3::kKvBodyRecords,
+        qwen3::kKvChunksPerRecord,
+        qwen3::kKWeightChunkBase,
+        qwen3::kKPhase,
+        group,
+        row,
+        num_rows,
+        wt_ping,
+        wt_pong,
+        chunk_ping,
+        chunk_pong,
+        record_ping,
+        record_pong
+    );
+    run_single_accum_phase(
+        qwen3::kKvBodyRecords,
+        qwen3::kKvChunksPerRecord,
+        qwen3::kVWeightChunkBase,
+        qwen3::kVPhase,
+        group,
+        row,
+        num_rows,
+        wt_ping,
+        wt_pong,
+        chunk_ping,
+        chunk_pong,
+        record_ping,
+        record_pong
+    );
 }
 
-void q4nx_emit_down_body_record(
-    int32_t *records,
-    bfloat16 *output,
+void q4nx_main16_qkvo_scheduler(
+    bfloat16 *wt_ping,
+    bfloat16 *wt_pong,
+    int32_t *chunk_ping,
+    int32_t *chunk_pong,
+    int32_t *record_ping,
+    int32_t *record_pong,
     int32_t group,
     int32_t row,
-    int32_t block,
     int32_t num_rows
 ) {
-    emit_body_record(records, output, qwen3::kDownPhase, block, group, row, num_rows);
-}
-
-void q4nx_emit_q_body_record(
-    int32_t *records,
-    bfloat16 *output,
-    int32_t group,
-    int32_t row,
-    int32_t block,
-    int32_t num_rows
-) {
-    emit_body_record(records, output, qwen3::kQPhase, block, group, row, num_rows);
-}
-
-void q4nx_emit_k_body_record(
-    int32_t *records,
-    bfloat16 *output,
-    int32_t group,
-    int32_t row,
-    int32_t block,
-    int32_t num_rows
-) {
-    emit_body_record(records, output, qwen3::kKPhase, block, group, row, num_rows);
-}
-
-void q4nx_emit_v_body_record(
-    int32_t *records,
-    bfloat16 *output,
-    int32_t group,
-    int32_t row,
-    int32_t block,
-    int32_t num_rows
-) {
-    emit_body_record(records, output, qwen3::kVPhase, block, group, row, num_rows);
-}
-
-void q4nx_emit_upgate_record(
-    int32_t *records,
-    bfloat16 *output,
-    int32_t group,
-    int32_t row,
-    int32_t replay,
-    int32_t num_rows
-) {
-    const int32_t phase = (replay & 1) == 0 ? qwen3::kUpPhase : qwen3::kGatePhase;
-    emit_projection_record(
-        records,
-        output,
-        phase,
-        replay * qwen3::kRecordDwords,
+    q4nx_main16_qkv_scheduler(
+        wt_ping,
+        wt_pong,
+        chunk_ping,
+        chunk_pong,
+        record_ping,
+        record_pong,
         group,
         row,
         num_rows
+    );
+    run_single_accum_phase(
+        qwen3::kOBodyRecords,
+        qwen3::kOChunksPerRecord,
+        qwen3::kFullLayerOWeightChunkBase,
+        qwen3::kOPhase,
+        group,
+        row,
+        num_rows,
+        wt_ping,
+        wt_pong,
+        chunk_ping,
+        chunk_pong,
+        record_ping,
+        record_pong
     );
 }
 

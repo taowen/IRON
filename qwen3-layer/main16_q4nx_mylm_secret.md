@@ -27,6 +27,18 @@ This report is generated from the local MyLM disassembly and the selected IRON r
 
 The c2r2 program is a raw segmented core program. The Q4NX microkernel is loaded once at `0x1f0`; the visible fused phase bodies call into it instead of embedding separate C++-style hot loops per phase.
 
+## MyLM Phase Body Shape
+
+| phase | range | bytes | records | q4 calls | jl | acq | rel | jnz | lc/ls/le lines |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Q/K/V | 0x1870-0x1e80 | 1552 | 12 | 1 | 1 | 3 | 3 | 2 | 3 |
+| O | 0x1e80-0x2490 | 1552 | 8 | 1 | 1 | 3 | 3 | 2 | 3 |
+| up/gate | 0x2490-0x2aa0 | 1552 | 48 | 1 | 1 | 3 | 3 | 2 | 3 |
+| down | 0x2aa0-0x30c0 | 1568 | 8 | 1 | 1 | 3 | 3 | 2 | 3 |
+| alternate | 0x30c0-0x36d0 | 1552 | 304 | 1 | 1 | 3 | 3 | 2 | 3 |
+
+Each normal phase body has one scheduled `jl #0x1f0` into the shared Q4NX microkernel. The compact-record replay count is encoded by the body entry setup, not by cloning the per-chunk lock choreography.
+
 ## MyLM Main16 BD Contract
 
 | role | bd | len | base | next | acquire | release |
@@ -52,6 +64,14 @@ The outer ABI matches the active IRON design: DMA0 activation, DMA1 Q4NX weight,
 
 The arguments are prepared in the branch-slot window after `jl #0x1f0`; MyLM is using a raw scheduled core body, not a normal C++ call boundary.
 
+## IRON Full Main Core Shape
+
+| core | q4 calls | jl | acq | rel | jnz | lc/ls/le lines | instruction lines | op slots | path |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| iron_full_main_core | 129 | 157 | 232 | 232 | 11 | 9 | 2796 | 4191 | qwen3-layer/build/main_core_2_2.after-direct-emit.s |
+
+This is the active full-layer main core shape produced by MLIR-AIE. It is the gate that must collapse toward the MyLM phase-body shape before a 5x main16 improvement is credible.
+
 ## Fixed Address Evidence
 
 ```text
@@ -75,26 +95,22 @@ The arguments are prepared in the branch-slot window after `jl #0x1f0`; MyLM is 
 
 | range | instruction lines | op slots | top ops |
 | --- | --- | --- | --- |
-| mylm_q4_microkernel | 976 | 1560 | vmov=400, vmac.f=264, vextbcst.16=256, vconv.bf16.fp32=136, nop=108, vunpack=64, vups.4x=64, vadd=64, vsub.f=64, vldb=46, vmov.d=16, vlda=11 |
-| mylm_q4_hot_loop | 963 | 1532 | vmov=400, vmac.f=264, vextbcst.16=256, vconv.bf16.fp32=136, nop=108, vunpack=64, vups.4x=64, vadd=64, vsub.f=64, vldb=46, vmov.d=16, vlda=11 |
-| mylm_qkv_body | 264 | 393 | vmov=72, nop=44, vadd.f=40, vshift=32, st=20, lda=19, movxm=12, mov=11, movx=9, nopa=9, nopb=9, nopv=8 |
-| iron_baseline_iron_fast_q4_hot_body | 575 | 1179 | vst=154, mov=110, vconv.bf16.fp32=110, vlda=75, nop=71, vadd.f=46, vbcst.16=45, vconv.fp32.bf16=45, vunpack=44, vmul.f=44, lda.s16=44, vmac.f=44 |
+| mylm_q4_microkernel | 976 | 1560 | vmov=400, vmac.f=264, vextbcst.16=256, vconv.bf16.fp32=136, nop=108, vunpack=64, vups.4x=64, vadd=64, vsub.f=64, vldb=46, vmov.d=16, vlda=11, vbcst.16=9, mov=8, lda.s16=8, vmul.f=8 |
+| mylm_q4_hot_loop | 963 | 1532 | vmov=400, vmac.f=264, vextbcst.16=256, vconv.bf16.fp32=136, nop=108, vunpack=64, vups.4x=64, vadd=64, vsub.f=64, vldb=46, vmov.d=16, vlda=11, lda.s16=8, vmul.f=8, vbcst.16=8, add.nc=4 |
+| mylm_qkv_body | 264 | 393 | vmov=72, nop=44, vadd.f=40, vshift=32, st=20, lda=19, movxm=12, mov=11, movx=9, nopa=9, nopb=9, nopv=8, vlda.conv.fp32.bf16=8, st.s16=8, vconv.bf16.fp32=8, vextract.16=8 |
+| iron_baseline_iron_fast_q4_hot_body | 575 | 1179 | vst=154, mov=110, vconv.bf16.fp32=110, vlda=75, nop=71, vadd.f=46, vbcst.16=45, vconv.fp32.bf16=45, vunpack=44, vmul.f=44, lda.s16=44, vmac.f=44, lshl=42, mova=36, or=34, add=26 |
 | iron_baseline_iron_fast_q4_function | 6 | 8 | nop=2, movs=2, mov=2, j=1, movxm=1 |
-| iron_baseline_iron_fast_q4_block_function | 23 | 34 | nop=8, mov=3, nopb=2, nops=2, nopxm=2, nopv=2, paddxm=2, movs=2, mova=1, ltu=1, jnz=1, st=1 |
-| iron_baseline_iron_fast_perf_fill | 30 | 104 | nopb=16, nopv=16, nops=15, nopa=15, nopxm=8, movxm=6, nopm=4, mova=3, nop=3, ge=2, jnz=2, add.nc=2 |
+| iron_baseline_iron_fast_q4_block_function | 23 | 34 | nop=8, mov=3, nopb=2, nops=2, nopxm=2, nopv=2, paddxm=2, movs=2, mova=1, ltu=1, jnz=1, st=1, jl=1, lshl=1, movxm=1, padda=1 |
+| iron_baseline_iron_fast_perf_fill | 30 | 104 | nopb=16, nopv=16, nops=15, nopa=15, nopxm=8, movxm=6, nopm=4, mova=3, nop=3, ge=2, jnz=2, add.nc=2, lshl=2, nopx=2, mov=2, add=2 |
 
 ## IRON Object Size
 
 | object | file bytes | text bytes | path |
 | --- | --- | --- | --- |
-| active | 10032 | 5728 | qwen3-layer/main_projection_q4nx_fast.o |
-
-Deleted C++ scheduled probes are historical evidence only. The active IRON tree
-keeps a single main16 projection object so full-layer generators cannot
-accidentally link multiple Q4NX role implementations into the same tile.
+| baseline | 9576 | 5568 | qwen3-layer/main_projection_q4nx_fast.o |
 
 ## Conclusion
 
-MyLM's main16 advantage is a raw zero-overhead Q4NX loop with scheduled vector dequant/MAC/output packing and caller-side branch-slot setup. The active IRON kernel is numerically correct, but the C++ hot body still exposes scalar loop/control and wrapper structure that the compiler does not turn into the same dynamic schedule.
+MyLM's main16 advantage is a raw zero-overhead Q4NX loop with scheduled vector dequant/MAC/output packing and caller-side branch-slot setup. The active IRON kernel is numerically correct, but the full main core still exposes per-chunk lock/control structure that the compiler does not collapse into the same phase-body schedule.
 
-The next performance step should either generate a fixed-schedule main16 core body for the existing DMA0/DMA1/record ABI, or deliberately switch the numerical contract to the MyLM-style subtract-zero dequant and update the reference accordingly. Small Python generator cleanup cannot close this gap by itself.
+The next performance step should generate a fixed-schedule main16 core body for the existing DMA0/DMA1/record ABI while preserving the verified Q4NX numerical contract `int4 * scale + offset`. Small Python generator cleanup cannot close this gap by itself.

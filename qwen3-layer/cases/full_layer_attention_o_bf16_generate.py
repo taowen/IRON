@@ -17,7 +17,7 @@ from cases.full_layer_engine_reference import (
     RMS_NORM_DWORDS,
     TOTAL_WEIGHT_AND_AUX_I32,
 )
-from cases.currentkv_cache_dataflow import (
+from cases.kv_cache_dataflow import (
     CURRENT_WRITE_BDS,
     CURRENT_WRITE_CHANNEL,
     K_SCAN_BD,
@@ -32,7 +32,7 @@ from cases.currentkv_cache_dataflow import (
     shape_runtime_start_name,
     shape_tail_tokens_name,
 )
-from cases.currentkv_kvscan_attention_kv16_reference import (
+from cases.decode_cache_reference import (
     ACCUM_LANES,
     CACHE_BLOCK_DWORDS,
     CURRENT_DWORDS,
@@ -44,12 +44,15 @@ from cases.currentkv_kvscan_attention_kv16_reference import (
     V_CACHE_SIDE_DWORDS,
     V_WINDOW_DWORDS,
 )
-from cases.kvscan_attention_kv16_reference import OUTPUT_DWORDS as ATTENTION_OUTPUT_DWORDS
-from cases.kvscan_attention_kv16_reference import WEIGHT_DWORDS, WINDOW_DWORDS
+from cases.kv_scan_reference import OUTPUT_DWORDS as ATTENTION_OUTPUT_DWORDS
+from cases.kv_scan_reference import WEIGHT_DWORDS, WINDOW_DWORDS
 from compact_dataflow import (
+    BRIDGE_COMPACT_OUT_CHANNEL,
     BRIDGE_PACKET_IN_BDS,
     BRIDGE_PACKET_OUT_BDS,
     BRIDGE_RECEIVE_BDS,
+    COLUMN_OUT_CHANNEL,
+    COLUMN_OUT_BDS,
     COLUMN_RECEIVE_BDS,
     COMPACT_OUT_BDS,
     FULL_REPLAY_PACKET_ID,
@@ -60,15 +63,12 @@ from compact_dataflow import (
     O_GLOBAL_PACKET_ID,
     PACKET_ID_ATTENTION,
     Q_GLOBAL_PACKET_ID,
-    UPGATE_MAIN_RECORD_DWORDS,
     V_GLOBAL_PACKET_ID,
     WEIGHT_PATCH_INPUT_BDS,
     WEIGHT_ROW_BDS,
     _phase_trace_marker,
-    column_packet,
-    main_packet,
 )
-from contract import C1R2_QKV_REPLAYS, C1R2_PACKET_DWORDS, CHUNK_BF16, MAIN_COLUMNS, MAIN_ROWS, RECORD_DWORDS
+from contract import C1R2_QKV_REPLAYS, C1R2_PACKET_DWORDS, CHUNK_BF16, MAIN_COLUMNS, MAIN_ROWS
 from mlir_utils import (
     flow,
     npu_address_patch,
@@ -84,8 +84,8 @@ from mlir_utils import (
     require_dma_bd_next_ids,
     require_dma_bd_lock_balance,
     require_dma_next_bd_labels,
-    require_kv16_attention_shapes,
-    require_main_record_phase_barrier,
+    require_attention_block_shapes,
+    require_main_record_pingpong,
     require_marker_order,
     require_max_address_patch_arg,
     require_memtile_dma_bd_bank,
@@ -93,18 +93,14 @@ from mlir_utils import (
     require_npu_push_queue_repeat_range,
     require_npu_writebd_field_ranges,
     require_npu_writebd_id_limit,
+    require_source_side_packet_replay,
     require_unique_bd_ids,
     require_unique_packet_flows,
 )
 from projection_schedule import (
-    DOWN_BODY_RECORDS,
     FULL_LAYER_DOWN_WEIGHT_CHUNK_BASE,
-    FULL_LAYER_O_WEIGHT_CHUNK_BASE,
     FULL_LAYER_UPGATE_WEIGHT_CHUNK_BASE,
-    K_WEIGHT_CHUNK_BASE,
     O_BODY_RECORDS,
-    Q_WEIGHT_CHUNK_BASE,
-    V_WEIGHT_CHUNK_BASE,
 )
 from resource_manifest import ResourceManifest, validate_manifest_matches_mlir, validate_resource_manifest
 
@@ -318,19 +314,19 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
     flows = [f"    // case marker {CASE_NAME}"]
     for group in range(len(MAIN_COLUMNS)):
         for row in range(len(MAIN_ROWS)):
-            flows.append(packet_flow(main_packet(group, row), full._main_symbol(group, row), 1, f"mt{group}", row))
+            flows.append(flow(full._main_symbol(group, row), 1, f"mt{group}", row))
             flows.append(flow("bridge", 1, full._main_symbol(group, row), 0))
             flows.append(flow(f"mt{group}", row, full._main_symbol(group, row), 1))
-        flows.append(packet_flow(column_packet(group), f"mt{group}", 5, "bridge", group))
+        flows.append(flow(f"mt{group}", COLUMN_OUT_CHANNEL, "bridge", group))
         flows.append(flow(f"shim{group}", 0, f"mt{group}", 4))
         flows.append(flow(f"shim{group}", 1, f"mt{group}", 5))
     for packet in (Q_GLOBAL_PACKET_ID, K_GLOBAL_PACKET_ID, V_GLOBAL_PACKET_ID):
-        flows.append(packet_flow(packet, "bridge", 5, "post", 0))
+        flows.append(packet_flow(packet, "bridge", BRIDGE_COMPACT_OUT_CHANNEL, "post", 0))
     flows.extend(
         (
             packet_flow(full.CURRENT_PACKET_K, "post", 1, "shim_left", 1),
             packet_flow(full.CURRENT_PACKET_V, "post", 1, "shim_right", 1),
-            packet_flow(O_GLOBAL_PACKET_ID, "bridge", 5, "full", 0),
+            packet_flow(O_GLOBAL_PACKET_ID, "bridge", BRIDGE_COMPACT_OUT_CHANNEL, "full", 0, keep_pkt_header=True),
             flow("post", 0, "hub", HUB_Q_IN_CHANNEL),
             flow("shim_left", 0, "kv_left", 0),
             flow("shim_left", 1, "kv_left", 1),
@@ -379,6 +375,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
 
 {chr(10).join(flows)}
 
+    func.func private @qwen3_postprocess_absorb_qkv_payload_record(memref<{full.COMPACT_PACKET_DWORDS - 1}xi32>, memref<{full.Q_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/postprocess_qkv.o"}}
     func.func private @qwen3_postprocess_q4nx_body_payload(memref<{full.Q_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{QK_ROPE_DWORDS}xi32>, memref<{full.Q_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<{CURRENT_DWORDS}xi32>, memref<1xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/postprocess_qkv.o"}}
     func.func private @full_c1r2_make_input_norm_payload(memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
     func.func private @full_c1r2_write_o_block(memref<{full.COMPACT_PACKET_DWORDS}xi32>, memref<{OUTPUT_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
@@ -386,16 +383,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
     func.func private @qwen3_attention_bf16_init_accum(memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
     func.func private @qwen3_attention_bf16_accum_block(memref<{V_WINDOW_DWORDS}xi32>, memref<{SCALAR_DWORDS + WEIGHT_DWORDS}xi32>, memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, i32, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
     func.func private @qwen3_attention_bf16_finish_accum(memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, memref<{ATTENTION_OUTPUT_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
-    func.func private @clear_summary_fast(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_chunk_accum_slice_i32_fast(memref<{CHUNK_BF16}xbf16>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_clear_block_summaries_fast(i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_chunk_accum_block_slice_i32_fast(memref<{CHUNK_BF16}xbf16>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_flush_block_output_fast(memref<32xbf16>, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_flush_output_fast(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_emit_q_body_record(memref<{full.Q_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_emit_k_body_record(memref<{full.KV_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_emit_v_body_record(memref<{full.KV_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
-    func.func private @q4nx_emit_o_body_record(memref<{full.O_BODY_RECORDS * RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_main16_qkvo_scheduler(memref<{CHUNK_BF16}xbf16>, memref<{CHUNK_BF16}xbf16>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
 
 {chr(10).join(blocks)}
 {_runtime_sequence(schedule)}
@@ -409,19 +397,13 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     required = (
         f"case marker {CASE_NAME}",
         f"compact phase trace {_phase_trace_marker(full.QKVO_PHASE_TRACE)}",
+        "qwen3_postprocess_absorb_qkv_payload_record",
         "qwen3_postprocess_q4nx_body_payload",
         "full_c1r2_make_input_norm_payload",
         "full_c1r2_write_o_block",
         "qwen3_attention_bf16_make_carrier_masked",
         "qwen3_attention_bf16_finish_accum",
-        "q4nx_emit_q_body_record",
-        "q4nx_emit_k_body_record",
-        "q4nx_emit_v_body_record",
-        "q4nx_emit_o_body_record",
-        f"%c{Q_WEIGHT_CHUNK_BASE}_i32 = arith.constant {Q_WEIGHT_CHUNK_BASE} : i32",
-        f"%c{K_WEIGHT_CHUNK_BASE}_i32 = arith.constant {K_WEIGHT_CHUNK_BASE} : i32",
-        f"%c{V_WEIGHT_CHUNK_BASE}_i32 = arith.constant {V_WEIGHT_CHUNK_BASE} : i32",
-        f"%o_mb_weight_base_i32 = arith.constant {FULL_LAYER_O_WEIGHT_CHUNK_BASE} : i32",
+        "q4nx_main16_qkvo_scheduler",
         f"aie.packet_flow({full.CURRENT_PACKET_K})",
         f"aie.packet_flow({full.CURRENT_PACKET_V})",
         f"aie.packet_flow({PACKET_ID_ATTENTION})",
@@ -454,8 +436,8 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     errors.extend(validate_manifest_matches_mlir(CASE_NAME, ownership, mlir))
     if tuple(phase.label for phase in full.QKVO_PHASE_TRACE) != ("q", "k", "v", "o"):
         errors.append("full-layer attention-o phase trace must be q,k,v,o")
-    if mlir.count(MAIN16_KERNEL_OBJECT) != 10:
-        errors.append(f"full-layer attention-o expected 10 declarations linked with {MAIN16_KERNEL_OBJECT}")
+    if mlir.count(MAIN16_KERNEL_OBJECT) != 1:
+        errors.append(f"full-layer attention-o expected 1 declaration linked with {MAIN16_KERNEL_OBJECT}")
     errors.extend(
         require_marker_order(
             CASE_NAME,
@@ -476,31 +458,46 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
             ),
         )
     )
-    expected_packets = len(MAIN_COLUMNS) * (len(MAIN_ROWS) + 1) + 8
+    expected_packets = 8
     errors.extend(require_count(CASE_NAME, "packet flow", mlir.count("aie.packet_flow("), expected_packets))
+    errors.extend(require_count(CASE_NAME, "qwen3 compact record absorb", mlir.count("qwen3_postprocess_absorb_qkv_payload_record"), 2))
     errors.extend(require_count(CASE_NAME, "qwen3 q4nx body postprocess", mlir.count("qwen3_postprocess_q4nx_body_payload"), 2))
     errors.extend(require_count(CASE_NAME, "qwen3_attention_bf16_make_carrier_masked", mlir.count("qwen3_attention_bf16_make_carrier_masked"), 5))
     errors.extend(require_count(CASE_NAME, "qwen3_attention_bf16_init_accum", mlir.count("qwen3_attention_bf16_init_accum"), 5))
     errors.extend(require_count(CASE_NAME, "qwen3_attention_bf16_accum_block", mlir.count("qwen3_attention_bf16_accum_block"), 5))
     errors.extend(require_count(CASE_NAME, "qwen3_attention_bf16_finish_accum", mlir.count("qwen3_attention_bf16_finish_accum"), 5))
-    errors.extend(require_count(CASE_NAME, "q4nx q emit calls", mlir.count("func.call @q4nx_emit_q_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
-    errors.extend(require_count(CASE_NAME, "q4nx k emit calls", mlir.count("func.call @q4nx_emit_k_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
-    errors.extend(require_count(CASE_NAME, "q4nx v emit calls", mlir.count("func.call @q4nx_emit_v_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
-    errors.extend(require_count(CASE_NAME, "q4nx o emit calls", mlir.count("func.call @q4nx_emit_o_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
-    errors.extend(require_count(CASE_NAME, "q4nx fast single-accum chunk call sites", mlir.count("func.call @q4nx_chunk_accum_slice_i32_fast("), len(MAIN_COLUMNS) * len(MAIN_ROWS) * 6))
-    errors.extend(require_count(CASE_NAME, "q4nx fast block-accum chunk call sites", mlir.count("func.call @q4nx_chunk_accum_block_slice_i32_fast("), len(MAIN_COLUMNS) * len(MAIN_ROWS) * 4))
+    main_tile_count = len(MAIN_COLUMNS) * len(MAIN_ROWS)
+    errors.extend(require_count(CASE_NAME, "q4nx main16 qkvo scheduler calls", mlir.count("func.call @q4nx_main16_qkvo_scheduler"), main_tile_count))
     errors.extend(require_count(CASE_NAME, "weight arg2 address patches", mlir.count("arg_idx = 2 : i32"), 18))
     errors.extend(require_count(CASE_NAME, "output arg3 address patch", mlir.count("arg_idx = 3 : i32"), 1))
     errors.extend(require_count(CASE_NAME, "hidden arg4 address patch", mlir.count("arg_idx = 4 : i32"), 1))
     errors.extend(require_unique_packet_flows(CASE_NAME, mlir))
     errors.extend(require_dma_next_bd_labels(CASE_NAME, mlir))
     errors.extend(require_dma_bd_next_ids(CASE_NAME, mlir))
-    errors.extend(require_main_record_phase_barrier(CASE_NAME, mlir, 3))
-    errors.extend(require_dma_bd_lock_balance(CASE_NAME, mlir))
+    errors.extend(require_main_record_pingpong(CASE_NAME, mlir))
+    attention_replay_blocks = tuple(f"^attention_out{idx}" for idx in range(O_BODY_RECORDS))
+    errors.extend(
+        require_dma_bd_lock_balance(
+            CASE_NAME,
+            mlir,
+            allowed_unbalanced_blocks=(attention_replay_blocks[0], attention_replay_blocks[-1]),
+        )
+    )
+    errors.extend(
+        require_source_side_packet_replay(
+            CASE_NAME,
+            mlir,
+            "attention_out",
+            PACKET_ID_ATTENTION,
+            O_BODY_RECORDS,
+            "aie.use_lock(%hub_return_full, AcquireGreaterEqual, 4)",
+            "aie.use_lock(%hub_return_empty, Release, 4)",
+        )
+    )
     errors.extend(require_memtile_dma_bd_bank(CASE_NAME, mlir))
     errors.extend(full.validate_main_buffer_residency(CASE_NAME, mlir))
     errors.extend(
-        require_kv16_attention_shapes(
+        require_attention_block_shapes(
             CASE_NAME,
             K_WINDOW_DWORDS,
             V_WINDOW_DWORDS,
@@ -524,9 +521,10 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         errors.extend(require_unique_bd_ids(f"{CASE_NAME} bridge compact receive group {group}", bd_ids))
     for row, bd_ids in enumerate(COLUMN_RECEIVE_BDS):
         errors.extend(require_unique_bd_ids(f"{CASE_NAME} row compact receive row {row}", bd_ids))
+    errors.extend(require_unique_bd_ids(f"{CASE_NAME} row compact output", COLUMN_OUT_BDS))
     errors.extend(require_unique_bd_ids(CASE_NAME, COMPACT_OUT_BDS))
     all_weight_bds = tuple(bd for pair in WEIGHT_PATCH_INPUT_BDS + WEIGHT_ROW_BDS for bd in pair)
-    compact_bds = tuple(bd for row_bds in COLUMN_RECEIVE_BDS for bd in row_bds) + COMPACT_OUT_BDS
+    compact_bds = tuple(bd for row_bds in COLUMN_RECEIVE_BDS for bd in row_bds) + COLUMN_OUT_BDS
     errors.extend(require_unique_bd_ids(f"{CASE_NAME} row1 weight stream", all_weight_bds))
     errors.extend(require_disjoint_bd_ids(CASE_NAME, all_weight_bds, compact_bds))
     errors.extend(require_npu_writebd_id_limit(CASE_NAME, mlir, 15))
@@ -545,6 +543,12 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
                 "ffn_swiglu_slice_bf16_inputs",
                 "full_c1r2_make_post_norm_payload",
                 "full_c1r2_write_down_block",
+                "q4nx_flush_output_fast",
+                "q4nx_flush_block_output_fast",
+                "q4nx_emit_q_body_record",
+                "q4nx_emit_k_body_record",
+                "q4nx_emit_v_body_record",
+                "q4nx_emit_o_body_record",
                 "q4nx_emit_upgate_record",
                 "q4nx_emit_down_body_record",
                 f"%upgate_weight_chunk_base_i32 = arith.constant {FULL_LAYER_UPGATE_WEIGHT_CHUNK_BASE} : i32",

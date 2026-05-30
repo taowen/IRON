@@ -49,6 +49,8 @@ def _compile_aie_object(source_name: str, object_name: str) -> None:
         "-O2",
         "-std=c++20",
         "--target=aie2p-none-unknown-elf",
+        "-ffunction-sections",
+        "-fdata-sections",
         "-Wno-parentheses",
         "-Wno-attributes",
         "-Wno-macro-redefined",

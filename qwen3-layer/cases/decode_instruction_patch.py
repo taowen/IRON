@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from cases.currentkv_kvscan_attention_kv16_reference import CACHE_BLOCK_DWORDS, DecodeSchedule
+from cases.decode_cache_reference import CACHE_BLOCK_DWORDS, DecodeSchedule
 
 RTP_WRITE_TRAILER = (0x18, 0, 0)
 PUSH_QUEUE_REPEAT_FLAG = 0x80000000
