@@ -8,7 +8,7 @@ import numpy as np
 from ml_dtypes import bfloat16
 
 from contract import HEAD_DIM, HIDDEN_DIM, INTERMEDIATE_DIM, NUM_KV_HEADS, NUM_Q_HEADS
-from q4nx_reference import q4nx_matvec_from_chunk
+from q4nx_reference import q4nx_matvec_from_chunks
 from qwen3_model import ProjectionTensor, Qwen3Q4NXModel, layer_projection_tensors
 
 CASE_NAME = "qwen3-8b-decode-layer"
@@ -21,6 +21,29 @@ O_PROJECTION = "O"
 UP_PROJECTION = "UP"
 GATE_PROJECTION = "GATE"
 DOWN_PROJECTION = "DOWN"
+ATTENTION_CONTEXT = 16
+ATTENTION_HEADS_PER_WINDOW = 8
+ATTENTION_KV_HEADS_PER_WINDOW = 2
+ATTENTION_RSQRT_HEAD_DIM = np.float32(0.0883883476)
+SIGMOID_TABLE_SCALE = 8.0
+SIGMOID_TABLE = np.array(
+    [
+        0.5000000000, 0.5312093734, 0.5621765009, 0.5926666000, 0.6224593312,
+        0.6513548647, 0.6791786992, 0.7057850278, 0.7310585786, 0.7549149869,
+        0.7772998612, 0.7981867777, 0.8175744762, 0.8354835371, 0.8519528020,
+        0.8670357598, 0.8807970780, 0.8933094061, 0.9046505351, 0.9149009550,
+        0.9241418200, 0.9324533089, 0.9399133498, 0.9465966702, 0.9525741268,
+        0.9579122721, 0.9626731127, 0.9669140216, 0.9706877692, 0.9740426428,
+        0.9770226301, 0.9796676467, 0.9820137900, 0.9840936083, 0.9859363730,
+        0.9875683491, 0.9890130574, 0.9902915235, 0.9914225146, 0.9924227587,
+        0.9933071491, 0.9940889311, 0.9947798743, 0.9953904278, 0.9959298623,
+        0.9964063974, 0.9968273172, 0.9971990730, 0.9975273768, 0.9978172836,
+        0.9980732653, 0.9982992776, 0.9984988177, 0.9986749776, 0.9988304897,
+        0.9989677690, 0.9990889488, 0.9991959141, 0.9992903296, 0.9993736658,
+        0.9994472214, 0.9995121429, 0.9995694429, 0.9996200155, 0.9996646499,
+    ],
+    dtype=np.float32,
+)
 
 
 @dataclass(frozen=True)
@@ -165,8 +188,8 @@ def _apply_rope(values: np.ndarray, position: int, rope_theta: float) -> np.ndar
     dims = np.arange(0, HEAD_DIM, 2, dtype=np.float32)
     inv_freq = np.power(np.float32(rope_theta), -dims / np.float32(HEAD_DIM))
     angles = np.float32(position) * inv_freq
-    cos = np.cos(angles)
-    sin = np.sin(angles)
+    cos = np.cos(angles).astype(bfloat16).astype(np.float32)
+    sin = np.sin(angles).astype(bfloat16).astype(np.float32)
     output = np.empty_like(heads)
     even = heads[:, 0::2]
     odd = heads[:, 1::2]
@@ -177,7 +200,20 @@ def _apply_rope(values: np.ndarray, position: int, rope_theta: float) -> np.ndar
 
 def _silu(values: np.ndarray) -> np.ndarray:
     x = values.astype(np.float32)
-    return x / (1.0 + np.exp(-x))
+    abs_x = np.abs(x)
+    scaled = abs_x * np.float32(SIGMOID_TABLE_SCALE)
+    index = scaled.astype(np.int32)
+    clamped = np.minimum(index, SIGMOID_TABLE.shape[0] - 2)
+    fraction = scaled - clamped.astype(np.float32)
+    low = SIGMOID_TABLE[clamped]
+    high = SIGMOID_TABLE[clamped + 1]
+    sigmoid = low + (high - low) * fraction
+    edge = SIGMOID_TABLE[-1]
+    sigmoid = np.where(index >= SIGMOID_TABLE.shape[0] - 1, edge, sigmoid)
+    sigmoid = np.where(abs_x > 8.0, 1.0, sigmoid)
+    sigmoid = np.where(x < 0.0, 1.0 - sigmoid, sigmoid)
+    sigmoid = np.where(x < -8.0, 0.0, sigmoid)
+    return x * sigmoid
 
 
 class Qwen3LayerReference:
@@ -273,18 +309,26 @@ def _project_q4nx(
 ) -> np.ndarray:
     if activation.shape != (projection.input_dim,):
         raise ValueError(f"{projection.phase} activation shape mismatch: {activation.shape}")
-    output = np.empty(projection.output_dim, dtype=bfloat16)
-    for block in range(projection.blocks):
-        for row_chunk_in_block in range(16):
-            output_chunk = block * 16 + row_chunk_in_block
-            accum = np.zeros(32, dtype=np.float32)
-            for input_chunk in range(projection.chunks):
-                source = output_chunk * projection.chunks + input_chunk
-                start = input_chunk * 256
-                accum += q4nx_matvec_from_chunk(chunks[source], activation[start : start + 256])
-            start_row = output_chunk * 32
-            output[start_row : start_row + 32] = accum.astype(bfloat16)
-    return output
+    output_chunks = projection.output_chunks
+    accum = np.zeros((output_chunks, 32), dtype=np.float32)
+    output_indices = np.arange(output_chunks, dtype=np.int32) * projection.chunks
+    for input_chunk in range(projection.chunks):
+        source = output_indices + input_chunk
+        start = input_chunk * 256
+        accum += q4nx_matvec_from_chunks(chunks[source], activation[start : start + 256])
+    return accum.reshape(projection.output_dim).astype(bfloat16)
+
+
+def project_q4nx_bf16(
+    projection: ProjectionTensor,
+    chunks: np.ndarray,
+    activation: np.ndarray,
+) -> np.ndarray:
+    return _project_q4nx(projection, chunks, activation)
+
+
+def rms_norm_bf16(values: np.ndarray, weight: np.ndarray, eps: float) -> np.ndarray:
+    return _rms_norm(values, weight, eps)
 
 
 def _attention(
@@ -305,6 +349,134 @@ def _attention(
         weights = np.exp(shifted)
         weights /= np.sum(weights)
         output[q_head, :] = np.einsum("t,td->d", weights, v_values[:, kv_head, :]).astype(bfloat16)
+    return output.reshape(HIDDEN_DIM).astype(bfloat16)
+
+
+def _floor_i32(value: np.float32) -> int:
+    truncated = int(value)
+    return truncated - 1 if np.float32(truncated) > value else truncated
+
+
+def _pow2_i32(exponent: int) -> np.float32:
+    if exponent < -126:
+        return np.float32(0.0)
+    if exponent > 127:
+        exponent = 127
+    return np.float32(np.ldexp(np.float32(1.0), exponent))
+
+
+def _fast_exp_npu(value: np.float32) -> np.float32:
+    if value <= np.float32(-20.0):
+        return np.float32(0.0)
+    if value >= np.float32(0.0):
+        return np.float32(1.0)
+    inv_ln2 = np.float32(1.4426950409)
+    ln2 = np.float32(0.6931471806)
+    exponent = _floor_i32(np.float32(value * inv_ln2))
+    reduced = np.float32(value - np.float32(exponent) * ln2)
+    r2 = np.float32(reduced * reduced)
+    r3 = np.float32(r2 * reduced)
+    r4 = np.float32(r3 * reduced)
+    polynomial = np.float32(
+        np.float32(1.0)
+        + reduced
+        + np.float32(0.5) * r2
+        + np.float32(0.16666667) * r3
+        + np.float32(0.04166667) * r4
+    )
+    return np.float32(_pow2_i32(exponent) * polynomial)
+
+
+def _attention_score_bf16_npu(
+    q_window: np.ndarray,
+    k_block: np.ndarray,
+    q_head: int,
+    token: int,
+) -> np.float32:
+    kv_head = q_head // (ATTENTION_HEADS_PER_WINDOW // ATTENTION_KV_HEADS_PER_WINDOW)
+    dot = np.float32(0.0)
+    for dim in range(HEAD_DIM):
+        dot = np.float32(dot + np.float32(q_window[q_head, dim] * k_block[token, kv_head, dim]))
+    return np.float32(dot * ATTENTION_RSQRT_HEAD_DIM)
+
+
+def attention_bf16_npu(
+    q: np.ndarray,
+    k_cache: np.ndarray,
+    v_cache: np.ndarray,
+    current_token: int,
+) -> np.ndarray:
+    q_heads = q.astype(np.float32).reshape(NUM_Q_HEADS, HEAD_DIM)
+    k_values = k_cache[: current_token + 1].astype(np.float32)
+    v_values = v_cache[: current_token + 1].astype(np.float32)
+    output = np.empty((NUM_Q_HEADS, HEAD_DIM), dtype=bfloat16)
+    blocks = current_token // ATTENTION_CONTEXT + 1
+    for window in range(NUM_Q_HEADS // ATTENTION_HEADS_PER_WINDOW):
+        q_start = window * ATTENTION_HEADS_PER_WINDOW
+        kv_start = window * ATTENTION_KV_HEADS_PER_WINDOW
+        q_window = q_heads[q_start : q_start + ATTENTION_HEADS_PER_WINDOW]
+        k_window = k_values[:, kv_start : kv_start + ATTENTION_KV_HEADS_PER_WINDOW, :]
+        v_window = v_values[:, kv_start : kv_start + ATTENTION_KV_HEADS_PER_WINDOW, :]
+        accum = np.zeros((ATTENTION_HEADS_PER_WINDOW, HEAD_DIM), dtype=np.float32)
+        state_max = np.zeros((ATTENTION_HEADS_PER_WINDOW,), dtype=np.float32)
+        state_sum = np.zeros((ATTENTION_HEADS_PER_WINDOW,), dtype=np.float32)
+        for block in range(blocks):
+            block_start = block * ATTENTION_CONTEXT
+            valid_tokens = ATTENTION_CONTEXT
+            if block + 1 == blocks:
+                valid_tokens = current_token % ATTENTION_CONTEXT + 1
+            k_block = k_window[block_start : block_start + valid_tokens]
+            v_block = v_window[block_start : block_start + valid_tokens]
+            weights = np.zeros((ATTENTION_HEADS_PER_WINDOW, ATTENTION_CONTEXT), dtype=np.float32)
+            block_max = np.zeros((ATTENTION_HEADS_PER_WINDOW,), dtype=np.float32)
+            block_sum = np.zeros((ATTENTION_HEADS_PER_WINDOW,), dtype=np.float32)
+            for q_head in range(ATTENTION_HEADS_PER_WINDOW):
+                running_max = _attention_score_bf16_npu(q_window, k_block, q_head, 0)
+                scores = np.zeros((ATTENTION_CONTEXT,), dtype=np.float32)
+                scores[0] = running_max
+                for token in range(1, valid_tokens):
+                    scores[token] = _attention_score_bf16_npu(q_window, k_block, q_head, token)
+                    if scores[token] > running_max:
+                        running_max = scores[token]
+                weight_sum = np.float32(0.0)
+                for token in range(ATTENTION_CONTEXT):
+                    weight = np.float32(0.0)
+                    if token < valid_tokens:
+                        weight = _fast_exp_npu(np.float32(scores[token] - running_max))
+                        weight_sum = np.float32(weight_sum + weight)
+                    weights[q_head, token] = np.array(weight, dtype=bfloat16).astype(np.float32)
+                block_max[q_head] = running_max
+                block_sum[q_head] = weight_sum
+            for q_head in range(ATTENTION_HEADS_PER_WINDOW):
+                old_sum = state_sum[q_head]
+                new_max = block_max[q_head]
+                old_scale = np.float32(0.0)
+                block_scale = np.float32(1.0)
+                if old_sum != np.float32(0.0):
+                    old_max = state_max[q_head]
+                    new_max = old_max if old_max > block_max[q_head] else block_max[q_head]
+                    old_scale = _fast_exp_npu(np.float32(old_max - new_max))
+                    block_scale = _fast_exp_npu(np.float32(block_max[q_head] - new_max))
+                kv_head = q_head // (ATTENTION_HEADS_PER_WINDOW // ATTENTION_KV_HEADS_PER_WINDOW)
+                for dim in range(HEAD_DIM):
+                    block_total = np.float32(0.0)
+                    for token in range(valid_tokens):
+                        block_total = np.float32(
+                            block_total + np.float32(weights[q_head, token] * v_block[token, kv_head, dim])
+                        )
+                    accum[q_head, dim] = np.float32(
+                        np.float32(accum[q_head, dim] * old_scale) + np.float32(block_total * block_scale)
+                    )
+                state_max[q_head] = new_max
+                state_sum[q_head] = np.float32(
+                    np.float32(old_sum * old_scale) + np.float32(block_sum[q_head] * block_scale)
+                )
+        for q_head in range(ATTENTION_HEADS_PER_WINDOW):
+            for dim in range(HEAD_DIM):
+                output[q_start + q_head, dim] = np.array(
+                    np.float32(accum[q_head, dim] / state_sum[q_head]),
+                    dtype=bfloat16,
+                )
     return output.reshape(HIDDEN_DIM).astype(bfloat16)
 
 

@@ -49,17 +49,17 @@ static inline void q4nx_chunk_accum_slice(
                     aie::to_float<bfloat16>(as_u16, 0);
 
                 aie::vector<bfloat16, rows_per_lane> q0 = q_values.extract<rows_per_lane>(0);
-                aie::vector<bfloat16, rows_per_lane> shifted0 = aie::sub(q0, zero_vec);
-                aie::accum<accfloat, rows_per_lane> dequant0_acc = aie::mul(shifted0, scale_vec);
-                aie::vector<bfloat16, rows_per_lane> dequant0 = dequant0_acc.to_vector<bfloat16>();
+                aie::accum<accfloat, rows_per_lane> dequant0_acc = aie::mul(q0, scale_vec);
+                aie::vector<bfloat16, rows_per_lane> dequant0 =
+                    aie::add(dequant0_acc.to_vector<bfloat16>(), zero_vec);
                 aie::vector<bfloat16, rows_per_lane> activation0 =
                     aie::broadcast<bfloat16, rows_per_lane>(activation_slice[col]);
                 row_acc = aie::mac(row_acc, dequant0, activation0);
 
                 aie::vector<bfloat16, rows_per_lane> q1 = q_values.extract<rows_per_lane>(1);
-                aie::vector<bfloat16, rows_per_lane> shifted1 = aie::sub(q1, zero_vec);
-                aie::accum<accfloat, rows_per_lane> dequant1_acc = aie::mul(shifted1, scale_vec);
-                aie::vector<bfloat16, rows_per_lane> dequant1 = dequant1_acc.to_vector<bfloat16>();
+                aie::accum<accfloat, rows_per_lane> dequant1_acc = aie::mul(q1, scale_vec);
+                aie::vector<bfloat16, rows_per_lane> dequant1 =
+                    aie::add(dequant1_acc.to_vector<bfloat16>(), zero_vec);
                 aie::vector<bfloat16, rows_per_lane> activation1 =
                     aie::broadcast<bfloat16, rows_per_lane>(activation_slice[col + 1]);
                 row_acc = aie::mac(row_acc, dequant1, activation1);

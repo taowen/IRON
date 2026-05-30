@@ -4,7 +4,7 @@ This directory implements the qwen3-layer contract described in
 `experiments/qwen3-dataflow.md` and contains a runnable NPU integration
 backend.
 
-The current implementation is the qwen3-dataflow physical skeleton:
+The current implementation is the active qwen3 full-layer NPU integration path:
 
 - `c1r2` full-vector station with `2049`-dword packet0 replay contract.
 - `c1r1` shared activation bridge for packet2/O, packet0 replay, and packet1/down.
@@ -17,10 +17,8 @@ The current implementation is the qwen3-dataflow physical skeleton:
 ## Files
 
 - `contract.py`: Qwen3 layer constants and ABI checks.
-- `dataflow.py`: typed qwen3-dataflow graph.
-- `generate.py`: MLIR-AIE physical skeleton generator from the target graph.
-- `check_contract.py`: integration check for contract, graph, and generated MLIR.
-- `emit_mlir.py`: writes `qwen3-layer/build/qwen3_dataflow.mlir`.
+- `check_contract.py`: integration check for active generators, resource
+  manifests, token gates, and retired-code absence.
 - `mlir_utils.py`: shared MLIR-AIE BD, lock, queue, and runtime sequence
   helpers used by runnable cases.
 - `physical_contract.py`: executable channel ownership checks for the
@@ -41,7 +39,7 @@ The current implementation is the qwen3-dataflow physical skeleton:
 - `cases/full_layer_engine_generate.py`: the single full-layer fused-engine
   MLIR generator. Active slices import this generator and crop the physical
   phase range instead of keeping separate debug dataflows.
-- `cases/full_layer_engine_reference.py`: shared physical oracle helpers,
+- `cases/full_layer_engine_reference.py`: shared physical reference helpers,
   constants, weight layout, cache writeback, attention, O/FFN, and final hidden
   validation used by the active runners.
 - `cases/currentkv_cache_dataflow.py`: shared current-token K/V cache
@@ -54,9 +52,19 @@ The current implementation is the qwen3-dataflow physical skeleton:
   stream construction.
 - `qwen3_download.py`: small downloader for the MyLM Qwen3-8B-NPU2 model files
   listed in `qwen3_model.py`.
+- `run_reference_decode.py`: CPU full-model Qwen3-8B reference decode runner
+  over embedding, layers, final RMSNorm, and lm_head. It can stop at a layer
+  prefix and dump bf16 layer tensors for MyLM comparison.
+- `tools/build_mylm_forward_probe.sh`: builds the local MyLM prefix probe used
+  to compare Qwen3 layer prefixes against `/var/home/taowen/projects/MyLM`.
+- `tools/compare_bf16_dump.py`: compares raw bf16 dumps and reports top-k,
+  max error, mean error, and the first mismatching lane.
 - `npu_build.py`: shared MLIR, xclbin, and NPU runtime helpers. It scans
   generated MLIR `link_with` attributes and compiles the required role objects,
   so runners do not duplicate kernel-object ownership.
+- `run_stage_budget.py`: runs active NPU integration cases and prints stable
+  `stage_budget:` lines for c1r2, current-slot K/V, valid-cache K/V,
+  capacity-unchanged K/V, attention-O, and full hidden_out.
 - `main_projection_q4nx.cc`: main16 Q/K/V/O/up/gate/down Q4NX projection,
   flush, and record emit kernels.
 - `edge_attention.cc`: Shape-A/B edge attention kernels for KV scan, online
@@ -89,18 +97,20 @@ The current implementation is the qwen3-dataflow physical skeleton:
 .venv/bin/python qwen3-layer/run_npu.py --case qwen3-8b-qkv-cache-write-bridge --current-token 31
 .venv/bin/python qwen3-layer/run_npu.py --case full-layer-qkv-prefix --current-token 31
 .venv/bin/python qwen3-layer/run_npu.py --case full-layer-attention-o-bf16 --current-token 31
+.venv/bin/python qwen3-layer/run_stage_budget.py --tokens 31,91
+.venv/bin/python qwen3-layer/run_reference_decode.py --prompt Hello --max-new-tokens 1 --stop-layer 1 --expect-token-ids 51920
 ```
 
 This runner is intentionally an integration boundary, not a tiny unit test. The
 default case is now `qwen3-8b-decode-layer`: it validates the real MyLM
-Qwen3-8B-NPU2 assets, computes the input RMSNorm hidden vector on the host,
-constructs the real layer Q4NX weight stream in the main16 ABI, runs the current
-full-layer NPU physical frontier at token31, and compares the 2048-dword final
-hidden payload with the matching physical oracle. token31 is the default because
-it keeps a multi-block KV scan while still producing a non-zero end-to-end
-signal through the production bf16 attention-O slice. This is not the final
-production Qwen3 decode yet: c1r2, c1r3, attention, and FFN pieces are being
-replaced with production numerics behind the same physical ABI.
+Qwen3-8B-NPU2 assets, sends raw hidden plus RMSNorm/QK norm aux weights through
+the c1r2/c1r3 path, constructs the real layer Q4NX weight stream in the main16
+ABI, and compares the 2048-dword final hidden payload with
+`Qwen3LayerReference`. token31 is the default because it keeps a multi-block KV
+scan while still producing a non-zero end-to-end signal through the production
+bf16 attention-O slice. The current single-layer frontier passes the real-model
+hidden-out contract with `abs_tol=0.05, rel_tol=0.20`; this is a working decode
+frontier, not yet the final multi-layer production error budget.
 
 The runnable registry is deliberately small. The public cases are:
 
@@ -118,12 +128,15 @@ ingress and row1 MM2S fanout, `compact_dataflow.py` owns the frontier compact
 bridge plus row1 weight-stream composition, and `physical_contract.py` validates
 that the frontier does not regress to the old row1 S2MM0/1 weight route.
 
-`--check-only` validates generated MLIR structure and physical contracts.
-`--build-only` verifies routing, core compilation, instruction generation, PDI,
-and xclbin generation. `--current-token` selects a single decode schedule:
-current-token RTP value, current-write byte offset, cache BO size, Shape-A/B
-block count, Shape-A tail valid-token count, scan BD `iteration_size`, and
-queue `repeat_count` all come from the same `DecodeSchedule`.
+`--check-only` validates generated MLIR structure, token-gate schedules, and
+physical contracts. `--build-only` verifies routing, core compilation,
+instruction generation, PDI, xclbin generation, and instruction patching. For
+the full decode case, the runner builds one token127 capacity xclbin/PDI and
+patches `design.bin` for the requested token. `--current-token` still selects
+one target `DecodeSchedule`: current-token RTP value, current-write byte offset,
+Shape-A/B block count, Shape-A tail valid-token count, scan BD
+`iteration_size`, and queue `repeat_count` all come from that schedule; the
+K/V BO is allocated at the capacity schedule size.
 
 The two full-layer slices are cut from the full-layer topology instead of
 handwritten debug dataflow. The prefix slice validates hidden replay, row1
@@ -131,6 +144,34 @@ weight ingress, main16 Q/K/V residency, and c1r3 packet8/9 current K/V
 writeback. The attention-O slice continues through the production
 `qwen3_attention_bf16_*` path, packet2 handoff, and main16 O phase without a
 deterministic/debug attention producer.
+
+The CPU decode reference is not yet the final multi-layer oracle. It now uses
+the correct MyLM Q4NX formula `weight = int4 * scale + offset`, where the second
+5120-byte chunk segment is a bf16 offset rather than an integer zero point.
+Against the MyLM probe, raw token `9707` (`Hello`) has matching top-k through
+the early and middle prefixes: layer1 top token `51920`, layer4 top token
+`70765`, and layers8/16/24/32 top token `143358`. The remaining reference
+numerical gap is the final tail: layer35 starts to reorder near-tied logits and
+layer36 diverges from MyLM (`323` vs the Python reference `11`). Until that is
+closed, full 36-layer Python logits should be treated as diagnostic data, while
+the stable NPU integration oracle remains the single-layer `Qwen3LayerReference`
+and the MyLM prefix dump comparison.
+
+For MyLM prefix comparison:
+
+```bash
+.venv/bin/python qwen3-layer/run_reference_decode.py --prompt Hello --max-new-tokens 1 --stop-layer 1 --dump-dir qwen3-layer/build/reference-dump-smoke --dump-layers 0 --top-k 5
+qwen3-layer/tools/build_mylm_forward_probe.sh
+qwen3-layer/build/mylm_forward_probe --layers 1 --token-id 9707 --cache-layer 0 --dump-prefix qwen3-layer/build/mylm-smoke --top-k 5
+.venv/bin/python qwen3-layer/tools/compare_bf16_dump.py --expected qwen3-layer/build/mylm-smoke.logits.bf16 --got qwen3-layer/build/reference-dump-smoke/pos0000.logits.bf16 --abs-tol 0.5 --top-k 5
+```
+
+The stage-budget K/V lines are deliberately split by scope. `current_*_slot`
+reports only the newly written token, `valid_*_cache` reports logical tokens
+`0..current_token`, and `capacity_*_unchanged` verifies the unused capacity BO
+tail when the full decode runner patches a token127 build down to a smaller
+target token. Non-zero max error lines include `max_abs_at=token/head/dim/...`;
+failing lines also include `first_mismatch=...`.
 
 The up/gate bridge intentionally uses one S2MM channel per row in each row1
 column compact tile. A single S2MM channel with multiple packet BDs is not a
@@ -195,13 +236,14 @@ failed: `d0_stride=1` completed but only filled every other dword, while
 the explicit two-BD even/odd scatter described above. The next passing
 seven-block design compressed scan descriptors by splitting K and V onto two
 shim/memtile channels. The current scheduled design adds iterated scan BDs
-plus queue repeats, Shape block-count RTPs, and runtime-start locks. It now
-emits 447 runtime instructions and has passed token127 with eight rounded
-blocks, token91 with six rounded blocks and a non-tail current slot,
-token127 xclbin/PDI patched to token91, and token1007 cache-capacity PDI
-patched to token91 without aiecc recompilation. This proves
-the high-level AIEX path can express descriptor reuse for the KV scan, as long
-as the BD iteration fields and queue repeat count are programmed together.
+plus queue repeats, Shape block-count RTPs, and runtime-start locks. The
+standalone scan scale probe emits 447 runtime instructions and passed token127
+with eight rounded blocks and token91 with six rounded blocks. The active
+full-layer runner now builds a token127 capacity xclbin/PDI and has passed
+token0, token1, token31, and token91 by patching `design.bin`; token127 passes
+with the unpatched capacity instruction stream. This proves the high-level AIEX
+path can express descriptor reuse for the KV scan, as long as the BD iteration
+fields and queue repeat count are programmed together.
 
 The Shape-A/B attention math stays in explicit fixed point for now. Shape-A
 stores packed 16-bit Q12 exp weights and int32 block max/sum values; Shape-B
@@ -216,10 +258,10 @@ stable but wrong scale on NPU before c6r2. The passing c1r2 path uses a simple
 signed compact-to-lane mix, a bounded int32 sqrt, 64 int32 projection
 accumulators, and Q8 s16-pair packing before fixed-point SwiGLU.
 
-## Emit
+## Check
 
 ```bash
-.venv/bin/python qwen3-layer/emit_mlir.py
+.venv/bin/python qwen3-layer/check_contract.py
 ```
 
 The executable cases prove the current hardware contracts. The active registry

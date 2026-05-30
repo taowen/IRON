@@ -513,7 +513,7 @@ layer_output = hidden + down_output
 写回主存（作为下一层的输入）
 ```
 
-这是目标态。当前 `qwen3-8b-decode-layer` 已经输出 2048-dword hidden payload，并和 `Qwen3LayerReference` 的 hidden_out 做宽容差比较；这证明 down compact 已经接回 c1r2 并形成完整层输出，但还不等于 production Qwen3 数值已经完成。后续必须把 c1r2/c1r3/attention/SwiGLU 的误差逐段收紧，才能把这个 hidden_out 作为多层推理输入。
+这是目标态。当前 `qwen3-8b-decode-layer` 已经输出 2048-dword hidden payload，并和 `Qwen3LayerReference` 的 hidden_out 做 `abs_tol=0.05, rel_tol=0.20` 比较；这证明 down compact 已经接回 c1r2 并形成完整层输出。后续重点不是再证明物理闭环，而是把 c1r2/c1r3/attention/SwiGLU 的 stage-local 误差预算收紧，并证明该 hidden_out 可以作为多层推理输入。
 
 ## 全程总结
 
@@ -622,11 +622,12 @@ push_queue:
 - scan BD 的 iteration_size/stride
 - push_queue repeat_count
 
-**已验证**：token1007 容量 PDI patch 到 token91 后：
-- patched instruction stream 逐 word 等于重新编译的 token91 stream
-- 真机通过
+**已验证**：当前 active full-layer decode runner 使用 token127 容量 xclbin/PDI：
+- token127 → token31 的 patched instruction stream 逐 word 等于直接编译的 token31 stream
+- token0、token1、token31、token91 都用 token127 容量 xclbin + patched `design.bin` 真机通过
+- token127 使用原生容量 `design.bin` 真机通过
 
-这证明 active full-layer instruction patch 是精确的，可以作为"固定最大上下文 PDI + 每 token patch"的生产方案雏形；完整生产 runtime 还需要把模型权重、KV cache 管理、final hidden_out 和多层串联一起纳入同一套 patch/submit 边界。
+这证明 active full-layer instruction patch 是精确的，可以作为"固定容量 PDI + 每 token patch"的生产方案雏形；完整生产 runtime 还需要把模型权重、KV cache 管理、final hidden_out、多层串联和提交边界整合进同一套 runtime。
 
 ## 5.6 RTP + Runtime-Start Lock
 
@@ -684,7 +685,7 @@ ch1: V0/V1 per block → row1 S2MM ch1
 ```
 ┌─────────────────────────────────────┐
 │ scales      : 32行 × 8组 × bf16     │  512 字节
-│ zero_points : 32行 × 8组 × bf16     │  512 字节
+│ offsets     : 32行 × 8组 × bf16     │  512 字节
 │ int4_data   : 32行 × 256列 / 2      │  4096 字节
 ├─────────────────────────────────────┤
 │ 合计                                 │  5120 字节 = 1280 dword
@@ -692,14 +693,20 @@ ch1: V0/V1 per block → row1 S2MM ch1
 ```
 
 - 32 行 × 256 列 = 一个 chunk 覆盖 32 个输出维度、256 个输入维度
-- group size = 32：每 32 个权重共享一组 scale 和 zero_point
+- group size = 32：每 32 个权重共享一组 scale 和 offset
 - 8 组 = 256 / 32
 
 **在线反量化**（tile 内部执行，不生成中间全精度矩阵）：
 ```
-weight_fp = (int4_value - zero_point) × scale
+weight_fp = int4_value × scale + offset
 output[row] += weight_fp × activation[col]
 ```
+
+注意：`model.q4nx` 的第二段不是未缩放的整数 zero point。实测 Qwen3-8B-NPU2
+chunk 中该字段是负的 bf16 offset（常见约 `-0.09..-0.015`），和 MyLM
+`qwen3_npu` 对齐的反量化必须使用 `q * scale + offset`。旧的
+`(q - zero_point) * scale` 会让 O/up/gate/down 系统性偏负，单层还能产生
+自洽信号，但 36 层最终 token 会漂移。
 
 **整层权重规模**：
 
@@ -833,23 +840,20 @@ output = SiLU(gate) × up = 512 bf16
 
 `qwen3-layer/` 目录包含当前 fused-layer 物理实现和后续生产化开发目标：契约定义、数据流图、MLIR 生成器、NPU kernel、可运行 case 和共享工具。
 
-## 7.1 契约与数据流图
+## 7.1 契约与生成检查
 
 | 文件 | 职责 |
 |------|------|
 | `contract.py` | 全层 ABI 的单一真相源：维度常量、phase 定义、patch/chunk 数量、packet 大小 |
-| `dataflow.py` | 静态数据流图——Node（tile+角色）和 Edge（source/target/payload/packet）的类型化描述 |
 | `physical_contract.py` | 生成后检查：row1 channel 所有权（S2MM4/5=weight, S2MM0-3=compact）、禁止旧路由 |
 | `resource_manifest.py` | 显式 tile-local buffer/BD/lock ownership manifest，检查 main16 QKV residency 和 phase overlap |
-| `check_contract.py` | 集成检查：contract + dataflow + 生成 MLIR 三者一致性 |
+| `check_contract.py` | 集成检查：active generator、resource manifest、token gate、retired-code absence |
 | `projection_schedule.py` | Q/K/V body record 数、O/upgate/down tail weight chunk base、总 weight BO layout 的唯一派生源 |
 
 ## 7.2 MLIR 生成器
 
 | 文件 | 职责 |
 |------|------|
-| `generate.py` | 从 dataflow 图生成物理骨架 MLIR-AIE（tile 声明、ObjectFifo、lock、BD） |
-| `emit_mlir.py` | 输出 `build/qwen3_dataflow.mlir` 文件 |
 | `compact_dataflow.py` | row1/c1r1 compact gather + bridge + hub + row1 S2MM4/5 weight fanout 生成器 |
 | `attention_dataflow.py` | Shape-A/B tile placement、hub BD、KV output BD 和 packet2 attention hub 的单一真相源 |
 | `weight_stream.py` | row1 Q4NX patch-ring 生成器：host/shim weight ingress → main16 DMA1 |
@@ -925,6 +929,8 @@ python qwen3-layer/run_npu.py --case qwen3-8b-decode-layer \
 | 文件 | 职责 |
 |------|------|
 | `npu_build.py` | 编译流水线：扫描 MLIR `link_with` → 编译 kernel .o → aiecc → xclbin |
+| `run_stage_budget.py` | 运行 active NPU case，统一输出 c1r2、current-slot K/V、valid-cache K/V、capacity-unchanged K/V、attention-O、hidden_out 的 `stage_budget:` 统计 |
+| `cases/decode_instruction_patch.py` | full-layer decode instruction patch：current token、KV write offset、scan iteration 和 queue repeat |
 | `q4nx_reference.py` | Q4NX chunk 的 CPU 参考数学（反量化 + MAC） |
 | `qkv_compact_reference.py` | Q/K/V/O compact record layout helper |
 | `cases/full_layer_engine_reference.py` | full-layer physical reference：weight layout、cache writeback、attention/O/FFN/final hidden 验证 |
@@ -939,6 +945,10 @@ python qwen3-layer/run_npu.py --case qwen3-8b-decode-layer \
 - `design.bin`：instruction stream（可被 patch）
 - `design-tokenX-to-tokenY.bin`：patched instruction stream
 
+`qwen3-8b-decode-layer` 的 active build 目录是
+`build/qwen3-8b-decode-layer-capacity-token127/`。token0/1/31/91 等目标
+token 共享同一个 `design.xclbin`，只切换 patched instruction stream。
+
 ---
 
 # 八、当前进度与剩余差距
@@ -952,7 +962,9 @@ python qwen3-layer/run_npu.py --case qwen3-8b-decode-layer \
 - c1r2 packet0 full-vector replay → c1r1 bridge → main16 DMA0 activation ring
 - c6r1 packet2（attention）和 packet1（FFN）复用 c1r1 shared bridge
 - 48-record upgate body trace + reusable-slot compact + c6r2 payload-half ABI
-- `qwen3-8b-decode-layer` 能用真实 MyLM Qwen3-8B-NPU2 权重跑通单层 full-layer frontier，并输出 2048-dword hidden payload。当前比较已经接到 `Qwen3LayerReference`，但 tolerance 仍宽，不能视为最终 production 数值完成
+- `qwen3-8b-decode-layer` 能用真实 MyLM Qwen3-8B-NPU2 权重跑通单层 full-layer frontier，并输出 2048-dword hidden payload。当前比较已经接到 `Qwen3LayerReference`，hidden_out 使用 `abs_tol=0.05, rel_tol=0.20`，K/V cache writeback 使用 `abs_tol=0.10` 覆盖 Q/K RMSNorm 放大带来的 bf16 差异；这已经是可运行的单层 decode frontier，但还不是多层 production 数值预算
+- `run_stage_budget.py` 已把 c1r2 input norm、current-slot K/V、valid-cache K/V、capacity-unchanged K/V、attention-O 和 full hidden_out 的真机统计统一成 `stage_budget:` 输出；K/V 行会打印最大误差坐标，失败时打印首个 mismatch 坐标；token31/token91 已覆盖 qkv、attention、full stage
+- `run_reference_decode.py` 已能跑真实 Qwen3-8B 多层 CPU reference 和 MyLM prefix dump 对照。当前确认 Q4NX 解码公式是 `int4 * scale + offset`，不是旧的 `(int4 - zero_point) * scale`；raw token `9707` 的 layer1/layer4/layer8/layer16/layer24/layer32 top token 与 MyLM probe 对齐。尚未确认 full 36-layer Python reference 是最终 oracle：layer35 开始出现近似误差放大，layer36 目前 Python top token 是 `11`，MyLM probe top token 是 `323`
 
 ### 稳定集成边界
 
@@ -971,7 +983,7 @@ python qwen3-layer/run_npu.py --case qwen3-8b-decode-layer \
 
 ### Instruction Patch
 
-- 高上下文容量 PDI 可复用，每 token 只 patch instruction stream 的方向已经在 full-layer schedule 上验证过
+- token127 容量 PDI 可复用，每 token 只 patch instruction stream 的方向已经在 full-layer schedule 上验证过
 - 这个结论目前仍是生产 runtime 的雏形：模型权重管理、KV cache 管理、final hidden_out、多层串联和提交边界还没有整合成完整 runtime
 
 ### 关键约束验证
@@ -984,15 +996,26 @@ python qwen3-layer/run_npu.py --case qwen3-8b-decode-layer \
 
 ## 剩余差距
 
-### 数值校准（最大差距）
+### 数值与性能收敛（最大差距）
 
 | 模块 | 当前状态 | 目标 |
 |------|---------|------|
-| Attention（Shape-A/B） | bf16 attention-O path 已接入 O phase，但 softmax/merge 仍是当前 AIE-local 近似 | 收紧到 Qwen3 bf16/fp32 attention reference |
-| c1r2 RMSNorm/replay/final output | hidden replay、O residual/postnorm、down residual 和 2048-dword hidden_out 已在物理路径闭环 | 实现并收紧 Qwen3 RMSNorm/residual 数值误差 |
-| c6r2 SwiGLU | bf16 输入/输出 ABI 已对齐，`slice_scale` 已删除，执行 AIE-local bounded table `SiLU(gate) * up` | 校准到 Qwen3 SiLU/SwiGLU 生产误差预算 |
-| c1r3 Q/K norm + RoPE | Q/K/V body payload、packet8/9 current K/V 和 attention ABI 已接通 | 收紧 Q/K RMSNorm、RoPE、scale/rotation constant 到 Qwen3 reference |
+| Attention（Shape-A/B） | bf16 attention-O path 已接入 O phase，并通过 full decode hidden_out gate | 收紧 stage-local error budget，确认 online softmax/merge 与 Qwen3 reference 的长期多层误差 |
+| c1r2 RMSNorm/replay/final output | hidden replay、O residual/postnorm、down residual 和 2048-dword hidden_out 已在物理路径闭环 | 收紧 RMSNorm/residual stage budget，确认输出可直接作为下一层输入 |
+| c6r2 SwiGLU | bf16 输入/输出 ABI 已对齐，`slice_scale` 已删除，执行 AIE-local bounded table `SiLU(gate) * up` | 校准到 Qwen3 SiLU/SwiGLU production budget，并优化 table/compute cost |
+| c1r3 Q/K norm + RoPE | Q/K/V body payload、packet8/9 current K/V、attention ABI 和 full decode hidden_out 已接通 | 收紧 Q/K RMSNorm、RoPE、scale/rotation constant 的 stage-local budget |
 | Main16 Q4NX kernel | 真 Q4NX transport/MAC 和真实模型权重 stream 已跑通 | 做高性能化、DMA/compute overlap 和 cycle 级瓶颈定位 |
+
+### CPU reference 与 MyLM 对齐
+
+当前不能再把 full 36-layer Python reference 当作已验证正确的最终 token oracle。它的价值是逐层 dump 和定位：
+
+- layer1 logits 与 MyLM top-k 对齐，bf16 logits `max_abs=0.3671875`
+- layer8/16/24/32 prefix top token 都是 `143358`
+- layer35 K/V 与 MyLM 已有明显数值差异，尤其 V payload `mean_abs≈0.31`
+- layer36 logits 与 MyLM 明显分叉，说明最后尾部还需要按 MyLM/NPU 数值路径继续校准
+
+因此后续开发要优先把最后层的 `hidden_in -> Q/K/V -> attention -> O -> FFN -> hidden_out -> final_norm/lm_head` 拆成 stage dump 对齐，而不是用 full token `11` 作为成功标准。
 
 ### 生产集成
 
@@ -1000,8 +1023,8 @@ python qwen3-layer/run_npu.py --case qwen3-8b-decode-layer \
 - 多层串联（当前验证单层）
 - RMSNorm/RoPE 权重已经能从模型文件进入 aux prefix，但生产误差和 stage oracle 还要收紧
 - 生产 host runtime（当前是 Python integration runner）
-- 最终输出已经是 2048-dword hidden payload；后续要把 tolerance 收紧到可作为下一层输入
-- 建立端到端数值 reference 和 stage-local mismatch 归因：从 tokenizer/模型权重/单 token hidden 输入到 NPU 层输出，与 Qwen3 CPU/GPU reference 对齐
+- 最终输出已经是 2048-dword hidden payload；后续要证明该 tolerance 在多层串联中可接受，或继续收紧到下一层输入预算
+- 继续增强 stage-local mismatch 归因：K/V stats 已能输出 `token/head/dim/npu_offset`；下一步要把 attention-O、c1r2 RMSNorm、SwiGLU/down 也提升到同等级别的 head/dim/block/edge 归因
 
 ### 与 MyLM 对齐（可选方向）
 
@@ -1033,5 +1056,5 @@ middle   Q4NX weight stream oracle（验证 weight ingress 能力）
 current  qwen3-8b-decode-layer + full-layer-qkv-prefix + full-layer-attention-o-bf16
          （全部 7 phase Q4NX + current K/V + KV scan + bf16 attention-O + hidden_out frontier）
   ↓
-next     数值校准 → 收紧 hidden_out tolerance → 性能化 kernel/overlap → 多层 → runtime 集成
+next     stage-local 数值预算收敛 → 性能化 kernel/overlap → 多层 → runtime 集成
 ```

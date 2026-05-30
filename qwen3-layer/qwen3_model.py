@@ -39,6 +39,7 @@ class TensorMeta:
 
 @dataclass(frozen=True)
 class Qwen3Config:
+    vocab_size: int
     hidden_size: int
     intermediate_size: int
     num_attention_heads: int
@@ -94,6 +95,7 @@ def _read_config(model_path: Path) -> Qwen3Config:
     with config_path.open(encoding="utf-8") as f:
         raw = json.load(f)
     return Qwen3Config(
+        vocab_size=int(raw["vocab_size"]),
         hidden_size=int(raw["hidden_size"]),
         intermediate_size=int(raw["intermediate_size"]),
         num_attention_heads=int(raw["num_attention_heads"]),
@@ -107,6 +109,7 @@ def _read_config(model_path: Path) -> Qwen3Config:
 
 def _require_qwen3_8b_config(config: Qwen3Config) -> None:
     expected = Qwen3Config(
+        vocab_size=151936,
         hidden_size=HIDDEN_DIM,
         intermediate_size=INTERMEDIATE_DIM,
         num_attention_heads=NUM_Q_HEADS,
@@ -117,6 +120,8 @@ def _require_qwen3_8b_config(config: Qwen3Config) -> None:
         rope_theta=1_000_000.0,
     )
     mismatches: list[str] = []
+    if config.vocab_size != expected.vocab_size:
+        mismatches.append(f"vocab_size={config.vocab_size}")
     if config.hidden_size != expected.hidden_size:
         mismatches.append(f"hidden_size={config.hidden_size}")
     if config.intermediate_size != expected.intermediate_size:
@@ -203,6 +208,52 @@ class Qwen3Q4NXModel:
         if values.shape != (expected,):
             raise ValueError(f"{name} shape mismatch: {values.shape} != {(expected,)}")
         return values
+
+    def token_embedding(self, token_id: int) -> np.ndarray:
+        meta = self.tensor_meta("model.embed_tokens.weight")
+        expected_shape = (self.config.vocab_size, HIDDEN_DIM)
+        if meta.dtype != "BF16" or meta.shape != expected_shape:
+            raise ValueError(
+                f"model.embed_tokens.weight shape mismatch: dtype={meta.dtype} shape={meta.shape}, "
+                f"expected BF16 {expected_shape}"
+            )
+        if token_id < 0 or token_id >= self.config.vocab_size:
+            raise ValueError(f"token id out of range: {token_id}")
+
+        row_bytes = HIDDEN_DIM * 2
+        with self.q4nx_path.open("rb") as f:
+            f.seek(self.data_start + meta.offsets[0] + token_id * row_bytes)
+            payload = f.read(row_bytes)
+        if len(payload) != row_bytes:
+            raise IOError(f"short read for token embedding {token_id}: {len(payload)} != {row_bytes}")
+        return np.frombuffer(payload, dtype=bfloat16).copy()
+
+    def final_norm_weight(self) -> np.ndarray:
+        weight = self.tensor_bf16("model.norm.weight")
+        if weight.shape != (HIDDEN_DIM,):
+            raise ValueError(f"model.norm.weight shape mismatch: {weight.shape}")
+        return weight
+
+    def lm_head_projection(self) -> ProjectionTensor:
+        return ProjectionTensor(
+            phase="LM_HEAD",
+            tensor_name="lm_head.weight",
+            input_dim=HIDDEN_DIM,
+            output_dim=self.config.vocab_size,
+            blocks=0,
+            chunks=HIDDEN_DIM // 256,
+        )
+
+    def lm_head_chunks(self) -> np.ndarray:
+        projection = self.lm_head_projection()
+        meta = self.tensor_meta(projection.tensor_name)
+        expected_shape = (projection.chunk_count, CHUNK_BYTES)
+        if meta.dtype != "I8" or meta.shape != expected_shape:
+            raise ValueError(
+                f"lm_head.weight shape mismatch: dtype={meta.dtype} shape={meta.shape}, "
+                f"expected I8 {expected_shape}"
+            )
+        return self.tensor_bytes(projection.tensor_name).reshape(expected_shape)
 
     def projection_chunks(self, tensor: ProjectionTensor) -> np.ndarray:
         meta = self.tensor_meta(tensor.tensor_name)

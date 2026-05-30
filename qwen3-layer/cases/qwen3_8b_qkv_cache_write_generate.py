@@ -34,7 +34,6 @@ from contract import (
     ROWS_PER_COLUMN,
     ROWS_PER_PATCH,
 )
-from dataflow import dataflow_slice_marker, validate_dataflow_slice
 from mlir_utils import (
     flow,
     lock_pair,
@@ -311,8 +310,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
         for row_idx, row_value in enumerate(MAIN_ROWS):
             tile_defs.append(f"    %{_main_symbol(group, row_idx)} = aie.tile({column}, {row_value})")
 
-    slice_marker = dataflow_slice_marker("qkv_cache_write")
-    flows = [f"    // case marker {CASE_NAME}", f"    // {slice_marker}"]
+    flows = [f"    // case marker {CASE_NAME}"]
     flows.extend(
         (
             flow("shim_out", 0, "full", 1),
@@ -368,7 +366,6 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
 def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> list[str]:
     required = (
         f"case marker {CASE_NAME}",
-        dataflow_slice_marker("qkv_cache_write"),
         f"compact phase trace {_phase_trace_marker(QKV_CACHE_PHASE_TRACE)}",
         "full_c1r2_make_input_norm_payload",
         "qwen3_postprocess_q4nx_body_payload",
@@ -386,7 +383,6 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         f"%c{V_WEIGHT_CHUNK_BASE}_i32 = arith.constant {V_WEIGHT_CHUNK_BASE} : i32",
     )
     errors = [f"missing qwen3 qkv cache-write marker: {marker}" for marker in required if marker not in mlir]
-    errors.extend(validate_dataflow_slice("qkv_cache_write"))
     expected_packets = len(MAIN_COLUMNS) * (ROWS_PER_COLUMN + 1) + 6
     errors.extend(require_count(CASE_NAME, "packet flow", mlir.count("aie.packet_flow("), expected_packets))
     errors.extend(require_count(CASE_NAME, "q4nx chunk call sites", mlir.count("func.call @q4nx_chunk_accum_slice_i32"), len(MAIN_COLUMNS) * len(MAIN_ROWS) * 6))

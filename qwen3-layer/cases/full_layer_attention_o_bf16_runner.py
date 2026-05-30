@@ -18,6 +18,9 @@ from cases.full_layer_engine_reference import (
     TOTAL_WEIGHT_AND_AUX_I32,
     aux_as_i32,
     bf16_cache_payload,
+    cache_writeback_stats,
+    expected_cache_writeback,
+    format_stage_stats,
     hidden_input_as_i32,
     packed_as_i32,
     validate_cache_writeback,
@@ -30,7 +33,9 @@ from cases.currentkv_kvscan_attention_kv16_reference import (
 from cases.qwen3_8b_decode_layer_reference import (
     DEFAULT_CURRENT_TOKEN,
     DEFAULT_LAYER,
+    O_PROJECTION,
     Qwen3LayerReference,
+    attention_bf16_npu,
     bf16_compare_stats,
     format_bf16_compare_stats,
     make_reference_inputs,
@@ -44,8 +49,8 @@ from resource_manifest import write_resource_manifest
 
 CASE_NAME = generate.CASE_NAME
 EXPERIMENT_DIR = Path(__file__).parent.parent
-O_ABS_TOL = 0.05
-O_REL_TOL = 0.2
+O_ABS_TOL = 0.01
+O_REL_TOL = 0.05
 
 
 @dataclass(frozen=True)
@@ -186,7 +191,12 @@ def _make_fixture(
         k_norm_bf16=k_norm,
         packed_weights=packed,
         weights_i32=weights,
-        expected_o_i32=pack_bf16_i32(result.o),
+        expected_o_i32=pack_bf16_i32(
+            reference.project(
+                O_PROJECTION,
+                attention_bf16_npu(result.q, result.k_cache, result.v_cache, schedule.current_token),
+            )
+        ),
         rope_theta=model.config.rope_theta,
     )
 
@@ -253,7 +263,7 @@ def run(
     print(f"  layer={layer}")
     print("  closed_loop=host hidden -> c1r2 input RMSNorm replay -> main16 Q4NX Q/K/V -> c1r3 Q/K norm+RoPE -> current K/V writeback")
     print("  attention=KV scan -> qwen3_attention_bf16_* -> packet2 -> c1r1 bridge -> main16 Q4NX O")
-    print("  output=O compact records -> c1r2 host-tapped O vector vs Qwen3LayerReference.o")
+    print("  output=O compact records -> c1r2 host-tapped O vector vs bf16 attention contract")
     print(f"  decode_token={schedule.current_token}, blocks={schedule.kv_blocks}, tail={schedule.tail_tokens}")
     print(f"  hidden={HIDDEN_DWORDS} dwords, aux={AUX_DWORDS} dwords, host_output={OUTPUT_DWORDS} dwords")
     print("  tail=postnorm/up/gate/SwiGLU/down not started")
@@ -299,18 +309,32 @@ def run(
     print(f"  got[0:8]:      {got[:8].tolist()}")
     print(f"  expected[-4:]: {expected[-4:].tolist()}")
     print(f"  got[-4:]:      {got[-4:].tolist()}")
-    print(f"  {format_bf16_compare_stats(bf16_compare_stats('attention_o', expected, got, O_ABS_TOL, O_REL_TOL))}")
-
-    errors = validate_cache_writeback(
+    o_stats = bf16_compare_stats("attention_o", expected, got, O_ABS_TOL, O_REL_TOL)
+    expected_cache = expected_cache_writeback(
         schedule,
-        got_k[: schedule.kv_cache_dwords],
-        got_v[: schedule.kv_cache_dwords],
         fixture.packed_weights,
         fixture.qkv_activation_bf16,
         fixture.k_norm_bf16,
         fixture.rope_theta,
         k_cache,
         v_cache,
+    )
+    cache_stats = cache_writeback_stats(
+        schedule,
+        got_k[: schedule.kv_cache_dwords],
+        got_v[: schedule.kv_cache_dwords],
+        expected_cache,
+    )
+    print(f"  {format_bf16_compare_stats(o_stats)}")
+    print(f"  stage_budget: {format_bf16_compare_stats(o_stats)}")
+    for stats in cache_stats:
+        print(f"  stage_budget: {format_stage_stats(stats)}")
+
+    errors = validate_cache_writeback(
+        schedule,
+        got_k[: schedule.kv_cache_dwords],
+        got_v[: schedule.kv_cache_dwords],
+        expected_cache,
     )
     errors.extend(_validate_o_output(expected, got))
     if errors:

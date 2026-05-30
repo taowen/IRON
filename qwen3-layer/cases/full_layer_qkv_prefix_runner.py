@@ -11,9 +11,11 @@ from aie.utils.hostruntime.xrtruntime.tensor import XRTTensor
 
 from cases import full_layer_qkv_prefix_generate as generate
 from cases.full_layer_engine_reference import (
+    HEAD_DIM,
     HIDDEN_DWORDS,
     TOTAL_WEIGHT_AND_AUX_I32,
     aux_as_i32,
+    expected_cache_writeback,
     hidden_input_as_i32,
     input_norm_activation,
     make_hidden_bf16,
@@ -140,8 +142,16 @@ def run(
     hidden_bf16 = make_hidden_bf16()
     input_norm_weight = np.ones(hidden_bf16.shape, dtype=hidden_bf16.dtype)
     post_norm_weight = np.ones(hidden_bf16.shape, dtype=hidden_bf16.dtype)
+    q_norm_weight = np.ones((HEAD_DIM,), dtype=hidden_bf16.dtype)
+    k_norm_weight = np.ones((HEAD_DIM,), dtype=hidden_bf16.dtype)
     hidden = hidden_input_as_i32(hidden_bf16)
-    aux = aux_as_i32(schedule.current_token, input_norm_weight, post_norm_weight)
+    aux = aux_as_i32(
+        schedule.current_token,
+        input_norm_weight,
+        post_norm_weight,
+        q_norm_weight,
+        k_norm_weight,
+    )
     weights_i32 = np.concatenate((aux, packed_as_i32(packed))).astype(np.int32)
     qkv_activation = input_norm_activation(hidden_bf16, input_norm_weight)
     if hidden.shape[0] != HIDDEN_DWORDS:
@@ -161,17 +171,21 @@ def run(
     got_k = k_cache_buf.to_torch().numpy().astype(np.int32)
     got_v = v_cache_buf.to_torch().numpy().astype(np.int32)
     print(f"  NPU time: {result.npu_time / 1e3:.1f} us")
+    expected_cache = expected_cache_writeback(
+        schedule,
+        packed,
+        qkv_activation,
+        k_norm_weight,
+        1_000_000.0,
+        k_cache,
+        v_cache,
+    )
 
     errors = validate_cache_writeback(
         schedule,
         got_k[: schedule.kv_cache_dwords],
         got_v[: schedule.kv_cache_dwords],
-        packed,
-        qkv_activation,
-        None,
-        1_000_000.0,
-        k_cache,
-        v_cache,
+        expected_cache,
     )
     if errors:
         print(f"  FAIL: {len(errors)} full-layer qkv-prefix cache mismatches")

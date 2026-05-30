@@ -25,8 +25,8 @@ from qwen3_model import DEFAULT_QWEN3_8B_MODEL_PATH, Qwen3Q4NXModel
 
 CASE_NAME = generate.CASE_NAME
 EXPERIMENT_DIR = Path(__file__).parent.parent
-MAX_ABS_TOLERANCE = 0.008
-MEAN_ABS_TOLERANCE = 0.0015
+MAX_ABS_TOLERANCE = 0.0
+MEAN_ABS_TOLERANCE = 0.0
 
 
 @dataclass(frozen=True)
@@ -197,11 +197,18 @@ def run(
     expected_values = _bf16_values(fixture.expected_i32)
     got_values = _bf16_values(got)
     abs_err = np.abs(expected_values - got_values)
+    mismatch_count = int(np.flatnonzero(abs_err > MAX_ABS_TOLERANCE).size)
     print(f"  NPU time: {result.npu_time / 1e3:.1f} us")
     print(f"  expected[0:8]: {fixture.expected_i32[:8].tolist()}")
     print(f"  got[0:8]:      {got[:8].tolist()}")
     print(f"  max_abs={float(np.max(abs_err)):.9f}")
     print(f"  mean_abs={float(np.mean(abs_err)):.9f}")
+    print(
+        "  stage_budget: "
+        f"c1r2_input_norm: max_abs={float(np.max(abs_err)):.9f} "
+        f"mean_abs={float(np.mean(abs_err)):.9f} mismatches={mismatch_count} "
+        f"abs_tol={MAX_ABS_TOLERANCE:.9f} rel_tol=0.000000"
+    )
 
     errors = _validate_output(fixture.expected_i32, got)
     if errors:

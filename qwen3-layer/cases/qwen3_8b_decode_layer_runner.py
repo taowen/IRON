@@ -20,6 +20,9 @@ from cases.full_layer_engine_reference import (
     TOTAL_WEIGHT_AND_AUX_I32,
     aux_as_i32,
     bf16_cache_payload,
+    cache_writeback_stats,
+    expected_cache_writeback,
+    format_stage_stats,
     hidden_input_as_i32,
     input_norm_activation as physical_input_norm_activation,
     packed_as_i32,
@@ -31,6 +34,7 @@ from cases.currentkv_kvscan_attention_kv16_reference import (
     make_decode_schedule,
     validate_cache_layout_contract,
 )
+from cases.decode_instruction_patch import patch_instruction_stream
 from qwen3_download import ensure_qwen3_8b_model
 from qwen3_model import DEFAULT_QWEN3_8B_MODEL_PATH, Qwen3Q4NXModel
 from cases.qwen3_8b_decode_layer_reference import (
@@ -46,6 +50,7 @@ from cases.qwen3_8b_decode_layer_reference import (
 from resource_manifest import write_resource_manifest
 
 EXPERIMENT_DIR = Path(__file__).parent.parent
+CAPACITY_TOKEN = 127
 
 
 @dataclass(frozen=True)
@@ -72,38 +77,77 @@ def _load_model(model_path: Path | None, download_model: bool) -> Qwen3Q4NXModel
     return Qwen3Q4NXModel(path)
 
 
+def _target_schedule(current_token: int | None) -> DecodeSchedule:
+    return make_decode_schedule(DEFAULT_CURRENT_TOKEN if current_token is None else current_token)
+
+
+def _build_schedule(target_schedule: DecodeSchedule) -> DecodeSchedule:
+    return make_decode_schedule(max(target_schedule.current_token, CAPACITY_TOKEN))
+
+
+def _capacity_build_name(schedule: DecodeSchedule) -> str:
+    return f"{CASE_NAME}-capacity-token{schedule.current_token}"
+
+
+def _patch_capacity_instructions(
+    insts_path: Path,
+    build_schedule: DecodeSchedule,
+    target_schedule: DecodeSchedule,
+) -> tuple[Path, list[str]]:
+    if build_schedule.current_token == target_schedule.current_token:
+        return insts_path, []
+    target_path = insts_path.with_name(
+        f"design-token{build_schedule.current_token}-to-token{target_schedule.current_token}.bin"
+    )
+    return target_path, patch_instruction_stream(insts_path, target_path, build_schedule, target_schedule)
+
+
 def _cache_buffer_payload(payload: np.ndarray, schedule: DecodeSchedule) -> np.ndarray:
     if payload.shape != (schedule.kv_cache_dwords,):
         raise ValueError(f"KV cache shape mismatch: {payload.shape} != {(schedule.kv_cache_dwords,)}")
     return payload
 
 
-def _padded_cache(values: np.ndarray, schedule: DecodeSchedule) -> np.ndarray:
-    expected = (schedule.current_token + 1, 8, 128)
+def _padded_cache(
+    values: np.ndarray,
+    target_schedule: DecodeSchedule,
+    buffer_schedule: DecodeSchedule,
+) -> np.ndarray:
+    expected = (target_schedule.current_token + 1, 8, 128)
     if values.shape != expected:
         raise ValueError(f"reference cache shape mismatch: {values.shape} != {expected}")
-    padded = np.zeros((schedule.total_context, 8, 128), dtype=values.dtype)
-    padded[: schedule.current_token + 1] = values
+    if target_schedule.current_token > buffer_schedule.current_token:
+        raise ValueError(
+            f"target token{target_schedule.current_token} exceeds buffer token{buffer_schedule.current_token}"
+        )
+    padded = np.zeros((buffer_schedule.total_context, 8, 128), dtype=values.dtype)
+    padded[: target_schedule.current_token + 1] = values
     return padded
 
 
-def _poison_current_cache(values: np.ndarray, schedule: DecodeSchedule, poison: float) -> np.ndarray:
-    poisoned = _padded_cache(values, schedule)
-    poisoned[schedule.current_token, :, :] = np.array(poison, dtype=values.dtype)
+def _poison_current_cache(
+    values: np.ndarray,
+    target_schedule: DecodeSchedule,
+    buffer_schedule: DecodeSchedule,
+    poison: float,
+) -> np.ndarray:
+    poisoned = _padded_cache(values, target_schedule, buffer_schedule)
+    poisoned[target_schedule.current_token, :, :] = np.array(poison, dtype=values.dtype)
     return poisoned
 
 
 def _make_physical_fixture(
     model: Qwen3Q4NXModel,
     layer: int,
-    schedule: DecodeSchedule,
+    target_schedule: DecodeSchedule,
+    buffer_schedule: DecodeSchedule,
 ) -> Qwen3PhysicalFixture:
-    inputs = make_reference_inputs(schedule.current_token)
+    inputs = make_reference_inputs(target_schedule.current_token)
     input_norm, post_norm, q_norm, k_norm = model.layer_norm_weights(layer)
     qkv_activation = physical_input_norm_activation(inputs.hidden, input_norm)
     packed = model.layer_weight_stream(layer)
     aux_i32 = aux_as_i32(
-        schedule.current_token,
+        target_schedule.current_token,
         input_norm,
         post_norm,
         q_norm,
@@ -113,8 +157,14 @@ def _make_physical_fixture(
     weights_i32 = np.concatenate((aux_i32, packed_as_i32(packed))).astype(np.int32)
     reference = Qwen3LayerReference(model, layer)
     result = reference.forward(inputs)
-    initial_k_cache = bf16_cache_payload(schedule, _poison_current_cache(inputs.k_cache, schedule, 19.0))
-    initial_v_cache = bf16_cache_payload(schedule, _poison_current_cache(inputs.v_cache, schedule, -19.0))
+    initial_k_cache = bf16_cache_payload(
+        buffer_schedule,
+        _poison_current_cache(inputs.k_cache, target_schedule, buffer_schedule, 19.0),
+    )
+    initial_v_cache = bf16_cache_payload(
+        buffer_schedule,
+        _poison_current_cache(inputs.v_cache, target_schedule, buffer_schedule, -19.0),
+    )
     return Qwen3PhysicalFixture(
         k_cache_i32=initial_k_cache,
         v_cache_i32=initial_v_cache,
@@ -172,22 +222,31 @@ def check_only(
     layer: int = DEFAULT_LAYER,
     download_model: bool = False,
 ) -> bool:
-    schedule = make_decode_schedule(DEFAULT_CURRENT_TOKEN if current_token is None else current_token)
+    target_schedule = _target_schedule(current_token)
+    build_schedule = _build_schedule(target_schedule)
     model = _load_model(model_path, download_model)
     errors = validate_model_assets(model, layer)
-    mlir_text = generate.generate_mlir(schedule)
-    errors.extend(generate.validate_generated_mlir(mlir_text, schedule))
-    errors.extend(validate_cache_layout_contract(schedule))
+    mlir_text = generate.generate_mlir(build_schedule)
+    errors.extend(generate.validate_generated_mlir(mlir_text, build_schedule))
+    errors.extend(validate_cache_layout_contract(target_schedule))
+    errors.extend(validate_cache_layout_contract(build_schedule))
+    if target_schedule.kv_blocks > build_schedule.kv_blocks:
+        errors.append(
+            f"target token{target_schedule.current_token} needs {target_schedule.kv_blocks} blocks, "
+            f"but build token{build_schedule.current_token} reserves {build_schedule.kv_blocks}"
+        )
     if errors:
         for error in errors:
             print(f"  QWEN3-8B FULL-LAYER FAIL: {error}")
         return False
-    weight_bytes, hidden_dwords, aux_dwords = _validate_real_physical_inputs(model, layer, schedule)
+    weight_bytes, hidden_dwords, aux_dwords = _validate_real_physical_inputs(model, layer, target_schedule)
     print(f"  PASS: {CASE_NAME} assets valid for layer {layer}")
     print(f"  weight_stream_bytes={weight_bytes}")
     print(f"  hidden_dwords={hidden_dwords}")
     print(f"  aux_prefix_dwords={aux_dwords}")
-    print(f"  current_token={schedule.current_token}")
+    print(f"  current_token={target_schedule.current_token}")
+    print(f"  capacity_token={build_schedule.current_token}")
+    print(f"  capacity_kv_cache_dwords={build_schedule.kv_cache_dwords}")
     print("  PASS: real Qwen3 weights fit the current full-layer NPU topology")
     return True
 
@@ -198,17 +257,23 @@ def build_only(
     layer: int = DEFAULT_LAYER,
     download_model: bool = False,
 ) -> bool:
-    schedule = make_decode_schedule(DEFAULT_CURRENT_TOKEN if current_token is None else current_token)
+    target_schedule = _target_schedule(current_token)
+    build_schedule = _build_schedule(target_schedule)
     model = _load_model(model_path, download_model)
     errors = validate_model_assets(model, layer)
     if errors:
         for error in errors:
             print(f"  QWEN3-8B ASSET FAIL: {error}")
         return False
-    _validate_real_physical_inputs(model, layer, schedule)
-    xclbin_path, insts_path = build_kernel(schedule)
+    _validate_real_physical_inputs(model, layer, target_schedule)
+    xclbin_path, insts_path = build_kernel(build_schedule, _capacity_build_name(build_schedule))
+    runtime_insts_path, patch_changes = _patch_capacity_instructions(insts_path, build_schedule, target_schedule)
     print(f"  PASS: built {xclbin_path}")
     print(f"  PASS: built {insts_path}")
+    if patch_changes:
+        print(f"  PASS: patched {runtime_insts_path}")
+        for change in patch_changes:
+            print(f"    {change}")
     return True
 
 
@@ -218,7 +283,8 @@ def run(
     layer: int = DEFAULT_LAYER,
     download_model: bool = False,
 ) -> bool:
-    schedule = make_decode_schedule(DEFAULT_CURRENT_TOKEN if current_token is None else current_token)
+    target_schedule = _target_schedule(current_token)
+    build_schedule = _build_schedule(target_schedule)
     model = _load_model(model_path, download_model)
     errors = validate_model_assets(model, layer)
     if errors:
@@ -231,19 +297,27 @@ def run(
     print("=" * 78)
     print(f"  model={_model_path(model_path)}")
     print(f"  layer={layer}")
-    print(f"  current_token={schedule.current_token}")
+    print(f"  current_token={target_schedule.current_token}")
+    print(f"  capacity_token={build_schedule.current_token}")
     print("  topology=current full-layer NPU frontier with real Qwen3 Q4NX weights")
     print("  numerics=c1r2 RMSNorm/residual + c1r3 Q/K norm/RoPE + bf16 KV scan attention")
     print()
 
-    xclbin_path, insts_path = build_kernel(schedule)
+    xclbin_path, insts_path = build_kernel(build_schedule, _capacity_build_name(build_schedule))
+    runtime_insts_path, patch_changes = _patch_capacity_instructions(insts_path, build_schedule, target_schedule)
+    if patch_changes:
+        print(f"  Runtime instruction stream: {runtime_insts_path.name}")
+        for change in patch_changes:
+            print(f"    {change}")
+    else:
+        print(f"  Runtime instruction stream: {runtime_insts_path.name}")
     print("  Loading NPU kernel...")
-    handle = npu_build.load_kernel(xclbin_path, insts_path)
+    handle = npu_build.load_kernel(xclbin_path, runtime_insts_path)
 
     print("  Preparing raw hidden, aux weights, K/V cache, real Q4NX weights, and CPU oracle...")
-    fixture = _make_physical_fixture(model, layer, schedule)
-    k_cache = _cache_buffer_payload(fixture.k_cache_i32, schedule)
-    v_cache = _cache_buffer_payload(fixture.v_cache_i32, schedule)
+    fixture = _make_physical_fixture(model, layer, target_schedule, build_schedule)
+    k_cache = _cache_buffer_payload(fixture.k_cache_i32, build_schedule)
+    v_cache = _cache_buffer_payload(fixture.v_cache_i32, build_schedule)
     if fixture.hidden_i32.shape[0] != HIDDEN_DWORDS:
         raise RuntimeError(f"hidden i32 mismatch: {fixture.hidden_i32.shape[0]} != {HIDDEN_DWORDS}")
     if fixture.weights_i32.shape[0] != TOTAL_WEIGHT_AND_AUX_I32:
@@ -267,29 +341,38 @@ def run(
     print(f"  got[0:8]:      {got[:8].tolist()}")
     print(f"  expected[-4:]: {fixture.expected[-4:].tolist()}")
     print(f"  got[-4:]:      {got[-4:].tolist()}")
-    print(
-        "  "
-        + format_bf16_compare_stats(
-            bf16_compare_stats(
-                "final_hidden_out",
-                fixture.expected,
-                got,
-                FULL_PIPELINE_ABS_TOL,
-                FULL_PIPELINE_REL_TOL,
-            )
-        )
+    final_stats = bf16_compare_stats(
+        "final_hidden_out",
+        fixture.expected,
+        got,
+        FULL_PIPELINE_ABS_TOL,
+        FULL_PIPELINE_REL_TOL,
     )
-
-    errors = validate_cache_writeback(
-        schedule,
-        got_k[: schedule.kv_cache_dwords],
-        got_v[: schedule.kv_cache_dwords],
+    expected_cache = expected_cache_writeback(
+        target_schedule,
         fixture.packed_weights,
         fixture.qkv_activation_bf16,
         fixture.k_norm_bf16,
         fixture.rope_theta,
         k_cache,
         v_cache,
+    )
+    cache_stats = cache_writeback_stats(
+        target_schedule,
+        got_k,
+        got_v,
+        expected_cache,
+    )
+    print("  " + format_bf16_compare_stats(final_stats))
+    print("  stage_budget: " + format_bf16_compare_stats(final_stats))
+    for stats in cache_stats:
+        print("  stage_budget: " + format_stage_stats(stats))
+
+    errors = validate_cache_writeback(
+        target_schedule,
+        got_k,
+        got_v,
+        expected_cache,
     )
     errors.extend(validate_expected_output(fixture.expected, got))
     if errors:

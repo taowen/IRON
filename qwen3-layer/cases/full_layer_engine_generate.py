@@ -26,7 +26,6 @@ from contract import (
     ROWS_PER_PATCH,
     SHAPE_CARRIER_DWORDS,
 )
-from dataflow import dataflow_slice_marker, validate_dataflow_slice
 from mlir_utils import (
     flow,
     lock_pair,
@@ -1339,8 +1338,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
     for window, (column, row) in enumerate(SHAPE_B_TILES):
         tile_defs.append(f"    %{shape_b_symbol(window)} = aie.tile({column}, {row})")
 
-    slice_marker = dataflow_slice_marker("full_layer")
-    flows = [f"    // case marker {CASE_NAME}", f"    // {slice_marker}"]
+    flows = [f"    // case marker {CASE_NAME}"]
     for group in range(len(MAIN_COLUMNS)):
         for row in range(len(MAIN_ROWS)):
             flows.append(packet_flow(main_packet(group, row), _main_symbol(group, row), 1, f"mt{group}", row))
@@ -1443,7 +1441,6 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     ownership = resource_manifest(schedule)
     required = (
         f"case marker {CASE_NAME}",
-        dataflow_slice_marker("full_layer"),
         f"compact phase trace {_phase_trace_marker(QKV_BODY_PHASE_TRACE)}",
         "qwen3_postprocess_q4nx_body_payload",
         f"aie.dma_bd(%post_q_compact : memref<{Q_DWORDS}xi32>, 0, {Q_DWORDS})",
@@ -1513,7 +1510,6 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         errors.append("full-layer engine must not link the old mixed qwen3_bridge object")
     if "debug_contract.o" in mlir:
         errors.append("full-layer engine must not link debug_contract.o")
-    errors.extend(validate_dataflow_slice("full_layer"))
     errors.extend(_phase_trace_errors(QKV_BODY_PHASE_TRACE))
     errors.extend(
         require_marker_order(

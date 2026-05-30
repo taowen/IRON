@@ -47,7 +47,6 @@ from compact_dataflow import (
     main_packet,
 )
 from contract import CHUNK_BF16, MAIN_COLUMNS, MAIN_ROWS, RECORD_DWORDS, ROWS_PER_PATCH
-from dataflow import dataflow_slice_marker, validate_dataflow_slice
 from mlir_utils import (
     flow,
     npu_address_patch,
@@ -168,7 +167,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
         for row_idx, row_value in enumerate(MAIN_ROWS):
             tile_defs.append(f"    %{full._main_symbol(group, row_idx)} = aie.tile({column}, {row_value})")
 
-    flows = [f"    // case marker {CASE_NAME}", f"    // {dataflow_slice_marker('full_layer_qkv_prefix')}"]
+    flows = [f"    // case marker {CASE_NAME}"]
     flows.extend(
         (
             flow("shim_out", 0, "full", 1),
@@ -239,7 +238,6 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     ownership = resource_manifest(schedule)
     required = (
         f"case marker {CASE_NAME}",
-        dataflow_slice_marker("full_layer_qkv_prefix"),
         f"compact phase trace {_phase_trace_marker(full.QKV_BODY_PHASE_TRACE)}",
         "qwen3_postprocess_q4nx_body_payload",
         "full_c1r2_make_input_norm_payload",
@@ -276,7 +274,6 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     errors = [f"missing full-layer qkv-prefix marker: {marker}" for marker in required if marker not in mlir]
     errors.extend(validate_resource_manifest(CASE_NAME, ownership))
     errors.extend(validate_manifest_matches_mlir(CASE_NAME, ownership, mlir))
-    errors.extend(validate_dataflow_slice("full_layer_qkv_prefix"))
     errors.extend(_phase_trace_errors(full.QKV_BODY_PHASE_TRACE))
     errors.extend(
         require_marker_order(

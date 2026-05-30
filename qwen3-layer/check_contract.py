@@ -18,14 +18,29 @@ from contract import (
     summary_lines,
     validate_contract,
 )
-from dataflow import dataflow_lines, validate_all_dataflow_slices, validate_dataflow
-from generate import generate_mlir, validate_generated_mlir
 from cases import full_layer_engine_generate
 from cases import full_layer_attention_o_bf16_generate
 from cases import full_layer_qkv_prefix_generate
+from cases import qwen3_8b_c1r2_input_norm_generate
+from cases import qwen3_8b_qkv_cache_write_generate
+from cases.currentkv_kvscan_attention_kv16_reference import (
+    make_decode_schedule,
+    validate_cache_layout_contract,
+)
 from cases.registry import CASE_NAMES
 from resource_manifest import compare_main16_qkv_contracts, validate_manifest_matches_mlir, validate_resource_manifest
 
+TOKEN_GATE_TOKENS = (0, 1, 31, 91, 127)
+DECODE_CAPACITY_TOKEN = 127
+FORBIDDEN_ACTIVE_MLIR_MARKERS = (
+    "dataflow slice",
+    "qwen3-contract",
+    "qwen3-edge",
+    "legacy exp67",
+    "qwen3_layer.o",
+    "qwen3_bridge.o",
+    "debug_contract.o",
+)
 EXPECTED_CASE_NAMES = (
     "qwen3-8b-decode-layer",
     "qwen3-8b-c1r2-input-norm-replay",
@@ -34,6 +49,9 @@ EXPECTED_CASE_NAMES = (
     "full-layer-attention-o-bf16",
 )
 RETIRED_FILES = (
+    "dataflow.py",
+    "emit_mlir.py",
+    "generate.py",
     "debug_contract.cc",
     "qkv_compact_dataflow.py",
     "cases/currentkv_full_layer_q4nx_down_generate.py",
@@ -57,6 +75,7 @@ RETIRED_FILES = (
 )
 ACTIVE_CODE_FILES = (
     "run_npu.py",
+    "run_stage_budget.py",
     "cases/registry.py",
     "cases/full_layer_engine_generate.py",
     "cases/full_layer_engine_reference.py",
@@ -64,6 +83,7 @@ ACTIVE_CODE_FILES = (
     "cases/full_layer_qkv_prefix_runner.py",
     "cases/full_layer_attention_o_bf16_generate.py",
     "cases/full_layer_attention_o_bf16_runner.py",
+    "cases/decode_instruction_patch.py",
     "cases/qwen3_8b_decode_layer_runner.py",
     "cases/qwen3_8b_qkv_cache_write_generate.py",
     "cases/qwen3_8b_qkv_cache_write_runner.py",
@@ -101,14 +121,35 @@ def validate_single_mode_registry() -> list[str]:
     return errors
 
 
+def validate_active_mlir(case_name: str, mlir: str) -> list[str]:
+    errors: list[str] = []
+    case_marker = f"case marker {case_name}"
+    marker_count = mlir.count(case_marker)
+    if marker_count != 1:
+        errors.append(f"{case_name}: expected one case marker, found {marker_count}")
+    for marker in FORBIDDEN_ACTIVE_MLIR_MARKERS:
+        if marker in mlir:
+            errors.append(f"{case_name}: forbidden active MLIR marker found: {marker}")
+    return errors
+
+
 def validate_runnable_boundaries() -> list[str]:
     errors: list[str] = []
     full_layer_mlir = full_layer_engine_generate.generate_mlir()
     errors.extend(full_layer_engine_generate.validate_generated_mlir(full_layer_mlir))
+    errors.extend(validate_active_mlir(full_layer_engine_generate.CASE_NAME, full_layer_mlir))
     full_layer_qkv_prefix_mlir = full_layer_qkv_prefix_generate.generate_mlir()
     errors.extend(full_layer_qkv_prefix_generate.validate_generated_mlir(full_layer_qkv_prefix_mlir))
+    errors.extend(validate_active_mlir(full_layer_qkv_prefix_generate.CASE_NAME, full_layer_qkv_prefix_mlir))
     attention_o_mlir = full_layer_attention_o_bf16_generate.generate_mlir()
     errors.extend(full_layer_attention_o_bf16_generate.validate_generated_mlir(attention_o_mlir))
+    errors.extend(validate_active_mlir(full_layer_attention_o_bf16_generate.CASE_NAME, attention_o_mlir))
+    qkv_cache_write_mlir = qwen3_8b_qkv_cache_write_generate.generate_mlir()
+    errors.extend(qwen3_8b_qkv_cache_write_generate.validate_generated_mlir(qkv_cache_write_mlir))
+    errors.extend(validate_active_mlir(qwen3_8b_qkv_cache_write_generate.CASE_NAME, qkv_cache_write_mlir))
+    c1r2_replay_mlir = qwen3_8b_c1r2_input_norm_generate.generate_mlir()
+    errors.extend(qwen3_8b_c1r2_input_norm_generate.validate_generated_mlir(c1r2_replay_mlir))
+    errors.extend(validate_active_mlir(qwen3_8b_c1r2_input_norm_generate.CASE_NAME, c1r2_replay_mlir))
     qkv_prefix_manifest = full_layer_qkv_prefix_generate.resource_manifest()
     full_layer_manifest = full_layer_engine_generate.resource_manifest()
     attention_o_manifest = full_layer_attention_o_bf16_generate.resource_manifest()
@@ -126,6 +167,35 @@ def validate_runnable_boundaries() -> list[str]:
             attention_o_manifest,
         )
     )
+    return errors
+
+
+def validate_decode_token_gate() -> list[str]:
+    errors: list[str] = []
+    for token in TOKEN_GATE_TOKENS:
+        target_schedule = make_decode_schedule(token)
+        build_schedule = make_decode_schedule(max(token, DECODE_CAPACITY_TOKEN))
+        if target_schedule.kv_blocks > build_schedule.kv_blocks:
+            errors.append(
+                f"token{token}: target blocks {target_schedule.kv_blocks} exceed "
+                f"capacity blocks {build_schedule.kv_blocks}"
+            )
+
+        full_layer_mlir = full_layer_engine_generate.generate_mlir(build_schedule)
+        errors.extend(full_layer_engine_generate.validate_generated_mlir(full_layer_mlir, build_schedule))
+        errors.extend(validate_active_mlir(full_layer_engine_generate.CASE_NAME, full_layer_mlir))
+        errors.extend(validate_cache_layout_contract(target_schedule))
+        errors.extend(validate_cache_layout_contract(build_schedule))
+
+        qkv_prefix_mlir = full_layer_qkv_prefix_generate.generate_mlir(target_schedule)
+        errors.extend(full_layer_qkv_prefix_generate.validate_generated_mlir(qkv_prefix_mlir, target_schedule))
+        errors.extend(validate_active_mlir(full_layer_qkv_prefix_generate.CASE_NAME, qkv_prefix_mlir))
+        attention_o_mlir = full_layer_attention_o_bf16_generate.generate_mlir(target_schedule)
+        errors.extend(full_layer_attention_o_bf16_generate.validate_generated_mlir(attention_o_mlir, target_schedule))
+        errors.extend(validate_active_mlir(full_layer_attention_o_bf16_generate.CASE_NAME, attention_o_mlir))
+        qkv_cache_write_mlir = qwen3_8b_qkv_cache_write_generate.generate_mlir(target_schedule)
+        errors.extend(qwen3_8b_qkv_cache_write_generate.validate_generated_mlir(qkv_cache_write_mlir, target_schedule))
+        errors.extend(validate_active_mlir(qwen3_8b_qkv_cache_write_generate.CASE_NAME, qkv_cache_write_mlir))
     return errors
 
 
@@ -191,18 +261,13 @@ def validate_resource_manifest_negative_checks() -> list[str]:
 
 
 def main() -> int:
-    mlir = generate_mlir()
     errors = validate_contract()
-    errors.extend(validate_dataflow())
-    errors.extend(validate_all_dataflow_slices())
-    errors.extend(validate_generated_mlir(mlir))
     errors.extend(validate_single_mode_registry())
     errors.extend(validate_runnable_boundaries())
+    errors.extend(validate_decode_token_gate())
     errors.extend(validate_resource_manifest_negative_checks())
 
     print("\n".join(summary_lines()))
-    print("\n".join(dataflow_lines()))
-    print(f"  generated_mlir_bytes={len(mlir.encode())}")
     print(
         "  constants: "
         f"c1r2={C1R2_PACKET_DWORDS} compact={COMPACT_PACKET_DWORDS} "
@@ -211,6 +276,7 @@ def main() -> int:
     )
     print(f"  chunks: O={O_CHUNKS} swiglu={SWIGLU_SLICES} patches={TOTAL_PATCHES}")
     print("  frontier=qwen3-8b-decode-layer")
+    print(f"  token_gate={','.join(str(token) for token in TOKEN_GATE_TOKENS)}")
     print(f"  active_cases={','.join(CASE_NAMES)}")
 
     if errors:

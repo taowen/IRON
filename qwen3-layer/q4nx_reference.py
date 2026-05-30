@@ -44,7 +44,7 @@ def hidden_as_i32() -> np.ndarray:
 
 def make_q4nx_chunk(rng: np.random.Generator) -> np.ndarray:
     scales = rng.uniform(0.001, 0.012, (M_PER_TILE, GROUPS_PER_CHUNK)).astype(bfloat16)
-    zeros = rng.uniform(6.0, 9.0, (M_PER_TILE, GROUPS_PER_CHUNK)).astype(bfloat16)
+    zeros = rng.uniform(-0.095, -0.015, (M_PER_TILE, GROUPS_PER_CHUNK)).astype(bfloat16)
     weights_u4 = rng.integers(0, 16, (M_PER_TILE, ACT_SLICE_BF16), dtype=np.uint8)
 
     scale_words = np.empty(M_PER_TILE * GROUPS_PER_CHUNK, dtype=bfloat16)
@@ -77,6 +77,15 @@ def packed_as_i32(packed: np.ndarray) -> np.ndarray:
     return np.frombuffer(packed.tobytes(), dtype=np.int32).copy()
 
 
+def _q4nx_dequant_bf16(
+    grouped_weights: np.ndarray,
+    scales: np.ndarray,
+    zeros: np.ndarray,
+) -> np.ndarray:
+    scaled = (grouped_weights * scales[..., None]).astype(bfloat16).astype(np.float32)
+    return (scaled + zeros[..., None]).astype(bfloat16).astype(np.float32)
+
+
 def q4nx_matvec_from_chunk(packed_chunk: np.ndarray, activation_slice: np.ndarray) -> np.ndarray:
     if packed_chunk.shape[0] != CHUNK_BYTES:
         raise ValueError(f"bad Q4NX chunk bytes: {packed_chunk.shape[0]} != {CHUNK_BYTES}")
@@ -106,8 +115,58 @@ def q4nx_matvec_from_chunk(packed_chunk: np.ndarray, activation_slice: np.ndarra
 
     grouped_weights = weights_u4.reshape(M_PER_TILE, GROUPS_PER_CHUNK, GROUP_SIZE)
     grouped_act = activation_slice.astype(np.float32).reshape(GROUPS_PER_CHUNK, GROUP_SIZE)
-    dequant = (grouped_weights - zeros[:, :, None]) * scales[:, :, None]
-    return np.sum(
-        dequant * grouped_act[None, :, :],
-        axis=(1, 2),
-    )
+    dequant = _q4nx_dequant_bf16(grouped_weights, scales, zeros)
+    output = np.zeros((M_PER_TILE,), dtype=np.float32)
+    for group in range(GROUPS_PER_CHUNK):
+        for dim in range(GROUP_SIZE):
+            np.add(output, dequant[:, group, dim] * grouped_act[group, dim], out=output)
+    return output
+
+
+def q4nx_matvec_from_chunks(
+    packed_chunks: np.ndarray,
+    activation_slice: np.ndarray,
+    batch_chunks: int = 512,
+) -> np.ndarray:
+    if packed_chunks.ndim != 2 or packed_chunks.shape[1] != CHUNK_BYTES:
+        raise ValueError(f"bad Q4NX chunk array shape: {packed_chunks.shape}")
+    if activation_slice.shape != (ACT_SLICE_BF16,):
+        raise ValueError(f"activation slice shape mismatch: {activation_slice.shape} != {(ACT_SLICE_BF16,)}")
+    grouped_act = activation_slice.astype(np.float32).reshape(GROUPS_PER_CHUNK, GROUP_SIZE)
+    output = np.empty((packed_chunks.shape[0], M_PER_TILE), dtype=np.float32)
+    for start in range(0, packed_chunks.shape[0], batch_chunks):
+        end = min(start + batch_chunks, packed_chunks.shape[0])
+        chunks = np.ascontiguousarray(packed_chunks[start:end])
+        count = chunks.shape[0]
+        scales_raw = chunks[:, :Q4NX_SCALE_BYTES].view(bfloat16).astype(np.float32)
+        zeros_raw = chunks[:, Q4NX_SCALE_BYTES:Q4NX_DATA_OFFSET].view(bfloat16).astype(np.float32)
+        scales = scales_raw.reshape(count, GROUPS_PER_CHUNK, M_PER_TILE).transpose(0, 2, 1)
+        zeros = zeros_raw.reshape(count, GROUPS_PER_CHUNK, M_PER_TILE).transpose(0, 2, 1)
+
+        packed_u8 = chunks[:, Q4NX_DATA_OFFSET:]
+        weights_u4 = np.empty((count, M_PER_TILE, ACT_SLICE_BF16), dtype=np.float32)
+        for lane in range(Q4NX_LANES):
+            lane_base = lane * Q4NX_DATA_BYTES_PER_LANE
+            row_base = lane * Q4NX_ROWS_PER_LANE
+            lane_bytes = packed_u8[
+                :, lane_base : lane_base + Q4NX_DATA_BYTES_PER_LANE
+            ].reshape(count, ACT_SLICE_BF16, Q4NX_ROWS_PER_LANE // 2)
+            for byte_idx in range(Q4NX_ROWS_PER_LANE // 2):
+                row0 = row_base + byte_idx * 2
+                row1 = row0 + 1
+                byte_values = lane_bytes[:, :, byte_idx]
+                weights_u4[:, row0, :] = (byte_values & 0x0F).astype(np.float32)
+                weights_u4[:, row1, :] = (byte_values >> 4).astype(np.float32)
+
+        grouped_weights = weights_u4.reshape(count, M_PER_TILE, GROUPS_PER_CHUNK, GROUP_SIZE)
+        dequant = _q4nx_dequant_bf16(grouped_weights, scales, zeros)
+        chunk_output = np.zeros((count, M_PER_TILE), dtype=np.float32)
+        for group in range(GROUPS_PER_CHUNK):
+            for dim in range(GROUP_SIZE):
+                np.add(
+                    chunk_output,
+                    dequant[:, :, group, dim] * grouped_act[group, dim],
+                    out=chunk_output,
+                )
+        output[start:end] = chunk_output
+    return output

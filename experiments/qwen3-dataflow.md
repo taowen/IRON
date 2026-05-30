@@ -1294,7 +1294,7 @@ GQA ratio:      4       （每 4 个 query head 共享 1 个 kv head）
 ```
 ┌─────────────────────────────────────┐
 │ scales      : 32行 × 8组 × bf16     │  512 字节
-│ zero_points : 32行 × 8组 × bf16     │  512 字节
+│ offsets     : 32行 × 8组 × bf16     │  512 字节
 │ int4_data   : 32行 × 256列 / 2      │  4096 字节
 ├─────────────────────────────────────┤
 │ 合计                                 │  5120 字节
@@ -1303,14 +1303,18 @@ GQA ratio:      4       （每 4 个 query head 共享 1 个 kv head）
 
 解释：
 - 32 行 × 256 列：一个 chunk 覆盖 32 个输出维度、256 个输入维度
-- group size = 32：每 32 个权重共享一组 scale 和 zero_point
+- group size = 32：每 32 个权重共享一组 scale 和 offset
 - 8 组 = 256 列 / 32：每行有 8 个量化组
 
 在线反量化公式（tile 内部执行，不生成中间全精度矩阵）：
 ```
-weight_fp = (int4_value - zero_point) × scale
+weight_fp = int4_value × scale + offset
 output[row] += weight_fp × activation[col]
 ```
+
+`model.q4nx` 里的第二段是已经缩放后的 bf16 offset，不是 raw zero point。
+Qwen3-8B-NPU2 的真实 chunk 中该字段为负值；按 `(q - zero_point) * scale`
+解释会把 projection 输出整体拉偏，无法匹配 MyLM 的 full-model token。
 
 ### C. 608 个 Patch 的完整清单
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 from ml_dtypes import bfloat16
 
@@ -50,12 +52,16 @@ from q4nx_reference import (
     q4nx_matvec_from_chunk,
 )
 from cases.currentkv_kvscan_attention_kv16_reference import (
+    BLOCK_TOKENS,
+    CACHE_BLOCK_DWORDS,
     CURRENT_DWORDS,
     DecodeSchedule,
     HEAD_DWORDS,
     KV_HEADS,
+    WINDOW_HEAD_DWORDS,
     logical_cache_index,
     make_decode_schedule,
+    npu_cache_index,
     pack_logical_cache_to_npu,
     unpack_npu_cache_to_logical,
     validate_cache_layout_contract,
@@ -80,10 +86,39 @@ COLUMN_WEIGHT_BF16 = PATCHES_PER_COLUMN * PATCH_WEIGHT_BF16
 TOTAL_WEIGHT_BF16 = len(MAIN_COLUMNS) * COLUMN_WEIGHT_BF16
 TOTAL_WEIGHT_I32 = TOTAL_WEIGHT_BF16 // 2
 TOTAL_WEIGHT_AND_AUX_I32 = TOTAL_WEIGHT_I32 + AUX_DWORDS
-FULL_PIPELINE_ABS_TOL = 0.05
-FULL_PIPELINE_REL_TOL = 0.20
+FULL_PIPELINE_ABS_TOL = 0.01
+FULL_PIPELINE_REL_TOL = 0.05
 CACHE_REL_TOL = 0.02
-CACHE_ABS_TOL = 0.10
+CACHE_ABS_TOL = 0.01
+CACHE_CURRENT_REL_TOL = 0.02
+CACHE_CURRENT_ABS_TOL = 0.01
+
+
+@dataclass(frozen=True)
+class CacheWordCoord:
+    token: int
+    head: int
+    dim_pair: int
+    npu_offset: int
+
+
+@dataclass(frozen=True)
+class ExpectedCacheWriteback:
+    k: np.ndarray
+    v: np.ndarray
+
+
+@dataclass(frozen=True)
+class Bf16StageStats:
+    stage: str
+    max_abs: float
+    mean_abs: float
+    mismatch_count: int
+    abs_tol: float
+    rel_tol: float
+    max_abs_at: str | None = None
+    first_mismatch: str | None = None
+
 SIGMOID_TABLE_SCALE = 8.0
 SIGMOID_TABLE = np.array(
     [
@@ -438,8 +473,8 @@ def _apply_rope(values: np.ndarray, current_token: int, rope_theta: float) -> np
     dims = np.arange(0, HEAD_DIM, 2, dtype=np.float32)
     inv_freq = np.power(np.float32(rope_theta), -dims / np.float32(HEAD_DIM))
     angles = np.float32(current_token) * inv_freq
-    cos = np.cos(angles)
-    sin = np.sin(angles)
+    cos = np.cos(angles).astype(bfloat16).astype(np.float32)
+    sin = np.sin(angles).astype(bfloat16).astype(np.float32)
     output = np.empty_like(heads)
     even = heads[:, 0::2]
     odd = heads[:, 1::2]
@@ -927,29 +962,297 @@ def expected_output(
     )
 
 
+def expected_cache_writeback(
+    schedule: DecodeSchedule,
+    packed: np.ndarray,
+    hidden: np.ndarray,
+    k_norm_weight: np.ndarray,
+    rope_theta: float,
+    history_k_cache: np.ndarray,
+    history_v_cache: np.ndarray,
+) -> ExpectedCacheWriteback:
+    _validate_expected_cache_inputs(schedule, packed, hidden, k_norm_weight, history_k_cache, history_v_cache)
+    return ExpectedCacheWriteback(
+        k=merged_k_cache_payload_body(
+            schedule,
+            packed,
+            hidden,
+            k_norm_weight,
+            rope_theta,
+            history_k_cache,
+        ),
+        v=merged_v_cache_payload_body(schedule, packed, hidden, history_v_cache),
+    )
+
+
+def _validate_expected_cache_inputs(
+    schedule: DecodeSchedule,
+    packed: np.ndarray,
+    hidden: np.ndarray,
+    k_norm_weight: np.ndarray,
+    history_k_cache: np.ndarray,
+    history_v_cache: np.ndarray,
+) -> None:
+    expected_packed = TOTAL_WEIGHT_BF16 * 2
+    if packed.shape != (expected_packed,):
+        raise ValueError(f"packed weight shape mismatch: {packed.shape} != {(expected_packed,)}")
+    if hidden.shape != (HIDDEN_DIM,):
+        raise ValueError(f"hidden/qkv activation shape mismatch: {hidden.shape} != {(HIDDEN_DIM,)}")
+    if k_norm_weight.shape != (HEAD_DIM,):
+        raise ValueError(f"k_norm_weight shape mismatch: {k_norm_weight.shape} != {(HEAD_DIM,)}")
+    for label, cache in (("history_k_cache", history_k_cache), ("history_v_cache", history_v_cache)):
+        if cache.dtype != np.int32:
+            raise ValueError(f"{label} dtype mismatch: {cache.dtype} != int32")
+        if cache.ndim != 1:
+            raise ValueError(f"{label} must be 1D, got shape {cache.shape}")
+        if cache.shape[0] < schedule.kv_cache_dwords:
+            raise ValueError(
+                f"{label} too small for token{schedule.current_token}: "
+                f"{cache.shape[0]} < {schedule.kv_cache_dwords}"
+            )
+    if history_k_cache.shape != history_v_cache.shape:
+        raise ValueError(f"K/V history cache shape mismatch: {history_k_cache.shape} != {history_v_cache.shape}")
+
+
 def validate_cache_writeback(
     schedule: DecodeSchedule,
     got_k: np.ndarray,
     got_v: np.ndarray,
-    packed: np.ndarray,
-    hidden: np.ndarray,
-    k_norm_weight: np.ndarray | None = None,
-    rope_theta: float = 1_000_000.0,
-    history_k_cache: np.ndarray | None = None,
-    history_v_cache: np.ndarray | None = None,
+    expected: ExpectedCacheWriteback,
 ) -> list[str]:
     errors = validate_cache_layout_contract(schedule)
-    expected_k = merged_k_cache_payload_body(schedule, packed, hidden, k_norm_weight, rope_theta, history_k_cache)
-    expected_v = merged_v_cache_payload_body(schedule, packed, hidden, history_v_cache)
-    if got_k.shape != expected_k.shape:
-        errors.append(f"K cache shape mismatch: {got_k.shape} != {expected_k.shape}")
-    if got_v.shape != expected_v.shape:
-        errors.append(f"V cache shape mismatch: {got_v.shape} != {expected_v.shape}")
+    if got_k.shape != expected.k.shape:
+        errors.append(f"K cache shape mismatch: {got_k.shape} != {expected.k.shape}")
+    if got_v.shape != expected.v.shape:
+        errors.append(f"V cache shape mismatch: {got_v.shape} != {expected.v.shape}")
     if errors:
         return errors
-    _validate_bf16_cache("K", expected_k, got_k, errors, CACHE_ABS_TOL)
-    _validate_bf16_cache("V", expected_v, got_v, errors, CACHE_ABS_TOL)
+    _validate_bf16_cache("K", expected.k, got_k, errors, CACHE_ABS_TOL)
+    _validate_bf16_cache("V", expected.v, got_v, errors, CACHE_ABS_TOL)
     return errors
+
+
+def _bf16_stage_stats(
+    stage: str,
+    expected: np.ndarray,
+    got: np.ndarray,
+    abs_tol: float,
+    rel_tol: float,
+    coords: tuple[CacheWordCoord, ...] | None = None,
+) -> Bf16StageStats:
+    if got.shape != expected.shape:
+        raise ValueError(f"{stage} shape mismatch: {got.shape} != {expected.shape}")
+    if coords is not None and len(coords) != expected.shape[0]:
+        raise ValueError(f"{stage} coordinate count mismatch: {len(coords)} != {expected.shape[0]}")
+    expected_values = _bf16_word_values(expected)
+    got_values = _bf16_word_values(got)
+    if expected_values.size == 0:
+        return Bf16StageStats(
+            stage=stage,
+            max_abs=0.0,
+            mean_abs=0.0,
+            mismatch_count=0,
+            abs_tol=abs_tol,
+            rel_tol=rel_tol,
+        )
+    abs_err = np.abs(expected_values - got_values)
+    finite = np.isfinite(expected_values) & np.isfinite(got_values)
+    limit = np.maximum(abs_tol, rel_tol * np.abs(expected_values))
+    mismatch = np.flatnonzero(((abs_err > limit) & finite) | ~finite)
+    finite_abs = abs_err[np.isfinite(abs_err)]
+    finite_lanes = np.flatnonzero(np.isfinite(abs_err))
+    max_lane = int(finite_lanes[int(np.argmax(abs_err[finite_lanes]))]) if finite_lanes.size else None
+    max_abs = float(np.max(finite_abs)) if finite_abs.size else float("nan")
+    return Bf16StageStats(
+        stage=stage,
+        max_abs=max_abs,
+        mean_abs=float(np.mean(finite_abs)) if finite_abs.size else float("nan"),
+        mismatch_count=int(mismatch.size),
+        abs_tol=abs_tol,
+        rel_tol=rel_tol,
+        max_abs_at=_format_cache_mismatch(
+            max_lane,
+            coords,
+            expected_values,
+            got_values,
+            abs_err,
+            limit,
+        )
+        if max_lane is not None and max_abs != 0.0
+        else None,
+        first_mismatch=_format_cache_mismatch(
+            int(mismatch[0]),
+            coords,
+            expected_values,
+            got_values,
+            abs_err,
+            limit,
+        )
+        if mismatch.size
+        else None,
+    )
+
+
+def format_stage_stats(stats: Bf16StageStats) -> str:
+    line = (
+        f"{stats.stage}: max_abs={stats.max_abs:.9f} "
+        f"mean_abs={stats.mean_abs:.9f} mismatches={stats.mismatch_count} "
+        f"abs_tol={stats.abs_tol:.9f} rel_tol={stats.rel_tol:.6f}"
+    )
+    if stats.max_abs_at is not None:
+        line += f" max_abs_at={stats.max_abs_at}"
+    if stats.first_mismatch is not None:
+        line += f" first_mismatch={stats.first_mismatch}"
+    return line
+
+
+def _bf16_word_values(words: np.ndarray) -> np.ndarray:
+    return np.frombuffer(words.tobytes(), dtype=bfloat16).astype(np.float32)
+
+
+def _cache_coord_from_npu_offset(offset: int) -> CacheWordCoord:
+    block = offset // CACHE_BLOCK_DWORDS
+    in_block = offset % CACHE_BLOCK_DWORDS
+    head = in_block // WINDOW_HEAD_DWORDS
+    in_head = in_block % WINDOW_HEAD_DWORDS
+    token = block * BLOCK_TOKENS + in_head // HEAD_DWORDS
+    dim_pair = in_head % HEAD_DWORDS
+    return CacheWordCoord(
+        token=token,
+        head=head,
+        dim_pair=dim_pair,
+        npu_offset=offset,
+    )
+
+
+def _cache_coords_for_npu_range(start: int, stop: int) -> tuple[CacheWordCoord, ...]:
+    return tuple(_cache_coord_from_npu_offset(offset) for offset in range(start, stop))
+
+
+def _cache_coords_for_tokens(
+    schedule: DecodeSchedule,
+    start_token: int,
+    stop_token: int,
+) -> tuple[CacheWordCoord, ...]:
+    coords: list[CacheWordCoord] = []
+    for token in range(start_token, stop_token):
+        for head in range(KV_HEADS):
+            for dim_pair in range(HEAD_DWORDS):
+                coords.append(
+                    CacheWordCoord(
+                        token=token,
+                        head=head,
+                        dim_pair=dim_pair,
+                        npu_offset=npu_cache_index(token, head, dim_pair),
+                    )
+                )
+    return tuple(coords)
+
+
+def _cache_words_for_coords(cache: np.ndarray, coords: tuple[CacheWordCoord, ...]) -> np.ndarray:
+    words = np.empty((len(coords),), dtype=np.int32)
+    for idx, coord in enumerate(coords):
+        words[idx] = cache[coord.npu_offset]
+    return words
+
+
+def _format_cache_mismatch(
+    bf16_lane: int | None,
+    coords: tuple[CacheWordCoord, ...] | None,
+    expected_values: np.ndarray,
+    got_values: np.ndarray,
+    abs_err: np.ndarray,
+    limit: np.ndarray,
+) -> str:
+    if bf16_lane is None:
+        return "none"
+    word_idx = bf16_lane // 2
+    lane = bf16_lane & 1
+    coord_text = f"lane={bf16_lane}"
+    if coords is not None:
+        coord = coords[word_idx]
+        dim = coord.dim_pair * 2 + lane
+        coord_text = (
+            f"token={coord.token},head={coord.head},dim={dim},"
+            f"dim_pair={coord.dim_pair},bf16_lane={lane},npu_offset={coord.npu_offset}"
+        )
+    return (
+        f"{coord_text},expected={float(expected_values[bf16_lane]):.6f},"
+        f"got={float(got_values[bf16_lane]):.6f},abs={float(abs_err[bf16_lane]):.6f},"
+        f"limit={float(limit[bf16_lane]):.6f}"
+    )
+
+
+def cache_writeback_stats(
+    schedule: DecodeSchedule,
+    got_k: np.ndarray,
+    got_v: np.ndarray,
+    expected: ExpectedCacheWriteback,
+) -> tuple[Bf16StageStats, ...]:
+    if got_k.shape != expected.k.shape:
+        raise ValueError(f"K cache shape mismatch: {got_k.shape} != {expected.k.shape}")
+    if got_v.shape != expected.v.shape:
+        raise ValueError(f"V cache shape mismatch: {got_v.shape} != {expected.v.shape}")
+
+    current_coords = _cache_coords_for_tokens(schedule, schedule.current_token, schedule.current_token + 1)
+    valid_coords = _cache_coords_for_tokens(schedule, 0, schedule.current_token + 1)
+    stats = [
+        _bf16_stage_stats(
+            "current_k_slot",
+            _cache_words_for_coords(expected.k, current_coords),
+            _cache_words_for_coords(got_k, current_coords),
+            CACHE_CURRENT_ABS_TOL,
+            CACHE_CURRENT_REL_TOL,
+            current_coords,
+        ),
+        _bf16_stage_stats(
+            "current_v_slot",
+            _cache_words_for_coords(expected.v, current_coords),
+            _cache_words_for_coords(got_v, current_coords),
+            CACHE_CURRENT_ABS_TOL,
+            CACHE_CURRENT_REL_TOL,
+            current_coords,
+        ),
+        _bf16_stage_stats(
+            "valid_k_cache",
+            _cache_words_for_coords(expected.k, valid_coords),
+            _cache_words_for_coords(got_k, valid_coords),
+            CACHE_ABS_TOL,
+            CACHE_REL_TOL,
+            valid_coords,
+        ),
+        _bf16_stage_stats(
+            "valid_v_cache",
+            _cache_words_for_coords(expected.v, valid_coords),
+            _cache_words_for_coords(got_v, valid_coords),
+            CACHE_ABS_TOL,
+            CACHE_REL_TOL,
+            valid_coords,
+        ),
+    ]
+    if expected.k.shape[0] > schedule.kv_cache_dwords:
+        capacity_coords = _cache_coords_for_npu_range(schedule.kv_cache_dwords, expected.k.shape[0])
+        stats.extend(
+            (
+                _bf16_stage_stats(
+                    "capacity_k_unchanged",
+                    expected.k[schedule.kv_cache_dwords :],
+                    got_k[schedule.kv_cache_dwords :],
+                    0.0,
+                    0.0,
+                    capacity_coords,
+                ),
+                _bf16_stage_stats(
+                    "capacity_v_unchanged",
+                    expected.v[schedule.kv_cache_dwords :],
+                    got_v[schedule.kv_cache_dwords :],
+                    0.0,
+                    0.0,
+                    capacity_coords,
+                ),
+            )
+        )
+    return tuple(stats)
 
 
 def _validate_bf16_cache(
@@ -959,14 +1262,20 @@ def _validate_bf16_cache(
     errors: list[str],
     abs_tol: float,
 ) -> None:
-    expected_values = np.frombuffer(expected.tobytes(), dtype=bfloat16).astype(np.float32)
-    got_values = np.frombuffer(got.tobytes(), dtype=bfloat16).astype(np.float32)
+    expected_values = _bf16_word_values(expected)
+    got_values = _bf16_word_values(got)
+    coords = _cache_coords_for_npu_range(0, expected.shape[0])
     expected_bad = np.flatnonzero(~np.isfinite(expected_values))
     got_bad = np.flatnonzero(~np.isfinite(got_values))
+    zero = np.zeros_like(expected_values)
     for lane in expected_bad[:16]:
-        errors.append(f"{label} cache expected lane {int(lane)} is not finite: {float(expected_values[lane])}")
+        detail = _format_cache_mismatch(int(lane), coords, expected_values, got_values, zero, zero)
+        errors.append(
+            f"{label} cache expected {detail} is not finite"
+        )
     for lane in got_bad[:16]:
-        errors.append(f"{label} cache got lane {int(lane)} is not finite: {float(got_values[lane])}")
+        detail = _format_cache_mismatch(int(lane), coords, expected_values, got_values, zero, zero)
+        errors.append(f"{label} cache got {detail} is not finite")
     if expected_bad.size > 16:
         errors.append(f"{expected_bad.size - 16} additional non-finite expected {label} cache lanes")
     if got_bad.size > 16:
@@ -977,9 +1286,7 @@ def _validate_bf16_cache(
     mismatch = np.flatnonzero((diff > limit) & finite)
     for lane in mismatch[:16]:
         errors.append(
-            f"{label} cache lane {int(lane)}: expected={float(expected_values[lane]):.6f} "
-            f"got={float(got_values[lane]):.6f} abs={float(diff[lane]):.6f} "
-            f"limit={float(limit[lane]):.6f}"
+            f"{label} cache {_format_cache_mismatch(int(lane), coords, expected_values, got_values, diff, limit)}"
         )
     if mismatch.size > 16:
         errors.append(f"{mismatch.size - 16} additional {label} cache lane mismatches")

@@ -70,7 +70,6 @@ from compact_dataflow import (
     main_packet,
 )
 from contract import C1R2_QKV_REPLAYS, C1R2_PACKET_DWORDS, CHUNK_BF16, MAIN_COLUMNS, MAIN_ROWS, RECORD_DWORDS
-from dataflow import dataflow_slice_marker, validate_dataflow_slice
 from mlir_utils import (
     flow,
     npu_address_patch,
@@ -316,7 +315,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
     for window, (column, row) in enumerate(SHAPE_B_TILES):
         tile_defs.append(f"    %{shape_b_symbol(window)} = aie.tile({column}, {row})")
 
-    flows = [f"    // case marker {CASE_NAME}", f"    // {dataflow_slice_marker('attention_o')}"]
+    flows = [f"    // case marker {CASE_NAME}"]
     for group in range(len(MAIN_COLUMNS)):
         for row in range(len(MAIN_ROWS)):
             flows.append(packet_flow(main_packet(group, row), full._main_symbol(group, row), 1, f"mt{group}", row))
@@ -411,7 +410,6 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     ownership = resource_manifest(schedule)
     required = (
         f"case marker {CASE_NAME}",
-        dataflow_slice_marker("attention_o"),
         f"compact phase trace {_phase_trace_marker(full.QKV_BODY_PHASE_TRACE)}",
         "qwen3_postprocess_q4nx_body_payload",
         "full_c1r2_make_input_norm_payload",
@@ -458,7 +456,6 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     errors = [f"missing full-layer attention-o bf16 marker: {marker}" for marker in required if marker not in mlir]
     errors.extend(validate_resource_manifest(CASE_NAME, ownership))
     errors.extend(validate_manifest_matches_mlir(CASE_NAME, ownership, mlir))
-    errors.extend(validate_dataflow_slice("attention_o"))
     errors.extend(_phase_trace_errors(full.QKV_BODY_PHASE_TRACE))
     errors.extend(
         require_marker_order(

@@ -16,6 +16,9 @@ from cases.full_layer_engine_reference import (
     TOTAL_WEIGHT_AND_AUX_I32,
     aux_as_i32,
     bf16_cache_payload,
+    cache_writeback_stats,
+    expected_cache_writeback,
+    format_stage_stats,
     hidden_input_as_i32,
     input_norm_activation as physical_input_norm_activation,
     packed_as_i32,
@@ -226,17 +229,29 @@ def run(
     got_k = k_cache_buf.to_torch().numpy().astype(np.int32)
     got_v = v_cache_buf.to_torch().numpy().astype(np.int32)
     print(f"  NPU time: {result.npu_time / 1e3:.1f} us")
-
-    errors = validate_cache_writeback(
+    expected_cache = expected_cache_writeback(
         schedule,
-        got_k[: schedule.kv_cache_dwords],
-        got_v[: schedule.kv_cache_dwords],
         fixture.packed_weights,
         fixture.qkv_activation_bf16,
         fixture.k_norm_bf16,
         fixture.rope_theta,
         k_cache,
         v_cache,
+    )
+    cache_stats = cache_writeback_stats(
+        schedule,
+        got_k[: schedule.kv_cache_dwords],
+        got_v[: schedule.kv_cache_dwords],
+        expected_cache,
+    )
+    for stats in cache_stats:
+        print(f"  stage_budget: {format_stage_stats(stats)}")
+
+    errors = validate_cache_writeback(
+        schedule,
+        got_k[: schedule.kv_cache_dwords],
+        got_v[: schedule.kv_cache_dwords],
+        expected_cache,
     )
     if errors:
         print(f"  FAIL: {len(errors)} Q/K/V cache-write mismatches")
