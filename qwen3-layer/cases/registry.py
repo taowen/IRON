@@ -9,9 +9,11 @@ from pathlib import Path
 from cases import (
     full_layer_attention_o_bf16_runner,
     full_layer_qkv_prefix_runner,
+    main16_q4nx_compute_perf_runner,
     qwen3_8b_c1r2_input_norm_runner,
     qwen3_8b_decode_layer_runner,
     qwen3_8b_qkv_cache_write_runner,
+    row1_weight_stream_perf_runner,
 )
 
 CaseFn = Callable[[int | None, Path | None, int, bool], bool]
@@ -55,6 +57,18 @@ CASES = (
         full_layer_attention_o_bf16_runner.check_only,
         full_layer_attention_o_bf16_runner.build_only,
         full_layer_attention_o_bf16_runner.run,
+    ),
+    CaseEntry(
+        row1_weight_stream_perf_runner.CASE_NAME,
+        row1_weight_stream_perf_runner.check_only,
+        row1_weight_stream_perf_runner.build_only,
+        row1_weight_stream_perf_runner.run,
+    ),
+    CaseEntry(
+        main16_q4nx_compute_perf_runner.CASE_NAME,
+        main16_q4nx_compute_perf_runner.check_only,
+        main16_q4nx_compute_perf_runner.build_only,
+        main16_q4nx_compute_perf_runner.run,
     ),
 )
 CASE_NAMES = tuple(case.name for case in CASES)

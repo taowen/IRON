@@ -19,7 +19,7 @@ EXPERIMENT_DIR = Path(__file__).parent
 ROLE_KERNEL_SOURCES = {
     "edge_attention.o": "edge_attention.cc",
     "full_vector_station.o": "full_vector_station.cc",
-    "main_projection_q4nx.o": "main_projection_q4nx.cc",
+    "main_projection_q4nx_fast.o": "main_projection_q4nx_fast.cc",
     "postprocess_qkv.o": "postprocess_qkv.cc",
     "swiglu.o": "swiglu.cc",
 }

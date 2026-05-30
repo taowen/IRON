@@ -41,7 +41,6 @@ from compact_dataflow import (
     V_GLOBAL_PACKET_ID,
     WEIGHT_PATCH_INPUT_BDS,
     WEIGHT_ROW_BDS,
-    _phase_trace_errors,
     _phase_trace_marker,
     column_packet,
     main_packet,
@@ -84,10 +83,11 @@ from projection_schedule import (
 from resource_manifest import ResourceManifest, validate_manifest_matches_mlir, validate_resource_manifest
 
 CASE_NAME = "full-layer-qkv-prefix"
+MAIN16_KERNEL_OBJECT = full.MAIN16_KERNEL_OBJECT
 
 
 def resource_manifest(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> ResourceManifest:
-    return full.resource_manifest_for_case(CASE_NAME)
+    return full.resource_manifest_for_case(CASE_NAME, full.QKV_PREFIX_PHASE_TRACE)
 
 
 def _push_qkv_weight_prefix() -> list[str]:
@@ -194,14 +194,14 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
     )
 
     blocks = [
-        full._bridge(full.QKV_BODY_PHASE_TRACE),
+        full._bridge(full.QKV_PREFIX_PHASE_TRACE),
         full._postprocess_qkv_body(),
         full._full_vector_q4nx_output(),
     ]
     for group in range(len(MAIN_COLUMNS)):
-        blocks.append(full.q4nx_weight_column_memtile(group, full.QKV_BODY_PHASE_TRACE))
+        blocks.append(full.q4nx_weight_column_memtile(group, full.QKV_PREFIX_PHASE_TRACE))
         for row in range(len(MAIN_ROWS)):
-            blocks.append(full._main_tile(group, row))
+            blocks.append(full.main16_qkv_prefix_tile(group, row))
 
     return f"""module {{
   aie.device(npu2) {{
@@ -214,18 +214,12 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
     func.func private @full_c1r2_add_o_compact_to_residual(memref<{HIDDEN_DWORDS}xi32>, memref<{full.COMPACT_PACKET_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
     func.func private @full_c1r2_make_post_norm_payload(memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
     func.func private @full_c1r2_write_down_block(memref<{HIDDEN_DWORDS}xi32>, memref<{full.COMPACT_PACKET_DWORDS}xi32>, memref<{OUTPUT_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
-    func.func private @clear_summary(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_chunk_accum_slice_i32(memref<{CHUNK_BF16}xbf16>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_clear_block_summaries(i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_chunk_accum_block_slice_i32(memref<{CHUNK_BF16}xbf16>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_flush_block_output(memref<32xbf16>, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_flush_output(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_emit_q_body_record(memref<{full.Q_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_emit_k_body_record(memref<{full.KV_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_emit_v_body_record(memref<{full.KV_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_emit_o_body_record(memref<{full.O_BODY_RECORDS * RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_emit_upgate_record(memref<{UPGATE_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_emit_down_body_record(memref<{DOWN_BODY_RECORDS * RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
+    func.func private @clear_summary_fast(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_chunk_accum_slice_i32_fast(memref<{CHUNK_BF16}xbf16>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_flush_output_fast(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_emit_q_body_record(memref<{full.Q_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_emit_k_body_record(memref<{full.KV_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_emit_v_body_record(memref<{full.KV_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
 
 {chr(10).join(blocks)}
 {_runtime_sequence(schedule)}
@@ -238,22 +232,16 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     ownership = resource_manifest(schedule)
     required = (
         f"case marker {CASE_NAME}",
-        f"compact phase trace {_phase_trace_marker(full.QKV_BODY_PHASE_TRACE)}",
+        f"compact phase trace {_phase_trace_marker(full.QKV_PREFIX_PHASE_TRACE)}",
         "qwen3_postprocess_q4nx_body_payload",
         "full_c1r2_make_input_norm_payload",
         "full_c1r2_add_o_compact_to_residual",
         "q4nx_emit_q_body_record",
         "q4nx_emit_k_body_record",
         "q4nx_emit_v_body_record",
-        "q4nx_emit_o_body_record",
-        "q4nx_emit_upgate_record",
-        "q4nx_emit_down_body_record",
         f"%c{Q_WEIGHT_CHUNK_BASE}_i32 = arith.constant {Q_WEIGHT_CHUNK_BASE} : i32",
         f"%c{K_WEIGHT_CHUNK_BASE}_i32 = arith.constant {K_WEIGHT_CHUNK_BASE} : i32",
         f"%c{V_WEIGHT_CHUNK_BASE}_i32 = arith.constant {V_WEIGHT_CHUNK_BASE} : i32",
-        f"%o_mb_weight_base_i32 = arith.constant {FULL_LAYER_O_WEIGHT_CHUNK_BASE} : i32",
-        f"%upgate_weight_chunk_base_i32 = arith.constant {FULL_LAYER_UPGATE_WEIGHT_CHUNK_BASE} : i32",
-        f"%down_mb_weight_base_i32 = arith.constant {FULL_LAYER_DOWN_WEIGHT_CHUNK_BASE} : i32",
         f"aie.packet_flow({full.CURRENT_PACKET_K})",
         f"aie.packet_flow({full.CURRENT_PACKET_V})",
         f"pkt_id = {full.CURRENT_PACKET_K}",
@@ -265,7 +253,7 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         "aiex.set_lock(%post_runtime_start, 1)",
         "aie.dma_start(S2MM, 1, ^hidden_in, ^replay_out_start)",
         "aie.dma_start(S2MM, 1, ^wt_ping, ^record_start)",
-        "main_projection_q4nx.o",
+        MAIN16_KERNEL_OBJECT,
         "postprocess_qkv.o",
         "full_vector_station.o",
         "arg_idx = 2 : i32",
@@ -274,7 +262,10 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     errors = [f"missing full-layer qkv-prefix marker: {marker}" for marker in required if marker not in mlir]
     errors.extend(validate_resource_manifest(CASE_NAME, ownership))
     errors.extend(validate_manifest_matches_mlir(CASE_NAME, ownership, mlir))
-    errors.extend(_phase_trace_errors(full.QKV_BODY_PHASE_TRACE))
+    if tuple(phase.label for phase in full.QKV_PREFIX_PHASE_TRACE) != ("q", "k", "v"):
+        errors.append("full-layer qkv-prefix phase trace must be q,k,v")
+    if mlir.count(MAIN16_KERNEL_OBJECT) != 6:
+        errors.append(f"full-layer qkv-prefix expected 6 declarations linked with {MAIN16_KERNEL_OBJECT}")
     errors.extend(
         require_marker_order(
             CASE_NAME,
@@ -294,9 +285,6 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     errors.extend(require_count(CASE_NAME, "q4nx q emit calls", mlir.count("func.call @q4nx_emit_q_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
     errors.extend(require_count(CASE_NAME, "q4nx k emit calls", mlir.count("func.call @q4nx_emit_k_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
     errors.extend(require_count(CASE_NAME, "q4nx v emit calls", mlir.count("func.call @q4nx_emit_v_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
-    errors.extend(require_count(CASE_NAME, "q4nx o emit calls", mlir.count("func.call @q4nx_emit_o_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
-    errors.extend(require_count(CASE_NAME, "q4nx upgate emit calls", mlir.count("func.call @q4nx_emit_upgate_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
-    errors.extend(require_count(CASE_NAME, "q4nx down emit calls", mlir.count("func.call @q4nx_emit_down_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
     errors.extend(require_count(CASE_NAME, "Q/K/V weight arg2 address patches", mlir.count("arg_idx = 2 : i32"), 10))
     errors.extend(require_count(CASE_NAME, "hidden arg3 address patch", mlir.count("arg_idx = 3 : i32"), 1))
     errors.extend(require_unique_packet_flows(CASE_NAME, mlir))
@@ -328,6 +316,15 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
             (
                 "qwen3_attention_bf16",
                 "ffn_swiglu",
+                "q4nx_clear_block_summaries_fast",
+                "q4nx_chunk_accum_block_slice_i32_fast",
+                "q4nx_flush_block_output_fast",
+                "q4nx_emit_o_body_record",
+                "q4nx_emit_upgate_record",
+                "q4nx_emit_down_body_record",
+                f"%o_mb_weight_base_i32 = arith.constant {FULL_LAYER_O_WEIGHT_CHUNK_BASE} : i32",
+                f"%upgate_weight_chunk_base_i32 = arith.constant {FULL_LAYER_UPGATE_WEIGHT_CHUNK_BASE} : i32",
+                f"%down_mb_weight_base_i32 = arith.constant {FULL_LAYER_DOWN_WEIGHT_CHUNK_BASE} : i32",
                 "aiex.npu.push_queue(0, 0, MM2S : 0)",
                 "aiex.npu.push_queue(7, 0, MM2S : 1)",
                 "aiex.set_lock(%shape_a0_runtime_start, 1)",

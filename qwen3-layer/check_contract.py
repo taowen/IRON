@@ -21,8 +21,10 @@ from contract import (
 from cases import full_layer_engine_generate
 from cases import full_layer_attention_o_bf16_generate
 from cases import full_layer_qkv_prefix_generate
+from cases import main16_q4nx_compute_perf_generate
 from cases import qwen3_8b_c1r2_input_norm_generate
 from cases import qwen3_8b_qkv_cache_write_generate
+from cases import row1_weight_stream_perf_generate
 from cases.currentkv_kvscan_attention_kv16_reference import (
     make_decode_schedule,
     validate_cache_layout_contract,
@@ -47,6 +49,8 @@ EXPECTED_CASE_NAMES = (
     "qwen3-8b-qkv-cache-write-bridge",
     "full-layer-qkv-prefix",
     "full-layer-attention-o-bf16",
+    "row1-weight-stream-perf",
+    "main16-q4nx-compute-perf",
 )
 RETIRED_FILES = (
     "dataflow.py",
@@ -89,6 +93,10 @@ ACTIVE_CODE_FILES = (
     "cases/qwen3_8b_qkv_cache_write_runner.py",
     "cases/qwen3_8b_c1r2_input_norm_generate.py",
     "cases/qwen3_8b_c1r2_input_norm_runner.py",
+    "cases/row1_weight_stream_perf_generate.py",
+    "cases/row1_weight_stream_perf_runner.py",
+    "cases/main16_q4nx_compute_perf_generate.py",
+    "cases/main16_q4nx_compute_perf_runner.py",
 )
 RETIRED_MARKERS = (
     "currentkv_full_layer_q4nx_down",
@@ -150,6 +158,12 @@ def validate_runnable_boundaries() -> list[str]:
     c1r2_replay_mlir = qwen3_8b_c1r2_input_norm_generate.generate_mlir()
     errors.extend(qwen3_8b_c1r2_input_norm_generate.validate_generated_mlir(c1r2_replay_mlir))
     errors.extend(validate_active_mlir(qwen3_8b_c1r2_input_norm_generate.CASE_NAME, c1r2_replay_mlir))
+    row1_weight_stream_mlir = row1_weight_stream_perf_generate.generate_mlir()
+    errors.extend(row1_weight_stream_perf_generate.validate_generated_mlir(row1_weight_stream_mlir))
+    errors.extend(validate_active_mlir(row1_weight_stream_perf_generate.CASE_NAME, row1_weight_stream_mlir))
+    main16_compute_mlir = main16_q4nx_compute_perf_generate.generate_mlir()
+    errors.extend(main16_q4nx_compute_perf_generate.validate_generated_mlir(main16_compute_mlir))
+    errors.extend(validate_active_mlir(main16_q4nx_compute_perf_generate.CASE_NAME, main16_compute_mlir))
     qkv_prefix_manifest = full_layer_qkv_prefix_generate.resource_manifest()
     full_layer_manifest = full_layer_engine_generate.resource_manifest()
     attention_o_manifest = full_layer_attention_o_bf16_generate.resource_manifest()

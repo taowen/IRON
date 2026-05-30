@@ -59,13 +59,17 @@ The current implementation is the active qwen3 full-layer NPU integration path:
   to compare Qwen3 layer prefixes against `/var/home/taowen/projects/MyLM`.
 - `tools/compare_bf16_dump.py`: compares raw bf16 dumps and reports top-k,
   max error, mean error, and the first mismatching lane.
+- `tools/compare_main16_q4nx_disasm.py`: compares MyLM c2r2 raw main16 Q4NX
+  disassembly with the active IRON main16 object.
+- `main16_q4nx_mylm_compare.md`: current main16 performance/reverse-analysis
+  conclusion and the next raw Q4NX microkernel direction.
 - `npu_build.py`: shared MLIR, xclbin, and NPU runtime helpers. It scans
   generated MLIR `link_with` attributes and compiles the required role objects,
   so runners do not duplicate kernel-object ownership.
 - `run_stage_budget.py`: runs active NPU integration cases and prints stable
-  `stage_budget:` lines for c1r2, current-slot K/V, valid-cache K/V,
-  capacity-unchanged K/V, attention-O, and full hidden_out.
-- `main_projection_q4nx.cc`: main16 Q/K/V/O/up/gate/down Q4NX projection,
+  `stage_budget:` / `perf_budget:` lines for c1r2, Q/K/V, attention-O, full
+  hidden_out, row1 weight fanout, and main16 Q4NX compute.
+- `main_projection_q4nx_fast.cc`: main16 Q/K/V/O/up/gate/down Q4NX projection,
   flush, and record emit kernels.
 - `edge_attention.cc`: Shape-A/B edge attention kernels for KV scan, online
   softmax, weighted V, and accumulator merge.
@@ -97,7 +101,10 @@ The current implementation is the active qwen3 full-layer NPU integration path:
 .venv/bin/python qwen3-layer/run_npu.py --case qwen3-8b-qkv-cache-write-bridge --current-token 31
 .venv/bin/python qwen3-layer/run_npu.py --case full-layer-qkv-prefix --current-token 31
 .venv/bin/python qwen3-layer/run_npu.py --case full-layer-attention-o-bf16 --current-token 31
+.venv/bin/python qwen3-layer/run_npu.py --case row1-weight-stream-perf
+.venv/bin/python qwen3-layer/run_npu.py --case main16-q4nx-compute-perf
 .venv/bin/python qwen3-layer/run_stage_budget.py --tokens 31,91
+.venv/bin/python qwen3-layer/run_stage_budget.py --stages row1-weight,main16-compute --tokens 127
 .venv/bin/python qwen3-layer/run_reference_decode.py --prompt Hello --max-new-tokens 1 --stop-layer 1 --expect-token-ids 51920
 ```
 
@@ -109,7 +116,7 @@ ABI, and compares the 2048-dword final hidden payload with
 `Qwen3LayerReference`. token31 is the default because it keeps a multi-block KV
 scan while still producing a non-zero end-to-end signal through the production
 bf16 attention-O slice. The current single-layer frontier passes the real-model
-hidden-out contract with `abs_tol=0.05, rel_tol=0.20`; this is a working decode
+hidden-out contract with `abs_tol=0.01, rel_tol=0.05`; this is a working decode
 frontier, not yet the final multi-layer production error budget.
 
 The runnable registry is deliberately small. The public cases are:
@@ -119,6 +126,11 @@ The runnable registry is deliberately small. The public cases are:
 - `full-layer-attention-o-bf16`: the production bf16 attention -> O slice.
 - `qwen3-8b-qkv-cache-write-bridge`: the real-model current K/V writeback slice.
 - `qwen3-8b-c1r2-input-norm-replay`: the real-model c1r2 RMSNorm replay boundary.
+- `row1-weight-stream-perf`: full-layer weight stream through row1 S2MM4/5 and
+  row1 MM2S0..3 into main16 DMA1 sinks, with compute disabled and main16 done
+  gathered through the same packetized row1 -> c1r1 bridge shape as full-layer.
+- `main16-q4nx-compute-perf`: full-layer Q4NX chunk count on all main16 cores
+  with activation/weight DMA disabled, using a row1 done gather for completion.
 
 Historical migration cases for the old 608-patch weight-stream oracle,
 deterministic full-layer tail, patched descriptor runner, and standalone
@@ -144,6 +156,36 @@ weight ingress, main16 Q/K/V residency, and c1r3 packet8/9 current K/V
 writeback. The attention-O slice continues through the production
 `qwen3_attention_bf16_*` path, packet2 handoff, and main16 O phase without a
 deterministic/debug attention producer.
+
+The two perf slices are diagnostic boundaries, not alternate backends. The row1
+slice answers whether host/shim -> row1 -> main16 DMA1 can stream the full
+115MiB layer weight payload continuously; it now waits for all 16 main sinks to
+return the 1472-chunk done count through row1 -> c1r1 -> shim_out, so the timing
+is not just a host input-queue drain. The main16 slice answers whether the
+current Q4NX kernel throughput alone is already a layer-time bottleneck. They
+share the same role objects and ABI constants as the full-layer generator, so a
+performance regression in these cases is actionable instead of a separate debug
+dataflow artifact.
+
+Recent token31 measurements with the single active `main_projection_q4nx_fast.cc`
+role:
+
+- `main16-q4nx-compute-perf`: `14.263 ms`
+- `full-layer-attention-o-bf16`: `13.202 ms`
+- `qwen3-8b-decode-layer`: `29.236 ms`, `final_hidden_out max_abs=0.0078125`
+
+Older C++ unroll probes were removed from the code path. They improved narrow
+slices but either did not fit full-layer program memory or regressed full decode
+to `30.092-30.963 ms`. The repository now keeps one main16 C++ implementation:
+the fastest verified full-decode version.
+
+MyLM and this implementation are aligned on the layer dataflow principle:
+main16 consumes activation/weight/record rings, row1 splits compact and weight
+traffic onto separate channels, c1r2/c6r1 act as source-side replay stations,
+and attention feeds O through packet2 without host/debug drain. The remaining
+gap is implementation hardness: MyLM uses raw scheduled core programs and
+static BD/lock bodies, while this tree still emits MLIR phase control around the
+single role-level AIE C++ kernel.
 
 The CPU decode reference is not yet the final multi-layer oracle. It now uses
 the correct MyLM Q4NX formula `weight = int4 * scale + offset`, where the second

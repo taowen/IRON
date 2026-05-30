@@ -305,7 +305,6 @@ def _main16_qkv_signature(manifest: ResourceManifest) -> tuple[tuple[str, tuple,
                     bd.buffer,
                     bd.phases,
                     bd.semantic,
-                    bd.next_bd_id,
                 )
                 for bd in tile.bds
                 if _phase_intersects_qkv(bd.phases)

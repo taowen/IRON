@@ -10,11 +10,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 STAGE_CASES = {
+    "row1-weight": "row1-weight-stream-perf",
+    "main16-compute": "main16-q4nx-compute-perf",
     "c1r2": "qwen3-8b-c1r2-input-norm-replay",
     "qkv": "qwen3-8b-qkv-cache-write-bridge",
     "attention": "full-layer-attention-o-bf16",
     "full": "qwen3-8b-decode-layer",
 }
+MODEL_AWARE_STAGES = ("c1r2", "qkv", "attention", "full")
 TOKEN_AWARE_STAGES = ("qkv", "attention", "full")
 DEFAULT_TOKENS = (31, 91)
 DEFAULT_STAGES = ("c1r2", "qkv", "attention", "full")
@@ -81,14 +84,14 @@ def _run_case(
         str(run_npu),
         "--case",
         case_name,
-        "--layer",
-        str(layer),
     ]
+    if stage in MODEL_AWARE_STAGES:
+        cmd.extend(("--layer", str(layer)))
     if token is not None:
         cmd.extend(("--current-token", str(token)))
-    if model_path is not None:
+    if model_path is not None and stage in MODEL_AWARE_STAGES:
         cmd.extend(("--model-path", str(model_path)))
-    if download_model:
+    if download_model and stage in MODEL_AWARE_STAGES:
         cmd.append("--download-model")
 
     try:
@@ -108,7 +111,7 @@ def _run_case(
     budget_lines = tuple(
         line.strip()
         for line in output.splitlines()
-        if line.strip().startswith("stage_budget:")
+        if line.strip().startswith(("stage_budget:", "perf_budget:"))
     )
     npu_time_lines = [
         line.strip()

@@ -406,10 +406,10 @@ def validate_q4nx_down_full_layer_ownership(scope: str, mlir: str) -> list[str]:
             f"{scope}: full-layer row1 weight patch ingress channels are {patch_channels}, "
             f"expected only {ROW1_WEIGHT_S2MM}"
         )
-    if "func.call @q4nx_chunk_accum_slice_i32" not in mlir:
-        errors.append(f"{scope}: missing integrated Q4NX down chunk call")
+    if "func.call @q4nx_chunk_accum_slice_i32_fast" not in mlir:
+        errors.append(f"{scope}: missing integrated fast Q4NX chunk call")
     role_objects = (
-        "main_projection_q4nx.o",
+        "main_projection_q4nx_fast.o",
         "postprocess_qkv.o",
         "full_vector_station.o",
         "swiglu.o",

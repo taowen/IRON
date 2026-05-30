@@ -61,6 +61,7 @@ from compact_dataflow import (
     BRIDGE_RECEIVE_BDS,
     COLUMN_RECEIVE_BDS,
     COMPACT_OUT_BDS,
+    CompactPhase,
     DOWN_ACT_PACKET_ID,
     DOWN_GLOBAL_PACKET_ID,
     FFN_GLOBAL_PACKET_ID,
@@ -176,7 +177,9 @@ from cases.kvscan_attention_kv16_reference import OUTPUT_DWORDS as ATTENTION_OUT
 from cases.kvscan_attention_kv16_reference import WEIGHT_DWORDS, WINDOW_DWORDS
 
 QKV_PREFIX_PHASE_TRACE = compact_phase_trace(("q", "k", "v"))
+QKVO_PHASE_TRACE = compact_phase_trace(("q", "k", "v", "o"))
 QKV_BODY_PHASE_TRACE = compact_phase_trace(("q", "k", "v", "o", "upgate", "down"))
+MAIN16_KERNEL_OBJECT = "main_projection_q4nx_fast.o"
 Q_MAIN_RECORD_DWORDS = Q_BODY_RECORDS * RECORD_DWORDS
 KV_MAIN_RECORD_DWORDS = KV_BODY_RECORDS * RECORD_DWORDS
 MAIN16_ALL_PHASES = ("Q", "K", "V", "O", "UPGATE", "DOWN")
@@ -682,12 +685,15 @@ def validate_main_buffer_residency(scope: str, mlir: str) -> list[str]:
     return errors
 
 
-def resource_manifest_for_case(case_name: str) -> ResourceManifest:
+def resource_manifest_for_case(
+    case_name: str,
+    phase_trace: tuple[CompactPhase, ...] = QKV_BODY_PHASE_TRACE,
+) -> ResourceManifest:
     return ResourceManifest(
         schema="qwen3-layer-resource-manifest-v1",
         case=case_name,
         tiles=tuple(
-            _main16_tile_resources(group, row)
+            _main16_tile_resources(group, row, phase_trace)
             for group in range(len(MAIN_COLUMNS))
             for row in range(len(MAIN_ROWS))
         ),
@@ -698,7 +704,7 @@ def resource_manifest(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> ResourceMa
     return resource_manifest_for_case(CASE_NAME)
 
 
-def _main16_tile_resources(group: int, row: int) -> TileResource:
+def _main16_tile_resources(group: int, row: int, phase_trace: tuple[CompactPhase, ...]) -> TileResource:
     tile = _main_symbol(group, row)
     return TileResource(
         name=tile,
@@ -736,7 +742,7 @@ def _main16_tile_resources(group: int, row: int) -> TileResource:
                 semantic="main16 DMA0 activation pong",
                 next_bd_id=0,
             ),
-            *_main_record_bds(tile, row),
+            *_main_record_bds(tile, row, phase_trace),
             BDResource(
                 name="weight_ping",
                 bd_id=8,
@@ -788,9 +794,9 @@ def _main_lock_resource(tile: str, suffix: str, lock_id: int, init: int, semanti
     )
 
 
-def _main_record_bds(tile: str, row: int) -> tuple[BDResource, ...]:
+def _main_record_bds(tile: str, row: int, phase_trace: tuple[CompactPhase, ...]) -> tuple[BDResource, ...]:
     bds: list[BDResource] = []
-    for stage_idx, phase in enumerate(QKV_BODY_PHASE_TRACE):
+    for stage_idx, phase in enumerate(phase_trace):
         buffer_name, _offset, length, _dimensions = _main_record_transfer(phase, row)
         label = phase.label.upper()
         bds.append(
@@ -803,7 +809,7 @@ def _main_record_bds(tile: str, row: int) -> tuple[BDResource, ...]:
                 buffer=f"{tile}_{buffer_name}",
                 phases=_phases(label),
                 semantic=f"main16 compact record output phase {phase.label}",
-                next_bd_id=2 + ((stage_idx + 1) % len(QKV_BODY_PHASE_TRACE)),
+                next_bd_id=2 + ((stage_idx + 1) % len(phase_trace)),
             )
         )
     return tuple(bds)
@@ -832,7 +838,7 @@ def _q4nx_body_phase_kernel(
     return f"""
       scf.for %{phase_label}_block = %c0 to %c{records} step %c1 {{
         %{phase_label}_block_i32 = arith.index_cast %{phase_label}_block : index to i32
-        func.call @clear_summary(%{tile}_q4nx_output, %m_i32)
+        func.call @clear_summary_fast(%{tile}_q4nx_output, %m_i32)
           : (memref<32xbf16>, i32) -> ()
         scf.for %{phase_label}_chunk = %c0 to %c{chunks_per_record} step %c1 {{
           %{phase_label}_base = arith.muli %{phase_label}_block, %c{chunks_per_record} : index
@@ -844,16 +850,16 @@ def _q4nx_body_phase_kernel(
           aie.use_lock(%{tile}_chunk_full, AcquireGreaterEqual, 1)
           aie.use_lock(%{tile}_wt_full, AcquireGreaterEqual, 1)
           scf.if %{phase_label}_is_pong {{
-            func.call @q4nx_chunk_accum_slice_i32(%{tile}_wt_pong, %{tile}_chunk_pong, %m_i32)
+            func.call @q4nx_chunk_accum_slice_i32_fast(%{tile}_wt_pong, %{tile}_chunk_pong, %m_i32)
               : (memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32) -> ()
           }} else {{
-            func.call @q4nx_chunk_accum_slice_i32(%{tile}_wt_ping, %{tile}_chunk_ping, %m_i32)
+            func.call @q4nx_chunk_accum_slice_i32_fast(%{tile}_wt_ping, %{tile}_chunk_ping, %m_i32)
               : (memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32) -> ()
           }}
           aie.use_lock(%{tile}_chunk_empty, Release, 1)
           aie.use_lock(%{tile}_wt_empty, Release, 1)
         }}
-        func.call @q4nx_flush_output(%{tile}_q4nx_output, %m_i32)
+        func.call @q4nx_flush_output_fast(%{tile}_q4nx_output, %m_i32)
           : (memref<32xbf16>, i32) -> ()
         func.call @{emit_name}({buffer_name}, %{tile}_q4nx_output, %group_i32, %row_i32, %{phase_label}_block_i32, %m_i32)
           : ({buffer_type}, memref<32xbf16>, i32, i32, i32, i32) -> ()
@@ -875,7 +881,7 @@ def _q4nx_multiblock_phase_kernel(
       %{phase_label}_mb_chunks = arith.constant {chunks_per_record} : index
       %{phase_label}_mb_blocks_i32 = arith.constant {records} : i32
       %{phase_label}_mb_weight_base_i32 = arith.constant {weight_base} : i32
-      func.call @q4nx_clear_block_summaries(%{phase_label}_mb_blocks_i32, %m_i32)
+      func.call @q4nx_clear_block_summaries_fast(%{phase_label}_mb_blocks_i32, %m_i32)
         : (i32, i32) -> ()
       scf.for %{phase_label}_chunk = %c0 to %{phase_label}_mb_chunks step %c1 {{
         %{phase_label}_chunk_i32 = arith.index_cast %{phase_label}_chunk : index to i32
@@ -893,18 +899,18 @@ def _q4nx_multiblock_phase_kernel(
           aie.use_lock(%{tile}_wt_full, AcquireGreaterEqual, 1)
           scf.if %{phase_label}_activation_is_pong {{
             scf.if %{phase_label}_weight_is_pong {{
-              func.call @q4nx_chunk_accum_block_slice_i32(%{tile}_wt_pong, %{tile}_chunk_pong, %{phase_label}_block_i32, %m_i32)
+              func.call @q4nx_chunk_accum_block_slice_i32_fast(%{tile}_wt_pong, %{tile}_chunk_pong, %{phase_label}_block_i32, %m_i32)
                 : (memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32, i32) -> ()
             }} else {{
-              func.call @q4nx_chunk_accum_block_slice_i32(%{tile}_wt_ping, %{tile}_chunk_pong, %{phase_label}_block_i32, %m_i32)
+              func.call @q4nx_chunk_accum_block_slice_i32_fast(%{tile}_wt_ping, %{tile}_chunk_pong, %{phase_label}_block_i32, %m_i32)
                 : (memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32, i32) -> ()
             }}
           }} else {{
             scf.if %{phase_label}_weight_is_pong {{
-              func.call @q4nx_chunk_accum_block_slice_i32(%{tile}_wt_pong, %{tile}_chunk_ping, %{phase_label}_block_i32, %m_i32)
+              func.call @q4nx_chunk_accum_block_slice_i32_fast(%{tile}_wt_pong, %{tile}_chunk_ping, %{phase_label}_block_i32, %m_i32)
                 : (memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32, i32) -> ()
             }} else {{
-              func.call @q4nx_chunk_accum_block_slice_i32(%{tile}_wt_ping, %{tile}_chunk_ping, %{phase_label}_block_i32, %m_i32)
+              func.call @q4nx_chunk_accum_block_slice_i32_fast(%{tile}_wt_ping, %{tile}_chunk_ping, %{phase_label}_block_i32, %m_i32)
                 : (memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32, i32) -> ()
             }}
           }}
@@ -914,7 +920,7 @@ def _q4nx_multiblock_phase_kernel(
       }}
       scf.for %{phase_label}_emit_block = %c0 to %{phase_label}_mb_blocks step %c1 {{
         %{phase_label}_emit_block_i32 = arith.index_cast %{phase_label}_emit_block : index to i32
-        func.call @q4nx_flush_block_output(%{tile}_q4nx_output, %{phase_label}_emit_block_i32, %m_i32)
+        func.call @q4nx_flush_block_output_fast(%{tile}_q4nx_output, %{phase_label}_emit_block_i32, %m_i32)
           : (memref<32xbf16>, i32, i32) -> ()
         func.call @{emit_name}({buffer_name}, %{tile}_q4nx_output, %group_i32, %row_i32, %{phase_label}_emit_block_i32, %m_i32)
           : ({buffer_type}, memref<32xbf16>, i32, i32, i32, i32) -> ()
@@ -975,6 +981,104 @@ def main16_qkv_prefix_tile(group: int, row: int) -> str:
 {_q4nx_body_phase_kernel(tile, "k", "q4nx_emit_k_body_record", KV_BODY_RECORDS, K_CHUNKS_PER_RECORD, K_WEIGHT_CHUNK_BASE, k_name, k_type)}
 {_q4nx_body_phase_kernel(tile, "v", "q4nx_emit_v_body_record", KV_BODY_RECORDS, V_CHUNKS_PER_RECORD, V_WEIGHT_CHUNK_BASE, v_name, v_type)}
       aie.use_lock(%{tile}_records_full, Release, {len(QKV_PREFIX_PHASE_TRACE)})
+      aie.end
+    }}
+
+    %{tile}_mem = aie.mem(%{tile}) {{
+      %chunk_dma = aie.dma_start(S2MM, 0, ^chunk_ping, ^wt_start)
+    ^chunk_ping:
+      aie.use_lock(%{tile}_chunk_empty, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_chunk_ping : memref<{MAIN_CHUNK_DWORDS}xi32>, 0, {MAIN_CHUNK_DWORDS}) {{bd_id = 0 : i32, next_bd_id = 1 : i32}}
+      aie.use_lock(%{tile}_chunk_full, Release, 1)
+      aie.next_bd ^chunk_pong
+    ^chunk_pong:
+      aie.use_lock(%{tile}_chunk_empty, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_chunk_pong : memref<{MAIN_CHUNK_DWORDS}xi32>, 0, {MAIN_CHUNK_DWORDS}) {{bd_id = 1 : i32, next_bd_id = 0 : i32}}
+      aie.use_lock(%{tile}_chunk_full, Release, 1)
+      aie.next_bd ^chunk_ping
+
+    ^wt_start:
+      %wt_dma = aie.dma_start(S2MM, 1, ^wt_ping, ^record_start)
+    ^wt_ping:
+      aie.use_lock(%{tile}_wt_empty, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_wt_ping : memref<{CHUNK_BF16}xbf16>, 0, {CHUNK_BF16}) {{bd_id = 8 : i32, next_bd_id = 9 : i32}}
+      aie.use_lock(%{tile}_wt_full, Release, 1)
+      aie.next_bd ^wt_pong
+    ^wt_pong:
+      aie.use_lock(%{tile}_wt_empty, AcquireGreaterEqual, 1)
+      aie.dma_bd(%{tile}_wt_pong : memref<{CHUNK_BF16}xbf16>, 0, {CHUNK_BF16}) {{bd_id = 9 : i32, next_bd_id = 8 : i32}}
+      aie.use_lock(%{tile}_wt_full, Release, 1)
+      aie.next_bd ^wt_ping
+
+    ^record_start:
+      %record_dma = aie.dma_start(MM2S, 1, ^q_out, ^end)
+{chr(10).join(record_blocks)}
+    ^end:
+      aie.end
+    }}
+"""
+
+
+def main16_qkvo_tile(group: int, row: int) -> str:
+    tile = _main_symbol(group, row)
+    packet = main_packet(group, row)
+    record_blocks = []
+    for stage_idx, phase in enumerate(QKVO_PHASE_TRACE):
+        buffer_name, offset, length, dimensions = _main_record_transfer(phase, row)
+        buffer_ref = _record_buffer_ref(tile, buffer_name)
+        next_label = f"^{_next_phase(QKVO_PHASE_TRACE, stage_idx).label}_out"
+        record_blocks.append(f"""    ^{phase.label}_out:
+      aie.use_lock(%{tile}_records_full, AcquireGreaterEqual, 1)
+      aie.dma_bd({buffer_ref}, {offset}, {length}{_bd_dimensions(dimensions)}) {{bd_id = {2 + stage_idx} : i32, next_bd_id = {2 + ((stage_idx + 1) % len(QKVO_PHASE_TRACE))} : i32, packet = #aie.packet_info<pkt_type = 0, pkt_id = {packet}>}}
+      aie.use_lock(%{tile}_records_empty, Release, 1)
+      aie.next_bd {next_label}""")
+
+    q_name = _main_buffer_name(tile, "q_records")
+    q_type = _main_buffer_type("q_records")
+    k_name = _main_buffer_name(tile, "k_records")
+    k_type = _main_buffer_type("k_records")
+    v_name = _main_buffer_name(tile, "v_records")
+    v_type = _main_buffer_type("v_records")
+    o_name = _main_buffer_name(tile, "o_records")
+    o_type = _main_buffer_type("o_records")
+    buffer_decls = "\n".join(
+        f"    %{tile}_{buffer.name} = aie.buffer(%{tile}) "
+        f'{_main_buffer_attr(f"{tile}_{buffer.name}", buffer.address)} : {buffer.memref}'
+        for buffer in MAIN16_BUFFERS
+    )
+    return f"""
+{buffer_decls}
+    %{tile}_records_empty = aie.lock(%{tile}, 0) {{init = {len(QKV_PREFIX_PHASE_TRACE)} : i32, sym_name = "{tile}_records_empty"}}
+    %{tile}_records_full = aie.lock(%{tile}, 1) {{init = 0 : i32, sym_name = "{tile}_records_full"}}
+    %{tile}_chunk_empty = aie.lock(%{tile}, 2) {{init = 2 : i32, sym_name = "{tile}_chunk_empty"}}
+    %{tile}_chunk_full = aie.lock(%{tile}, 3) {{init = 0 : i32, sym_name = "{tile}_chunk_full"}}
+    %{tile}_wt_empty = aie.lock(%{tile}, 4) {{init = 2 : i32, sym_name = "{tile}_wt_empty"}}
+    %{tile}_wt_full = aie.lock(%{tile}, 5) {{init = 0 : i32, sym_name = "{tile}_wt_full"}}
+
+    %{tile}_core = aie.core(%{tile}) {{
+      %c0 = arith.constant 0 : index
+      %c1 = arith.constant 1 : index
+      %c2 = arith.constant 2 : index
+      %c8 = arith.constant 8 : index
+      %c16 = arith.constant 16 : index
+      %c1_i32 = arith.constant 1 : i32
+      %c2_i32 = arith.constant 2 : i32
+      %c{Q_WEIGHT_CHUNK_BASE}_i32 = arith.constant {Q_WEIGHT_CHUNK_BASE} : i32
+      %c{K_WEIGHT_CHUNK_BASE}_i32 = arith.constant {K_WEIGHT_CHUNK_BASE} : i32
+      %c{V_WEIGHT_CHUNK_BASE}_i32 = arith.constant {V_WEIGHT_CHUNK_BASE} : i32
+      %m_i32 = arith.constant 32 : i32
+      %group_i32 = arith.constant {group} : i32
+      %row_i32 = arith.constant {row} : i32
+
+      aie.use_lock(%{tile}_records_empty, AcquireGreaterEqual, {len(QKV_PREFIX_PHASE_TRACE)})
+{_q4nx_body_phase_kernel(tile, "q", "q4nx_emit_q_body_record", Q_BODY_RECORDS, Q_CHUNKS_PER_RECORD, Q_WEIGHT_CHUNK_BASE, q_name, q_type)}
+{_q4nx_body_phase_kernel(tile, "k", "q4nx_emit_k_body_record", KV_BODY_RECORDS, K_CHUNKS_PER_RECORD, K_WEIGHT_CHUNK_BASE, k_name, k_type)}
+{_q4nx_body_phase_kernel(tile, "v", "q4nx_emit_v_body_record", KV_BODY_RECORDS, V_CHUNKS_PER_RECORD, V_WEIGHT_CHUNK_BASE, v_name, v_type)}
+      aie.use_lock(%{tile}_records_full, Release, {len(QKV_PREFIX_PHASE_TRACE)})
+
+      aie.use_lock(%{tile}_records_empty, AcquireGreaterEqual, {len(QKV_PREFIX_PHASE_TRACE)})
+{_q4nx_multiblock_phase_kernel(tile, "o", "q4nx_emit_o_body_record", O_BODY_RECORDS, O_CHUNKS_PER_RECORD, FULL_LAYER_O_WEIGHT_CHUNK_BASE, o_name, o_type)}
+      aie.use_lock(%{tile}_records_full, Release, 1)
       aie.end
     }}
 
@@ -1082,7 +1186,7 @@ def _main_tile(group: int, row: int) -> str:
       aie.use_lock(%{tile}_records_empty, AcquireGreaterEqual, 1)
       scf.for %replay = %c0 to %upgate_replays step %c1 {{
         %replay_i32 = arith.index_cast %replay : index to i32
-        func.call @clear_summary(%{tile}_q4nx_output, %m_i32)
+        func.call @clear_summary_fast(%{tile}_q4nx_output, %m_i32)
           : (memref<32xbf16>, i32) -> ()
         scf.for %chunk = %c0 to %chunks_per_replay step %c1 {{
           %base_chunk = arith.muli %replay, %chunks_per_replay : index
@@ -1094,16 +1198,16 @@ def _main_tile(group: int, row: int) -> str:
           aie.use_lock(%{tile}_chunk_full, AcquireGreaterEqual, 1)
           aie.use_lock(%{tile}_wt_full, AcquireGreaterEqual, 1)
           scf.if %is_pong {{
-            func.call @q4nx_chunk_accum_slice_i32(%{tile}_wt_pong, %{tile}_chunk_pong, %m_i32)
+            func.call @q4nx_chunk_accum_slice_i32_fast(%{tile}_wt_pong, %{tile}_chunk_pong, %m_i32)
               : (memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32) -> ()
           }} else {{
-            func.call @q4nx_chunk_accum_slice_i32(%{tile}_wt_ping, %{tile}_chunk_ping, %m_i32)
+            func.call @q4nx_chunk_accum_slice_i32_fast(%{tile}_wt_ping, %{tile}_chunk_ping, %m_i32)
               : (memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32) -> ()
           }}
           aie.use_lock(%{tile}_chunk_empty, Release, 1)
           aie.use_lock(%{tile}_wt_empty, Release, 1)
         }}
-        func.call @q4nx_flush_output(%{tile}_q4nx_output, %m_i32)
+        func.call @q4nx_flush_output_fast(%{tile}_q4nx_output, %m_i32)
           : (memref<32xbf16>, i32) -> ()
         func.call @q4nx_emit_upgate_record(%{tile}_upgate_records, %{tile}_q4nx_output, %group_i32, %row_i32, %replay_i32, %m_i32)
           : (memref<{UPGATE_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) -> ()
@@ -1417,18 +1521,18 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
     func.func private @qwen3_attention_bf16_init_accum(memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
     func.func private @qwen3_attention_bf16_accum_block(memref<{V_WINDOW_DWORDS}xi32>, memref<{SCALAR_DWORDS + WEIGHT_DWORDS}xi32>, memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, i32, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
     func.func private @qwen3_attention_bf16_finish_accum(memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, memref<{ATTENTION_OUTPUT_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
-    func.func private @clear_summary(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_chunk_accum_slice_i32(memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_clear_block_summaries(i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_chunk_accum_block_slice_i32(memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_flush_block_output(memref<32xbf16>, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_flush_output(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_emit_q_body_record(memref<{Q_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_emit_k_body_record(memref<{KV_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_emit_v_body_record(memref<{KV_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_emit_o_body_record(memref<{O_BODY_RECORDS * RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_emit_upgate_record(memref<{UPGATE_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
-    func.func private @q4nx_emit_down_body_record(memref<{DOWN_BODY_RECORDS * RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx.o"}}
+    func.func private @clear_summary_fast(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_chunk_accum_slice_i32_fast(memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_clear_block_summaries_fast(i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_chunk_accum_block_slice_i32_fast(memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_flush_block_output_fast(memref<32xbf16>, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_flush_output_fast(memref<32xbf16>, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_emit_q_body_record(memref<{Q_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_emit_k_body_record(memref<{KV_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_emit_v_body_record(memref<{KV_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_emit_o_body_record(memref<{O_BODY_RECORDS * RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_emit_upgate_record(memref<{UPGATE_MAIN_RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @q4nx_emit_down_body_record(memref<{DOWN_BODY_RECORDS * RECORD_DWORDS}xi32>, memref<32xbf16>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
 
 {chr(10).join(blocks)}
 {_runtime_sequence(schedule)}
@@ -1458,12 +1562,12 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         "q4nx_emit_upgate_record",
         "ffn_swiglu_slice_bf16_inputs",
         "full_c1r2_write_down_block",
-        "q4nx_chunk_accum_slice_i32",
-        "q4nx_clear_block_summaries",
-        "q4nx_chunk_accum_block_slice_i32",
-        "q4nx_flush_block_output",
+        "q4nx_chunk_accum_slice_i32_fast",
+        "q4nx_clear_block_summaries_fast",
+        "q4nx_chunk_accum_block_slice_i32_fast",
+        "q4nx_flush_block_output_fast",
         "q4nx_emit_down_body_record",
-        "main_projection_q4nx.o",
+        MAIN16_KERNEL_OBJECT,
         f"%c{Q_WEIGHT_CHUNK_BASE}_i32 = arith.constant {Q_WEIGHT_CHUNK_BASE} : i32",
         f"%c{K_WEIGHT_CHUNK_BASE}_i32 = arith.constant {K_WEIGHT_CHUNK_BASE} : i32",
         f"%c{V_WEIGHT_CHUNK_BASE}_i32 = arith.constant {V_WEIGHT_CHUNK_BASE} : i32",
@@ -1483,7 +1587,6 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         f"aiex.npu.rtp_write(@post_current_token, 0, {schedule.current_token})",
         f"aiex.npu.rtp_write(@shape_a0_blocks, 0, {schedule.kv_blocks})",
         f"aiex.npu.rtp_write(@shape_a0_tail_tokens, 0, {schedule.tail_tokens})",
-        "main_projection_q4nx.o",
         "postprocess_qkv.o",
         "full_vector_station.o",
         "swiglu.o",
@@ -1502,6 +1605,8 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         "arg_idx = 4 : i32",
     )
     errors = [f"missing full-layer engine marker: {marker}" for marker in required if marker not in mlir]
+    if mlir.count(MAIN16_KERNEL_OBJECT) != 12:
+        errors.append(f"full-layer engine expected 12 declarations linked with {MAIN16_KERNEL_OBJECT}")
     errors.extend(validate_resource_manifest(CASE_NAME, ownership))
     errors.extend(validate_manifest_matches_mlir(CASE_NAME, ownership, mlir))
     if "qwen3_layer.o" in mlir:
@@ -1545,8 +1650,8 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     errors.extend(require_count(CASE_NAME, "qwen3_attention_bf16_finish_accum", mlir.count("qwen3_attention_bf16_finish_accum"), 5))
     errors.extend(require_count(CASE_NAME, "q4nx o emit calls", mlir.count("func.call @q4nx_emit_o_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
     errors.extend(require_count(CASE_NAME, "q4nx upgate emit calls", mlir.count("func.call @q4nx_emit_upgate_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
-    errors.extend(require_count(CASE_NAME, "q4nx single-accum chunk call sites", mlir.count("func.call @q4nx_chunk_accum_slice_i32"), len(MAIN_COLUMNS) * len(MAIN_ROWS) * 8))
-    errors.extend(require_count(CASE_NAME, "q4nx block-accum chunk call sites", mlir.count("func.call @q4nx_chunk_accum_block_slice_i32"), len(MAIN_COLUMNS) * len(MAIN_ROWS) * 8))
+    errors.extend(require_count(CASE_NAME, "q4nx fast single-accum chunk call sites", mlir.count("func.call @q4nx_chunk_accum_slice_i32_fast("), len(MAIN_COLUMNS) * len(MAIN_ROWS) * 8))
+    errors.extend(require_count(CASE_NAME, "q4nx fast block-accum chunk call sites", mlir.count("func.call @q4nx_chunk_accum_block_slice_i32_fast("), len(MAIN_COLUMNS) * len(MAIN_ROWS) * 8))
     errors.extend(require_count(CASE_NAME, "q4nx down emit calls", mlir.count("func.call @q4nx_emit_down_body_record"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
     expected_arg2_patches = 3 + len(MAIN_COLUMNS) * len(WEIGHT_PATCH_BD_IDS) * len(_full_weight_spans())
     errors.extend(

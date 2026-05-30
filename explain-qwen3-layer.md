@@ -14,6 +14,7 @@
 
 - **目标态**：Qwen3 decode 单层在 NPU 上数值正确、速度可用，并且可以多层串联。
 - **当前态**：`qwen3-layer` 已经能在真机跑通 full-layer 物理闭环，但 attention、RMSNorm/RoPE、SwiGLU 和最终 hidden 输出仍是校准/替换对象。当前通过的是真实 Q4NX projection + current K/V + KV scan + fixed-point attention + Q4NX O/up/gate/down 的集成边界，不等于生产数值已经完成。
+- **性能路线**：宏观数据流继续按 MyLM-style fused layer engine 走；后续不是推翻 row1/c1r1/c6r1/topology，而是把当前 high-level AIE C++ main16 Q4NX role kernel 逐步替换成 MyLM-style raw/scheduled core body。
 
 ## 背景：GPU 怎么做一层推理
 
@@ -34,6 +35,16 @@ Q投影 → K投影 → V投影 → attention → O投影 → up → gate → Sw
 - **执行阶段**：runtime patch 当前 token、BO 地址、scan descriptor/RTP，然后启动 layer run。NPU 自动运转，CPU 不参与层内 phase 调度
 
 **核心收益**：大部分中间激活（Q/K/V 投影输出、attention 结果、FFN 中间值）都不回主存，只在 tile 之间直接流动。主存流量主要变成 Q4NX 权重流入（约 115 MiB/层）和 KV cache scan/write；单 token decode 下权重仍是最大流量项。
+
+## 与 MyLM 的关系
+
+当前 IRON 设计和 MyLM 在 operator 级数据流上已经对齐：hidden/RMSNorm replay → main16 Q/K/V → c1r3 postprocess/current K/V → Shape-A/B attention → packet2/O replay → main16 O/up/gate/down → final hidden。真正差距在 AIE 物理执行形态：
+
+- MyLM 的 `layer.xclbin` 是 raw fused engine：core program、BD ring、stream switch、lock phase 预配置，runtime 只 patch descriptor/RTP。
+- MyLM main16 是统一的 14,868-byte raw segmented program，`0x1f0` 处加载一次 Q4NX microkernel，各 phase body 调用它。
+- IRON 当前 main16 仍是 MLIR phase control 调 AIE C++ role kernel；它可运行、可验证，但不是最终性能形态。
+
+因此后续性能优化的主线是 MyLM-style raw/scheduled main16 kernel，而不是继续增加临时 debug dataflow 或重新设计 row1 weight/compact 通路。
 
 ## 类比
 
@@ -174,6 +185,8 @@ row2          ┃[M01][M02][M03][M04]┃
 - **只做一类事**——128 dword 激活 + 1280 dword Q4NX row-chunk 权重 → 反量化/MAC/flush → 17 dword compact record
 - **视野极窄**——每个 tile 一次只看 32 行 × 256 列的窗口，看不到完整 4096 维向量
 - **时分复用**——同一组 16 tile 依次跑 7 个投影阶段（Q→K→V→O→up→gate→down）。阶段不是只靠权重区分，还由 body schedule、record header、record slot、replay count 和 Edge 侧消费路径共同定义
+
+MyLM 证明这个 ABI 可以做成更硬的 raw core program：16 个 main tile 都加载同一个 14,868-byte program image，其中 `0x1f0..0x1850` 是共享 Q4NX microkernel，`0x1870/0x1e80/0x2490/0x2aa0` 分别是 QKV/O/upgate/down phase body，`0x36d0` 是 dispatcher。IRON 当前的 `main_projection_q4nx_fast.cc` 是正确性 baseline；后续优化目标是在不改 DMA0/DMA1/record ABI 的前提下替换 compute body。
 
 每个 tile 有两个 DMA 输入：
 - **DMA0**：激活输入（128 dword = 256 bf16）
@@ -873,7 +886,7 @@ output = SiLU(gate) × up = 512 bf16
 
 | 文件 | 运行在 | 职责 |
 |------|--------|------|
-| `main_projection_q4nx.cc` | c2-c5, r2-r5 | Q4NX 反量化 + MAC + flush + compact record emit |
+| `main_projection_q4nx_fast.cc` | c2-c5, r2-r5 | Q4NX 反量化 + MAC + flush + compact record emit |
 | `edge_attention.cc` | c0/c7, r2-r5 | 当前 bf16 attention-O path 和 Shape-A/B online-softmax 近似；目标是收紧到 Qwen3 reference |
 | `postprocess_qkv.cc` | c1r3 | 当前 header-stripped Q/K/V body payload → packed attention ABI + packet8/9 current K/V；目标是补齐 Q/K norm + RoPE |
 | `full_vector_station.cc` | c1r2 | 当前 hidden replay、O compact replay、down compact → 2048-dword hidden_out；目标是生产 RMSNorm/residual 数值 |
@@ -962,7 +975,8 @@ token 共享同一个 `design.xclbin`，只切换 patched instruction stream。
 - c1r2 packet0 full-vector replay → c1r1 bridge → main16 DMA0 activation ring
 - c6r1 packet2（attention）和 packet1（FFN）复用 c1r1 shared bridge
 - 48-record upgate body trace + reusable-slot compact + c6r2 payload-half ABI
-- `qwen3-8b-decode-layer` 能用真实 MyLM Qwen3-8B-NPU2 权重跑通单层 full-layer frontier，并输出 2048-dword hidden payload。当前比较已经接到 `Qwen3LayerReference`，hidden_out 使用 `abs_tol=0.05, rel_tol=0.20`，K/V cache writeback 使用 `abs_tol=0.10` 覆盖 Q/K RMSNorm 放大带来的 bf16 差异；这已经是可运行的单层 decode frontier，但还不是多层 production 数值预算
+- `qwen3-8b-decode-layer` 能用真实 MyLM Qwen3-8B-NPU2 权重跑通单层 full-layer frontier，并输出 2048-dword hidden payload。当前比较已经接到 `Qwen3LayerReference`，hidden_out 使用 `abs_tol=0.01, rel_tol=0.05`；token31 最新真机结果是 `29.236 ms`、`final_hidden_out max_abs=0.0078125`，current K/V、valid cache 和 capacity-unchanged cache 都是 0 mismatch。这已经是可运行的单层 decode frontier，但还不是多层 production 数值预算
+- main16 projection 已收敛为单一 active role `main_projection_q4nx_fast.cc`；旧 `main_projection_q4nx.cc` 已从 active generator/link path 删除。`full-layer-qkv-prefix`、`full-layer-attention-o-bf16` 和 `qwen3-8b-decode-layer` 都能重新编译并真机通过，说明之前的 program-memory overflow 是双版本 main projection 同时链接造成的
 - `run_stage_budget.py` 已把 c1r2 input norm、current-slot K/V、valid-cache K/V、capacity-unchanged K/V、attention-O 和 full hidden_out 的真机统计统一成 `stage_budget:` 输出；K/V 行会打印最大误差坐标，失败时打印首个 mismatch 坐标；token31/token91 已覆盖 qkv、attention、full stage
 - `run_reference_decode.py` 已能跑真实 Qwen3-8B 多层 CPU reference 和 MyLM prefix dump 对照。当前确认 Q4NX 解码公式是 `int4 * scale + offset`，不是旧的 `(int4 - zero_point) * scale`；raw token `9707` 的 layer1/layer4/layer8/layer16/layer24/layer32 top token 与 MyLM probe 对齐。尚未确认 full 36-layer Python reference 是最终 oracle：layer35 开始出现近似误差放大，layer36 目前 Python top token 是 `11`，MyLM probe top token 是 `323`
 
@@ -1004,7 +1018,22 @@ token 共享同一个 `design.xclbin`，只切换 patched instruction stream。
 | c1r2 RMSNorm/replay/final output | hidden replay、O residual/postnorm、down residual 和 2048-dword hidden_out 已在物理路径闭环 | 收紧 RMSNorm/residual stage budget，确认输出可直接作为下一层输入 |
 | c6r2 SwiGLU | bf16 输入/输出 ABI 已对齐，`slice_scale` 已删除，执行 AIE-local bounded table `SiLU(gate) * up` | 校准到 Qwen3 SiLU/SwiGLU production budget，并优化 table/compute cost |
 | c1r3 Q/K norm + RoPE | Q/K/V body payload、packet8/9 current K/V、attention ABI 和 full decode hidden_out 已接通 | 收紧 Q/K RMSNorm、RoPE、scale/rotation constant 的 stage-local budget |
-| Main16 Q4NX kernel | 真 Q4NX transport/MAC 和真实模型权重 stream 已跑通 | 做高性能化、DMA/compute overlap 和 cycle 级瓶颈定位 |
+| Main16 Q4NX kernel | 真 Q4NX transport/MAC 和真实模型权重 stream 已跑通；当前只保留 `main_projection_q4nx_fast.cc` 一个 C++ role。旧 C++ unroll/scheduled probes 已删除：它们能让窄 slice 变快，但不能让 full decode 变快，22-dim full-layer probe 反而回归到 `30.092-30.963 ms` | 沿 MyLM-style shared microkernel 方向继续，但不能靠维护多个 C++ 变种；下一步应减少 MLIR phase-control/body text 或走 raw core program |
+
+### MyLM-style 主性能方向
+
+现在的结论不是"数据流要重做"，而是"数据流已经足够接近 MyLM，main16 执行形态还不够硬"。下一阶段性能路线固定为：
+
+1. 保留现有 full-layer topology、row1 S2MM4/5 weight ingress、row1 compact gather、c1r1/c6r1 replay、c1r2/c1r3/attention 物理边界。
+2. 只保留 `main_projection_q4nx_fast.cc` 作为 active main16 C++ implementation，不再维护 QKV-only、QKVO-only、scheduled-unroll 等并存变种。
+3. 所有 active slice 也统一链接这个 main16 object，只裁剪 phase/topology，不裁剪 kernel object。
+   - DMA0 activation chunk：128 dword
+   - DMA1 Q4NX weight chunk：1280 dword
+   - output compact record：17 dword
+4. full-layer 22-dim scheduled probe 证明“能放下”不等于“更快”：它保持数值正确，但 token31 full decode 从 baseline `29.236 ms` 回归到 `30.092-30.963 ms`。这个 probe 已删除，active full decode 保持 `main_projection_q4nx_fast.o`。
+5. 下一步不是再加 C++ 变种，而是继续缩短 main16 phase-control/body text，或者把 Q4NX body 推向 MyLM-style raw core program。只有当新实现通过现有 reference 且 end-to-end 变快后，才替换这个唯一 active main16 implementation。
+
+MyLM 公开仓库不提供 Qwen3 NPU kernel 源码；`qwen3_npu`/`qwen3_npu_sequence` 的实现来自 `src/lib/libqwen3_npu.so`，AIE 程序来自 `src/xclbins/Qwen3-8B-NPU2/layer.xclbin`。我们只复用其 ABI、program layout 和调度形态，不复用 proprietary binary。当前证据记录在 `qwen3-layer/main16_q4nx_mylm_compare.md` 和 `qwen3-layer/main16_q4nx_mylm_secret.md`。
 
 ### CPU reference 与 MyLM 对齐
 
@@ -1026,7 +1055,7 @@ token 共享同一个 `design.xclbin`，只切换 patched instruction stream。
 - 最终输出已经是 2048-dword hidden payload；后续要证明该 tolerance 在多层串联中可接受，或继续收紧到下一层输入预算
 - 继续增强 stage-local mismatch 归因：K/V stats 已能输出 `token/head/dim/npu_offset`；下一步要把 attention-O、c1r2 RMSNorm、SwiGLU/down 也提升到同等级别的 head/dim/block/edge 归因
 
-### 与 MyLM 对齐（可选方向）
+### 与 MyLM 对齐（仍需校准的布局细节）
 
 - c1r2 内部 register-level ping/pong/value layout
 - Shape carrier exact lane order
@@ -1034,7 +1063,7 @@ token 共享同一个 `design.xclbin`，只切换 patched instruction stream。
 - up/gate adjacent-pair 顺序
 - Attention output head-pair order
 
-这些被标记为"IRON-ABI-v0 定义"，如果要复用 MyLM binary kernel 需要逐项校准。
+这些不是下一步 main16 性能优化的前置条件。它们被标记为"IRON-ABI-v0 定义"；只有当我们要逐项贴近 MyLM register/lane 级数值路径，或者未来要验证 binary-level 兼容性时，才需要继续校准。
 
 ## 进展时间线摘要
 
@@ -1056,5 +1085,6 @@ middle   Q4NX weight stream oracle（验证 weight ingress 能力）
 current  qwen3-8b-decode-layer + full-layer-qkv-prefix + full-layer-attention-o-bf16
          （全部 7 phase Q4NX + current K/V + KV scan + bf16 attention-O + hidden_out frontier）
   ↓
-next     stage-local 数值预算收敛 → 性能化 kernel/overlap → 多层 → runtime 集成
+next     MyLM-style raw/scheduled main16 Q4NX kernel → stage-local 数值预算收敛
+         → attention/c1r2/c6r2 production budget → 多层 → runtime 集成
 ```
