@@ -95,6 +95,14 @@ MyLM physical reverse evidence:
   by row1 into one 257-dword c1r1 packet; `c6r2 DMA_0` drops two packet headers
   and receives two 256-dword payloads as one 512-dword `up+gate` input.
 
+AIE2P kernel/toolchain learning:
+
+- `aie_intrinsics_api_probe`: broad Peano/AIE API/source-assembly instruction
+  shape and NPU smoke probes for Q4NX hot-loop candidates.
+- `97_aie2p_callable_asm_contract`: focused callable source-assembly contract:
+  AIE2P C ABI, vector preserve-all limits, wrapper relocation shape, and
+  BF16/float accumulator storeback forms.
+
 ## Folded Experiments
 
 Deleted because their useful conclusions are covered above:
