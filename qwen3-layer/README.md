@@ -105,8 +105,9 @@ The current implementation is the active qwen3 full-layer NPU integration path:
   flush, and record emit kernels.
 - `main_projection_q4nx_asm.s`: generated source-assembly main16 Q4NX probe
   object linked into the single main16 role object; unreferenced sections are
-  garbage collected until a production exact lane body is wired in. Regenerate
-  or check it with `tools/generate_main16_q4nx_asm.py`.
+  garbage collected until a production exact lane body is wired in. It contains
+  both the canonical MyLM-style group probe and a callable exact-lane body
+  candidate. Regenerate or check it with `tools/generate_main16_q4nx_asm.py`.
 - `edge_attention.cc`: Shape-A/B edge attention kernels for KV scan, online
   softmax, weighted V, and accumulator merge.
 - `postprocess_qkv.cc`: c1r3 Q/K norm, RoPE/layout pack, and current K/V
