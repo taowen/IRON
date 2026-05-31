@@ -92,12 +92,20 @@ def run_case(args: argparse.Namespace) -> bool:
 
 
 if __name__ == "__main__":
+    args = parse_args()
     try:
-        success = run_case(parse_args())
+        success = run_case(args)
     except Exception as exc:
         print(f"\nFAILED: {type(exc).__name__}: {exc}")
         traceback.print_exc()
         success = False
     finally:
-        npu_build.cleanup()
+        if not args.check_only and not args.build_only:
+            try:
+                npu_build.cleanup()
+            except Exception as exc:
+                print(f"\nFAILED CLEANUP: {type(exc).__name__}: {exc}")
+                traceback.print_exc()
+                if success:
+                    success = False
     raise SystemExit(0 if success else 1)

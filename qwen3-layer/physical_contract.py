@@ -427,7 +427,7 @@ def validate_q4nx_down_full_layer_ownership(scope: str, mlir: str) -> list[str]:
         )
     if (
         "func.call @q4nx_chunk_accum_slice_i32_fast" not in mlir
-        and "func.call @q4nx_main16_full_scheduler" not in mlir
+        and "func.call @q4nx_main16_layer_scheduler" not in mlir
     ):
         errors.append(f"{scope}: missing integrated fast Q4NX main16 call")
     role_objects = (

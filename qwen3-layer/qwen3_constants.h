@@ -19,6 +19,11 @@ constexpr int32_t kUpPhase = 4;
 constexpr int32_t kGatePhase = 5;
 constexpr int32_t kDownPhase = 6;
 
+constexpr int32_t kMain16PhaseLimitQkv = kVPhase + 1;
+constexpr int32_t kMain16PhaseLimitQkvo = kOPhase + 1;
+constexpr int32_t kMain16PhaseLimitUpGate = kGatePhase + 1;
+constexpr int32_t kMain16PhaseLimitFull = kDownPhase + 1;
+
 constexpr int32_t kQCompactPacketId = 10;
 constexpr int32_t kKCompactPacketId = 11;
 constexpr int32_t kVCompactPacketId = 12;

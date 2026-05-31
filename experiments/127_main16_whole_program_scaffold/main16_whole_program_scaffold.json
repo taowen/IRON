@@ -1,0 +1,606 @@
+{
+  "status": "compileable_scaffold_not_active",
+  "required_symbols": [
+    "q4nx_main16_whole_program_entry",
+    "q4nx_main16_whole_dispatcher",
+    "q4nx_main16_whole_q4_body",
+    "q4nx_main16_whole_emit_record",
+    "q4nx_main16_whole_float_accum",
+    "q4nx_main16_whole_body_qkv",
+    "q4nx_main16_whole_body_o",
+    "q4nx_main16_whole_body_upgate",
+    "q4nx_main16_whole_body_down"
+  ],
+  "missing_symbols": [],
+  "entry_symbol": "q4nx_main16_whole_program_entry",
+  "dispatcher_symbol": "q4nx_main16_whole_dispatcher",
+  "q4_symbol": "q4nx_main16_whole_q4_body",
+  "emit_record_symbol": "q4nx_main16_whole_emit_record",
+  "float_accum_symbol": "q4nx_main16_whole_float_accum",
+  "linked_c_abi": [
+    {
+      "name": "wt_ping",
+      "register": "p0",
+      "c_type": "bfloat16 *",
+      "semantic": "main16 DMA1 weight ping buffer"
+    },
+    {
+      "name": "wt_pong",
+      "register": "p1",
+      "c_type": "bfloat16 *",
+      "semantic": "main16 DMA1 weight pong buffer"
+    },
+    {
+      "name": "chunk_ping",
+      "register": "p2",
+      "c_type": "int32_t *",
+      "semantic": "main16 DMA0 activation ping buffer"
+    },
+    {
+      "name": "chunk_pong",
+      "register": "p3",
+      "c_type": "int32_t *",
+      "semantic": "main16 DMA0 activation pong buffer"
+    },
+    {
+      "name": "record_ping",
+      "register": "p4",
+      "c_type": "int32_t *",
+      "semantic": "main16 compact record ping buffer"
+    },
+    {
+      "name": "record_pong",
+      "register": "p5",
+      "c_type": "int32_t *",
+      "semantic": "main16 compact record pong buffer"
+    },
+    {
+      "name": "group",
+      "register": "r0",
+      "c_type": "int32_t",
+      "semantic": "main16 column group id"
+    },
+    {
+      "name": "row",
+      "register": "r1",
+      "c_type": "int32_t",
+      "semantic": "intile row id"
+    },
+    {
+      "name": "num_rows",
+      "register": "r2",
+      "c_type": "int32_t",
+      "semantic": "valid rows in this tile"
+    },
+    {
+      "name": "phase_limit",
+      "register": "r3",
+      "c_type": "int32_t",
+      "semantic": "exclusive phase limit: 3=qkv, 4=qkvo, 6=upgate, 7=full"
+    }
+  ],
+  "state_registers": [
+    {
+      "name": "group",
+      "register": "r16",
+      "source": "r0",
+      "semantic": "main16 column group id"
+    },
+    {
+      "name": "row",
+      "register": "r17",
+      "source": "r1",
+      "semantic": "intile row id"
+    },
+    {
+      "name": "num_rows",
+      "register": "r18",
+      "source": "r2",
+      "semantic": "valid rows for future payload copy"
+    },
+    {
+      "name": "phase_limit",
+      "register": "r31",
+      "source": "r3",
+      "semantic": "exclusive phase limit for the single dispatcher entry"
+    },
+    {
+      "name": "wt_ping_ptr",
+      "register": "r19",
+      "source": "p0",
+      "semantic": "weight ping pointer for Q4 body calls"
+    },
+    {
+      "name": "wt_pong_ptr",
+      "register": "r20",
+      "source": "p1",
+      "semantic": "weight pong pointer for Q4 body calls"
+    },
+    {
+      "name": "chunk_ping_ptr",
+      "register": "r21",
+      "source": "p2",
+      "semantic": "activation ping pointer for Q4 body calls"
+    },
+    {
+      "name": "chunk_pong_ptr",
+      "register": "r22",
+      "source": "p3",
+      "semantic": "activation pong pointer for Q4 body calls"
+    },
+    {
+      "name": "float_accum_ptr",
+      "register": "r30",
+      "source": "q4nx_main16_whole_float_accum",
+      "semantic": "32-lane FP32 projection accumulator"
+    },
+    {
+      "name": "record_ping_ptr",
+      "register": "r26",
+      "source": "p4",
+      "semantic": "compact record ping pointer"
+    },
+    {
+      "name": "record_pong_ptr",
+      "register": "r28",
+      "source": "p5",
+      "semantic": "compact record pong pointer"
+    },
+    {
+      "name": "vector_insert_index",
+      "register": "r29",
+      "source": "constant zero",
+      "semantic": "assembler-mandated index register for vinsert.32"
+    },
+    {
+      "name": "select_predicate",
+      "register": "r27",
+      "source": "derived",
+      "semantic": "required predicate register for sel.eqz"
+    }
+  ],
+  "locks": [
+    {
+      "name": "activation_empty",
+      "mlir_lock": 0,
+      "core_lock": 48,
+      "initial_tokens": 2,
+      "acquire_or_release": "release",
+      "semantic": "DMA0 activation ping/pong reusable by producer"
+    },
+    {
+      "name": "activation_full",
+      "mlir_lock": 1,
+      "core_lock": 49,
+      "initial_tokens": 0,
+      "acquire_or_release": "acquire",
+      "semantic": "DMA0 activation ping/pong ready for core"
+    },
+    {
+      "name": "weight_empty",
+      "mlir_lock": 2,
+      "core_lock": 50,
+      "initial_tokens": 2,
+      "acquire_or_release": "release",
+      "semantic": "DMA1 weight ping/pong reusable by row1 fanout"
+    },
+    {
+      "name": "weight_full",
+      "mlir_lock": 3,
+      "core_lock": 51,
+      "initial_tokens": 0,
+      "acquire_or_release": "acquire",
+      "semantic": "DMA1 weight ping/pong ready for core"
+    },
+    {
+      "name": "record_empty",
+      "mlir_lock": 4,
+      "core_lock": 52,
+      "initial_tokens": 2,
+      "acquire_or_release": "acquire",
+      "semantic": "compact record ping/pong reusable by core"
+    },
+    {
+      "name": "record_full",
+      "mlir_lock": 5,
+      "core_lock": 53,
+      "initial_tokens": 0,
+      "acquire_or_release": "release",
+      "semantic": "compact record ping/pong ready for row1 gather"
+    }
+  ],
+  "record_header_contract": {
+    "body": "(phase << 24) | (block << 20) | (group << 16) | (row << 8) | packet_id",
+    "projection": "(phase << 24) | (group << 16) | (row << 8) | packet_id",
+    "packet_ids": {
+      "Q": 10,
+      "K": 11,
+      "V": 12,
+      "O": 13,
+      "upgate": 14,
+      "down": 15
+    },
+    "upgate_phase_policy": "phase 4 on even replay records, phase 5 on odd replay records, packet 14 for both"
+  },
+  "dispatcher_contract": {
+    "entry_symbol": "q4nx_main16_whole_program_entry",
+    "scheduler_symbol_target": "q4nx_main16_layer_scheduler",
+    "phase_limit_register": "r31",
+    "phase_limits": {
+      "qkv": 3,
+      "qkvo": 4,
+      "upgate": 6,
+      "full": 7
+    },
+    "phase_body_call_sites": {
+      "qkv": 1,
+      "o": 1,
+      "upgate": 1,
+      "down": 1
+    },
+    "phase_limit_compare_sites": 3,
+    "phase_limit_exit_sites": 3,
+    "done_label_sites": 1
+  },
+  "lr_frame_contract": {
+    "frame_bytes": 64,
+    "nonleaf_symbols": {
+      "q4nx_main16_whole_program_entry": {
+        "save": 1,
+        "restore": 1,
+        "calls": 1
+      },
+      "q4nx_main16_whole_dispatcher": {
+        "save": 1,
+        "restore": 1,
+        "calls": 4
+      },
+      "q4nx_main16_whole_q4_body": {
+        "save": 1,
+        "restore": 1,
+        "calls": 1
+      },
+      "q4nx_main16_whole_body_qkv": {
+        "save": 1,
+        "restore": 1,
+        "calls": 3
+      },
+      "q4nx_main16_whole_body_o": {
+        "save": 1,
+        "restore": 1,
+        "calls": 1
+      },
+      "q4nx_main16_whole_body_upgate": {
+        "save": 1,
+        "restore": 1,
+        "calls": 1
+      },
+      "q4nx_main16_whole_body_down": {
+        "save": 1,
+        "restore": 1,
+        "calls": 1
+      }
+    },
+    "leaf_symbols": {
+      "q4nx_main16_whole_emit_record": {
+        "save": 0,
+        "restore": 0,
+        "calls": 0
+      }
+    }
+  },
+  "q4_body_call_contract": {
+    "status": "shared_q4_run_body_owns_record_chunk_loops",
+    "source_of_truth": "qwen3-layer/tools/generate_main16_q4nx_asm.py",
+    "active_asm": "qwen3-layer/main_projection_q4nx_asm.s",
+    "uses_save_restore": false,
+    "phase_q4_run_call_sites_static": 6,
+    "phase_q4_run_call_sites_expected": 6,
+    "dynamic_chunk_executions": 1472,
+    "chunk_body_call_sites_static": 0,
+    "emit_record_call_sites_static": 1,
+    "p1": "selected inside shared Q4 run body from weight ping/pong by chunk parity",
+    "p2": "selected inside shared Q4 run body from activation ping/pong by chunk parity",
+    "p0": "32-lane FP32 projection accumulator selected inside shared Q4 run body",
+    "selection_predicate": "r27 = chunk & 1 inside shared Q4 run body",
+    "static_counts": {
+      "vmac.f": 64,
+      "vextbcst.16": 64,
+      "vst": 2,
+      "save_slots": 1,
+      "restore_slots": 1
+    }
+  },
+  "phase_bodies": [
+    {
+      "name": "qkv",
+      "symbol": "q4nx_main16_whole_body_qkv",
+      "mylm_body_offset": 6256,
+      "mylm_header": "0x1",
+      "records": 12,
+      "iron_record_schedule": [
+        {
+          "name": "Q",
+          "phases": [
+            0
+          ],
+          "phase_pattern": "phase0",
+          "packet_id": 10,
+          "records": 8,
+          "chunks_per_record": 16,
+          "weight_chunk_base": 0,
+          "header_kind": "body"
+        },
+        {
+          "name": "K",
+          "phases": [
+            1
+          ],
+          "phase_pattern": "phase1",
+          "packet_id": 11,
+          "records": 2,
+          "chunks_per_record": 16,
+          "weight_chunk_base": 128,
+          "header_kind": "body"
+        },
+        {
+          "name": "V",
+          "phases": [
+            2
+          ],
+          "phase_pattern": "phase2",
+          "packet_id": 12,
+          "records": 2,
+          "chunks_per_record": 16,
+          "weight_chunk_base": 160,
+          "header_kind": "body"
+        }
+      ]
+    },
+    {
+      "name": "o",
+      "symbol": "q4nx_main16_whole_body_o",
+      "mylm_body_offset": 7808,
+      "mylm_header": "0x4",
+      "records": 8,
+      "iron_record_schedule": [
+        {
+          "name": "O",
+          "phases": [
+            3
+          ],
+          "phase_pattern": "phase3",
+          "packet_id": 13,
+          "records": 8,
+          "chunks_per_record": 16,
+          "weight_chunk_base": 192,
+          "header_kind": "body"
+        }
+      ]
+    },
+    {
+      "name": "upgate",
+      "symbol": "q4nx_main16_whole_body_upgate",
+      "mylm_body_offset": 9360,
+      "mylm_header": "0x8",
+      "records": 48,
+      "iron_record_schedule": [
+        {
+          "name": "upgate",
+          "phases": [
+            4,
+            5
+          ],
+          "phase_pattern": "phase4/phase5 by record parity",
+          "packet_id": 14,
+          "records": 48,
+          "chunks_per_record": 16,
+          "weight_chunk_base": 320,
+          "header_kind": "projection"
+        }
+      ]
+    },
+    {
+      "name": "down",
+      "symbol": "q4nx_main16_whole_body_down",
+      "mylm_body_offset": 10912,
+      "mylm_header": "0x4",
+      "records": 8,
+      "iron_record_schedule": [
+        {
+          "name": "down",
+          "phases": [
+            6
+          ],
+          "phase_pattern": "phase6",
+          "packet_id": 15,
+          "records": 8,
+          "chunks_per_record": 48,
+          "weight_chunk_base": 1088,
+          "header_kind": "body"
+        }
+      ]
+    }
+  ],
+  "active_baseline": {
+    "has_q4": true,
+    "has_layer_scheduler": true,
+    "has_rejected_nocall": false,
+    "static_helper_relocations": 7,
+    "q4_counts": {
+      "vmac.f": 64,
+      "vextbcst.16": 64,
+      "vups.4x": 0,
+      "vups.2x": 32,
+      "vunpack": 64,
+      "vmul.f": 64,
+      "vconv.bf16.fp32": 160,
+      "vlda": 2,
+      "vldb": 66,
+      "vst": 2,
+      "add.nc\tlc": 2,
+      "movxm\tls": 2,
+      "movxm\tle": 2
+    }
+  },
+  "decision": {
+    "active_path": "keep the single q4nx_main16_layer_scheduler(..., phase_limit) entry calling q4nx_chunk_accum_asm_zol until the generated whole-main16 replacement passes the QKV prefix gate",
+    "rejected_path": "do not re-enable the partial q4nx_main16_qkv_scheduler_nocall path; it removed the helper statically but timed out on full-layer-qkv-prefix",
+    "next_path": "generate one main16 role program with MyLM-style sections: shared Q4NX body, Q/K/V body, O body, up/gate body, down body, and dispatcher",
+    "header_policy": "preserve IRON compact headers 10..15 at the row1/c1r1 boundary for the first replacement; MyLM's 0x1/0x4/0x8 headers are a raw-program clue, not a drop-in ABI for current IRON downstream routing",
+    "first_gate": "full-layer-qkv-prefix token31 must pass before enabling the generated main16 program in any full-decode path"
+  },
+  "open_gaps": [
+    "shared Q4 run body still uses the current exact chunk body shape",
+    "whole-program register plan must replace current exact dequant body with MyLM-density scheduled body",
+    "active qwen3-layer uses q4nx_main16_layer_scheduler, but this generated whole-program entry is not active yet"
+  ],
+  "record_emitter": {
+    "status": "header_writer_with_fp32_accum_to_bf16_payload_clear",
+    "abi": "p0=selected record buffer, p6=FP32 accumulator, r0=phase, r1=block, r2=packet, r3=group, r4=row, r5=num_rows",
+    "record_store_static_sites": 2,
+    "payload_copy_loop_static_sites": 1,
+    "payload_clear_store_static_sites": 1,
+    "forbidden_caller_state_register_references": [],
+    "record_dwords_dynamic": 17,
+    "payload_bf16_dynamic": 32,
+    "accum_clear_float_dynamic": 32
+  },
+  "call_relocations": 20,
+  "q4_run_static_control_sites": {
+    "q4_calls": 0,
+    "emit_record_calls": 1,
+    "activation_acquire": 1,
+    "weight_acquire": 1,
+    "activation_release": 1,
+    "weight_release": 1,
+    "record_acquire": 1,
+    "record_release": 1
+  },
+  "phase_static_control_sites": {
+    "qkv": {
+      "q4_calls": 3,
+      "emit_record_calls": 0,
+      "activation_acquire": 0,
+      "weight_acquire": 0,
+      "activation_release": 0,
+      "weight_release": 0,
+      "record_acquire": 0,
+      "record_release": 0
+    },
+    "o": {
+      "q4_calls": 1,
+      "emit_record_calls": 0,
+      "activation_acquire": 0,
+      "weight_acquire": 0,
+      "activation_release": 0,
+      "weight_release": 0,
+      "record_acquire": 0,
+      "record_release": 0
+    },
+    "upgate": {
+      "q4_calls": 1,
+      "emit_record_calls": 0,
+      "activation_acquire": 0,
+      "weight_acquire": 0,
+      "activation_release": 0,
+      "weight_release": 0,
+      "record_acquire": 0,
+      "record_release": 0
+    },
+    "down": {
+      "q4_calls": 1,
+      "emit_record_calls": 0,
+      "activation_acquire": 0,
+      "weight_acquire": 0,
+      "activation_release": 0,
+      "weight_release": 0,
+      "record_acquire": 0,
+      "record_release": 0
+    }
+  },
+  "phase_dynamic_control_counts": {
+    "qkv": {
+      "records": 12,
+      "chunks": 192,
+      "q4_calls": 192,
+      "emit_record_calls": 12,
+      "activation_acquire": 192,
+      "weight_acquire": 192,
+      "activation_release": 192,
+      "weight_release": 192,
+      "record_acquire": 12,
+      "record_release": 12
+    },
+    "o": {
+      "records": 8,
+      "chunks": 128,
+      "q4_calls": 128,
+      "emit_record_calls": 8,
+      "activation_acquire": 128,
+      "weight_acquire": 128,
+      "activation_release": 128,
+      "weight_release": 128,
+      "record_acquire": 8,
+      "record_release": 8
+    },
+    "upgate": {
+      "records": 48,
+      "chunks": 768,
+      "q4_calls": 768,
+      "emit_record_calls": 48,
+      "activation_acquire": 768,
+      "weight_acquire": 768,
+      "activation_release": 768,
+      "weight_release": 768,
+      "record_acquire": 48,
+      "record_release": 48
+    },
+    "down": {
+      "records": 8,
+      "chunks": 384,
+      "q4_calls": 384,
+      "emit_record_calls": 8,
+      "activation_acquire": 384,
+      "weight_acquire": 384,
+      "activation_release": 384,
+      "weight_release": 384,
+      "record_acquire": 8,
+      "record_release": 8
+    }
+  },
+  "total_dynamic_control_counts": {
+    "records": 76,
+    "chunks": 1472,
+    "q4_calls": 1472,
+    "emit_record_calls": 76,
+    "activation_acquire": 1472,
+    "weight_acquire": 1472,
+    "activation_release": 1472,
+    "weight_release": 1472,
+    "record_acquire": 76,
+    "record_release": 76
+  },
+  "qkv_static_control_sites": {
+    "q4_calls": 3,
+    "emit_record_calls": 0,
+    "activation_acquire": 0,
+    "weight_acquire": 0,
+    "activation_release": 0,
+    "weight_release": 0,
+    "record_acquire": 0,
+    "record_release": 0
+  },
+  "qkv_dynamic_control_counts": {
+    "records": 12,
+    "chunks": 192,
+    "q4_calls": 192,
+    "emit_record_calls": 12,
+    "activation_acquire": 192,
+    "weight_acquire": 192,
+    "activation_release": 192,
+    "weight_release": 192,
+    "record_acquire": 12,
+    "record_release": 12
+  }
+}

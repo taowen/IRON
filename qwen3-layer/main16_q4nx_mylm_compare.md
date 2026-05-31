@@ -57,7 +57,7 @@ xclbin packaging. The main16 core body itself is now a small wrapper that calls
 the linked C++ AIE core object:
 
 ```text
-func.call @q4nx_main16_full_scheduler(...)
+func.call @q4nx_main16_layer_scheduler(..., phase_limit)
 ```
 
 A fresh full-decode compile of
@@ -65,15 +65,14 @@ A fresh full-decode compile of
 
 | ELF | `.text` | core-entry refs | `jl` | `acq` | `rel` | `lc/ls/le` |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| current IRON `main_core_2_2.elf` | 6080 | 1 `q4nx_main16_full_scheduler` | 14 | 18 | 18 | 6 |
+| current IRON `main_core_2_2.elf` | linked core object | 1 `q4nx_main16_layer_scheduler(..., phase_limit)` + active `q4nx_chunk_accum_asm_zol` | active checker gate | active checker gate | active checker gate | active checker gate |
 | MyLM `c2r2.elf` | 14868 | raw dispatcher + 5 Q4 calls | 14 | 16 | 15 | 18 |
 
 So the current bottleneck is no longer the old MLIR-expanded per-chunk phase
 control. That failure mode existed and was useful to diagnose, but the active
-single-version path has already moved phase control into a linked C++ AIE core
-object.
-The remaining performance gap is the Q4NX microkernel shape inside
-`main_projection_q4nx_fast.o`.
+single-version path has already moved phase control into a linked C++/source-asm
+AIE core object. The remaining performance gap is the Q4NX microkernel shape
+inside `main_projection_q4nx_fast.o`.
 
 ## Supply Attribution
 
@@ -83,7 +82,7 @@ main16 is slow. A token31 stage-budget run measured:
 | Boundary | NPU time |
 | --- | ---: |
 | row1 weight stream, compute disabled | 8.717 ms |
-| main16 Q4NX compute, DMA0/DMA1 disabled | 13.649 ms |
+| main16 Q4NX compute, DMA0/DMA1 disabled | 18.158 ms |
 | c1r2 input RMSNorm replay | 1.876 ms |
 | QKV cache-write bridge | 7.963 ms |
 | attention -> O slice | 12.346 ms |
@@ -167,24 +166,26 @@ Current summary:
 
 | Range | Instruction lines | Op slots | Key ops |
 | --- | ---: | ---: | --- |
-| MyLM `0x1f0..0x1850` | 976 | 1560 | `vmac.f=264`, `vextbcst.16=256`, `vups.4x=64`, `vunpack=64` |
+| MyLM `0x1f0..0x1850` | 976 | 1560 | `vmac.f=264`, `vextbcst.16=256`, `vups.4x=64`, `vunpack=64`, `vconv.bf16.fp32=136`, `vst=0` |
 | MyLM `0x260..0x1850` | 963 | 1532 | same hot-loop shape |
 | MyLM `0x1870..0x1e80` | 264 | 393 | phase lock/control plus body call |
-| IRON active `q4nx_chunk_accum_fast` hot body | 716 | 1477 | `vmac.f=64`, `vextbcst.16=64`, `vextbcst.32=0`, `vunpack=64`, `vst=194`, `vlda=282` |
-| IRON source-asm group probe | 88 | 88 | `vmac.f=33`, `vextbcst.16=32`, `vunpack=8`, `vups.4x=8`, `vst=0` |
-| IRON `q4nx_chunk_accum_slice_i32_fast` | 2 | 2 | wrapper around the active single-version main16 Q4NX kernel |
+| IRON active `q4nx_chunk_accum_asm_zol` hot body | checker gate | checker gate | `vmac.f=64`, `vextbcst.16=64`, `vextbcst.32=0`, `vunpack=64`, `vups.2x=32`, `vlda=2`, `vldb=66`, `vst=2`, `vconv.bf16.fp32=160` |
+| Historical IRON source-asm group probe | 88 | 88 | `vmac.f=33`, `vextbcst.16=32`, `vunpack=8`, `vups.4x=8`, `vst=0`; kept in experiments, not active role object |
+| IRON `q4nx_chunk_accum_slice_i32_fast` | 2 | 2 | callable hot-body microbench wrapper; not used by the generated layer scheduler |
 
 This does not mean one MyLM call does the same dynamic work as one IRON helper
 call; the loop counters differ. The important evidence is structural: MyLM has
 a long raw scheduled loop with hundreds of vector MAC/broadcast slots in one
-body. The current production IRON kernel remains the exact per-dim-rounding
-Q4NX path, but it now uses signed native BF16 MAC with a 32-dim full unroll.
-That was the first production-safe move toward the MyLM instruction family:
-QKV compact, full-layer QKV prefix, attention-O, and full decode all passed.
-The remaining gap is not `vextbcst.16` selection anymore; it is the excessive
-`vlda/vst/vconv` traffic and lower MAC density versus the raw scheduled loop.
-The assembly work is therefore kept as the next replacement target until the
-full lane body is bit-compatible with the current Q4NX reference.
+body. The current production IRON kernel remains the exact per-dim-rounding Q4NX
+path, but the active hot body has moved from C++ AIE API code into generated
+source assembly. The generated `q4nx_main16_layer_scheduler` now owns the
+dispatcher, phase bodies, shared Q4 body, and compact record emit path. Its
+shared Q4 body inlines the instruction template instead of calling
+`q4nx_chunk_accum_asm_zol`; `tools/check_main16_asm_integration.py --strict`
+rejects the old C++ dataflow scheduler and the old QKV/QKVO/full scheduler
+variants. The callable `main16-q4nx-compute-perf` case is now only a hot-body
+microbench. Production scheduler evidence must come from `full-layer-qkv-prefix`
+and `qwen3-8b-decode-layer`.
 
 The newer semantic analyzer makes the MyLM loop count close from first
 principles, not just opcode frequency:
@@ -205,7 +206,127 @@ live and broadcasts every lane from the vector register while consuming packed
 int4 payload. The offset term is paid once per quant group via the group-sum
 scratch, not once per activation dimension as in the simpler C++ dequant loop.
 
-The corresponding Peano probe now reaches the same per-group shape:
+The group boundaries are not eight independent copies of a 33-MAC body. The
+corrected analyzer shows:
+
+```text
+group0:   vmac.f=28, vconv.bf16.fp32=16, vunpack=12, lda.s16=2
+group1-6: vmac.f=33, vconv.bf16.fp32=17, vunpack=8,  lda.s16=1
+group7:   vmac.f=38, vconv.bf16.fp32=18, vunpack=4,  lda.s16=0
+```
+
+This is the core performance lesson from the reverse engineering work: MyLM is
+a cross-group software pipeline with fill/drain, not a loop that simply repeats
+one independent "32 main MAC + 1 correction MAC" group. Any source-assembly
+replacement has to first reproduce the register/dataflow schedule, including
+the `vups.4x` and `vconv` chains, before opcode counts become meaningful.
+Exp104 turns this into a generated schedule artifact and records the register
+families that cross group boundaries (`acc1`, `acc4`, `vec0`, `vec8`, `vec9`,
+`vec10`, and pointer/scalar state).
+
+Exp105 then measures the local dependency gaps on real NPU:
+
+```text
+vextbcst.16 -> vmac.f         first passing gap = 1
+vbcst.16 -> vmac.f            first passing gap = 1
+vldb -> vextbcst.16 -> vmac.f first passing gap = 6
+vmac.f -> vst                 first passing gap = 5
+```
+
+So the main assembly problem is not simply "insert enough nops after
+`vextbcst.16`". The real schedule has to hide vector-load and storeback latency
+with useful dequant and accumulator work from other groups.
+
+Exp106 narrows the generator boundary further. The full loop is not eight
+unique groups and not eight copies of one group. It is:
+
+```text
+fill(group0)
+steady_template(group1) * 5
+pre_drain(group6)
+drain(group7)
+```
+
+Groups 1, 2, 3, 4, and 5 have identical instruction text and the same
+189-slot hash. Group6 differs from the steady template only at the tail: it
+replaces one nop with `mov r21, p3` and inserts `add.nc p3, r21, #-0x10`.
+That is the `p3` group-sum scratch rewind before the drain window. The steady
+template lane order is also non-linear:
+
+```text
+0, 1, 2, 3, 8, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15,
+16, 21, 17, 18, 24, 19, 20, 22, 23, 25, 26, 27, 28, 29, 30, 31
+```
+
+This gives the next implementation target: a small assembly generator with
+four explicit templates, not a per-group macro loop.
+
+Exp107 closes the loop on that claim: it regenerates the complete
+`0x260..0x1850` MyLM hot-loop instruction text from those four templates and
+gets an exact match:
+
+```text
+original_slots=1532
+generated_slots=1532
+exact_match=True
+vmac.f=264
+vextbcst.16=256
+vunpack=64
+vups.4x=64
+vconv.bf16.fp32=136
+vst=0
+```
+
+That is the first point where the reverse-engineered Q4NX body is genuinely
+"generator-shaped". Exp108 then checks the numerical-contract decision on real
+Qwen3 weights. Layer0/token31 with the synthetic hidden input stays within the
+current hidden_out `1e-2` gate (`max_abs=0.0078125`), but a real dumped
+layer35 hidden input does not: `full_hidden_out max_abs=44.0`,
+`>1e-2=4008`. Therefore the group-sum formula is not a silent drop-in for the
+current exact reference.
+
+Exp109 narrows that failure. The scaled-only form is wrong, but the stronger
+centered-dequant form is much closer:
+
+```text
+centered = bf16(bf16(q * scale) + zero) - zero
+result   = sum(centered * activation) + zero * sum(activation_group)
+```
+
+On the same layer35 hidden dump this reduces `full_hidden_out max_abs` from
+`44.0` to `0.0625`, with only `2` hidden values above `1e-2`. The residual is
+not the exp108 systematic miss; it is the floating-point contraction of
+32 separate `zero * activation_dim` products into one `zero * group_sum`
+correction. That explains why MyLM's hot loop has real `vadd/vsub/vconv`
+dataflow around the group-sum correction: the useful target is not
+`q*scale + zero_sum`, but a centered coefficient path plus a deliberate choice
+about zero-correction accumulation order.
+
+Exp110 then isolates that choice. Recomputing `centered+zero` before the MAC
+matches the current reference exactly on the layer35 dump
+(`full_hidden_out max_abs=0`), while both a contracted `zero*group_sum` and a
+split zero accumulator path still drift (`max_abs=0.125`, `>1e-2=10`). So the
+centered coefficient is not lossy; the parity boundary is whether zero enters
+the coefficient before the MAC or is added as a separate accumulator
+contribution.
+
+The next production work is to map the four-template schedule onto this
+centered-Q4NX numerical contract. If exact direct-reference parity is required,
+the generated body must recompose the dequant coefficient before each MAC. If
+we choose the MyLM-like `32 main MAC + 1 zero MAC` group shape, that is a
+separate numerical contract and needs multi-layer token validation.
+
+Exp111 converts this into dynamic instruction cost. The active exact body is
+not slow because it does too few or too many MACs: it has the expected `512`
+dynamic `vmac.f` per Q4NX chunk, while MyLM has `528` because of the 16
+group-correction MACs. The gap is coefficient construction and control:
+active exact pays `vconv.bf16.fp32=1280`, `vconv.fp32.bf16=768`,
+`vmul.f=512`, `crupsmode=128`, and `nop=3088`; MyLM's raw hot loop is
+`272`, `0`, `16`, `0`, and `216` respectively. So the next exact-parity
+target is a scheduled dequant/coefficient pipeline, not another MAC-count
+experiment.
+
+The historical Peano/source-shape probes can spell a middle-group-like fragment:
 
 ```text
 probe_native_q4_group_sum_correction_unroll32_signed:
@@ -214,11 +335,17 @@ probe_native_q4_group_sum_correction_unroll32_signed:
   vst=1
 ```
 
-That is exactly one quant group for one 16-row output lane:
-`32 q*scale*activation MACs + 1 offset*group_sum MAC`. It is a useful
-implementation target, but it is not production-equivalent yet because the
-current reference rounds `bf16(q * scale + offset)` per dimension, while the
-group-sum form moves the offset out of the per-dim rounding.
+That is useful only as a legal-instruction probe. It is not a sufficient
+kernel plan, because the real loop's first and last groups are fill/drain
+windows and the `vups/vconv/vmov` chains carry values across group boundaries.
+
+Semantically, the fragment corresponds to one middle quant group for one
+16-row output lane: `32 q*scale*activation MACs + 1 offset*group_sum MAC`.
+It is still not an implementation target by itself. It is not
+production-equivalent because the current reference rounds
+`bf16(q * scale + offset)` per dimension, while the group-sum form moves the
+offset out of the per-dim rounding; and it is not MyLM-equivalent because the
+real loop carries dequant/register state across group boundaries.
 
 An exact-rounding full-unroll probe was added to test whether we could keep
 the current `bf16(q * scale + offset)` contract while simply making the C++
@@ -270,10 +397,10 @@ Splitting a full group into eight noinline 4-lane kernels keeps the local
 kernels spill-free, but replaces one group with eight calls and loses hardware
 loop formation in the wrapper. The obvious attempt to reduce the call count
 does not work: 8-lane noinline already has `vst=20`, and 16-lane noinline has
-`vst=55`. The full chunk-lane exact body is worse than the current production
-wrapper's `vst=194`, so the exact path cannot be solved by more C++ template
-unrolling or small-function tiling. The source-assembly replacement has to own
-the exact rounding sequence and register allocation.
+`vst=55`. This is why the active path moved to source assembly: the exact path
+cannot be solved by more C++ template unrolling or small-function tiling. The
+source-assembly replacement now owns the exact rounding sequence and register
+allocation; its remaining problem is schedule density, not C++ spill count.
 
 The next chunk-level probes clarify the migration boundary:
 
@@ -301,53 +428,46 @@ group inventory we need.
 | IRON source-assembly group probe | 33 | 32 | 1 | 8 | 8 | 0 |
 
 The integration boundary is now proven in the production build path too. The
-active `main_projection_q4nx_fast.o` is still the only main16 role object, but
-`npu_build.py` now builds it from:
+active `main_projection_q4nx_fast.o` is still the only main16 role object, and
+`npu_build.py` builds it from:
 
 ```text
 main_projection_q4nx_fast.cc
 main_projection_q4nx_asm.s
 ```
 
-using `ld.lld -r`. The assembly companion now contains a generated
-MyLM-style group-shape probe and a generated callable exact-lane candidate
-(`q4nx_accum_lane_exact_body_shape`) that writes FP32 partial sums for the
-production `float accum` path. `tools/generate_main16_q4nx_asm.py --check`
-guards both source shapes before we wire the exact body into the C++ scheduler.
-`main16-q4nx-compute-perf --build-only` passed with this multi-source object,
-and the final linked core ELF confirmed the unreferenced probe was
-garbage-collected:
+using `ld.lld -r`. The assembly companion now contains only the production
+`q4nx_chunk_accum_asm_zol` body. The older MyLM-style group-shape probe and the
+callable exact-lane staging bodies were removed from the qwen3-layer role
+object; they now live only as experiment evidence. This matters because even
+unreferenced probes add one more implementation shape for humans to maintain,
+and final ELF garbage collection is not a substitute for keeping the active
+role object single-version.
 
-```text
-q4nx_accum_lane_asm_group_shape symbol = absent
-q4nx_accum_lane_exact_body_shape symbol = absent
-```
-
-The same case also ran on NPU after the change. The most recent run after
-restoring the production C++ lane and keeping assembly unreferenced was:
+The latest real-NPU run of the single active source-assembly path is:
 
 ```text
 main16-q4nx-compute-perf:
-  npu_time = 13649.4 us
+  npu_time = 18158.1 us
   done[0:8] = [1472, 1472, 1472, 1472, 1472, 1472, 1472, 1472]
-  tile_chunks_per_sec = 1725492.4
+  tile_chunks_per_sec = 1297050.5
 ```
 
 `tools/check_main16_asm_integration.py --strict` now checks the same invariant
 mechanically:
 
 ```text
-role_has_asm_group = true
 role_has_rejected_lane = false
-core_has_asm_group = false
-has_bad_symbol_jump = false
-asm group = 33 vmac.f, 32 vextbcst.16, 8 vunpack, 8 vups.4x, 0 vst
+role_has_old_cpp_wrapper = false
+role_has_production_asm = true
+core_has_production_asm = true
 production q4 = 64 vmac.f, 64 vextbcst.16, 0 vextbcst.32
+production q4 current = 66 vldb, 2 vlda, 2 vst, 32 vups.2x
 ```
 
-So production does not need a second main16 variant, unused assembly probes do
-not consume final program memory, and the exact numerical path now has a hard
-native-MAC disassembly gate. The callable assembly ABI has also been verified
+So production keeps one main16 implementation shape, and the exact numerical
+path now has a hard native-MAC disassembly gate. The callable assembly ABI has
+also been verified
 in the experiment tree: a C++ wrapper can call a source-assembly function with
 normal pointer arguments, and the combined relocatable object preserves the
 `R_AIE_1` relocation while the asm body contains `vldb=2`, `vmac.f=1`, and
@@ -366,7 +486,8 @@ native-MAC kernel gives:
 
 ```text
 qwen3-8b-qkv-compact-output:
-  payload_exact_word_mismatches=1
+  NPU time = 6571.9 us
+  payload_exact_word_mismatches=4
   payload_max_abs=0.000000477
   PASS
 
@@ -378,6 +499,58 @@ Therefore the next migration step is not an asm-to-C++ bridge and not the
 group-sum approximation; it is to write a callable numerical source-assembly
 lane body that preserves the current per-dim Q4NX rounding contract while
 keeping the existing C++ scheduler, locks, records, and generator ABI unchanged.
+
+The first production-layout callable attempt also narrowed the ABI problem. The
+exact lane candidate must use the real Q4NX chunk strides: packed lane data
+advances 0x100 bytes per 32-dim group, while scale, offset, and activation
+advance 0x40 bytes. It also has to preserve the scalar/pointer registers that
+Peano treats as callee-saved. Without saving `r10/r14/r15/p5`,
+`main16-q4nx-compute-perf` timed out because the C++ caller's loop state was
+corrupted. With those registers saved, the callable path completed but measured
+`21.486 ms`, slower than the old C++ active path (`13.637 ms`). The aligned-ZOL
+version is now the active production path and improves that first callable
+attempt to `18.158 ms`, but it is still slower than the old C++ path. This
+latest number includes group-level activation load reuse and a 6-nop handoff
+window; an attempted scale/offset register reuse failed the QKV oracle, and
+smaller call-state save sets timed out in the full scheduler context. A second
+attempt to make the asm body load/store the target accumulator directly with
+`vlda`/`vst` timed out before exp99 fixed the ZOL alignment issue.
+
+`experiments/98_aie2p_float_accum_inplace_asm` isolates that second boundary.
+The tiny design calls source assembly from a normal C++ wrapper, uses `vlda` to
+load an FP32 accumulator from tile-local memory, updates it with `vmac.f`, writes
+it back with `vst`, and returns through the C ABI. It passes on real NPU
+(`533.7 us`, output is sixteen FP32 `1.0` values). That means the production
+timeout is not explained by bare in-place accumulator load/store; the risk is in
+the full Q4NX asm body's register preservation, instruction scheduling, live
+ranges, or buffer lifetime. The active path therefore stays on the single
+fastest known C++ native-MAC kernel; the source-assembly body remains an
+unreferenced production-layout candidate until the whole hot body can beat the
+active path.
+
+`experiments/99_aie2p_q4_direct_target_stages` narrows that risk further. One
+direct-target exact 32-dim group passes on real NPU (`exact-group1`, `dst=480`).
+Two groups inside a normal source-level `jnz` loop time out (`exact-group2`).
+The same two groups manually unrolled pass (`exact-group2-unrolled`, `dst=960`).
+Four groups manually unrolled also pass (`exact-group4-unrolled`, `dst=1920`).
+The eight-group `jnz` loop times out, and the eight-group manual unroll fails at
+CDO generation with program-memory overflow (`.text` about 20.6 KiB). Reusing a
+four-group body twice is still unsafe: a Peano C++ wrapper times out, while a
+pure asm wrapper returns but computes three four-group contributions
+(`dst=5760`) instead of two (`dst=3840`).
+
+The important new result is the hardware-loop root cause. A minimal source-asm
+`lc/ls/le` smoke with unaligned labels runs only once (`dst=1` instead of `2`).
+Changing `mova lc` to Peano-style `add.nc lc, ...`, adding a setup gap, or
+trying `lc=3` does not fix it. LLVM-AIE's ZOL lowering requires 16-byte
+bundle-aligned `ls/le` and at least 112 bytes from setup to loop-end; MyLM's
+`ls=0x260/le=0x1850` also satisfy this. After adding `.p2align 4` around the
+source-asm loop labels, the smoke passes, two exact Q4 groups pass
+(`exact-group2-hwloop-addnc-aligned`, `dst=960`), and the full eight-group lane
+passes (`exact-group8-hwloop-addnc-aligned`, `dst=3840`, core `.text=3008`).
+The final core ELF resolves the `jnz` target correctly, so the remaining unsafe
+path is normal branch/call reuse; aligned source-assembly ZOL is now the viable
+production candidate.
 
 The historical full-core control shape was an even stronger root-cause signal
 before the migration to a linked-core phase program:
@@ -764,7 +937,7 @@ The practical conclusion is:
 1. Keep MLIR-AIE for topology, BD/lock, stream switch, runtime sequence, and
    packaging.
 2. Do not drop the unmodified MyLM whole-core ELF into IRON and expect it to
-   behave like `q4nx_main16_full_scheduler`.
+   behave like `q4nx_main16_layer_scheduler`.
 3. The shortest runnable path is to preserve IRON's linked-core kernel/bridge
    ABI and replace only the Q4NX microkernel body. The more aggressive path is
    to adopt MyLM's whole-core AIE program, but then the c1r2 2049-dword replay
@@ -778,16 +951,16 @@ Current IRON stage-budget measurements on real NPU:
 | Slice | Time |
 | --- | ---: |
 | row1 weight stream | 8.357 ms, 13.438 GiB/s |
-| main16 Q4NX compute-only, active direct-emit ABI | 14.249 ms |
+| main16 Q4NX compute-only, active source-asm ABI | 18.158 ms |
 | attention-O bf16 slice, active main16 | 12.194 ms |
-| full single layer, active main16 after record-granular compact and source-side down replay | 25.067 ms |
+| full single layer, active main16 after source-asm handoff optimization | 28.479 ms |
 
 The local MyLM full-model benchmark probe measured about `4.93 tok/s` for
 Qwen3-8B at 1k/8k context on this machine, or roughly `203 ms/token`. Spread
 over 36 layers, that is about `5.6 ms/layer` including non-layer overhead.
 The published MyLM table reports `11.9 tok/s` at 1k and `10.4 tok/s` at 8k,
 which corresponds to an even tighter layer budget. Either way, the current IRON
-single-layer `25.067 ms` result is still about 4.5x slower than the local MyLM
+single-layer `28.479 ms` result is still about 5x slower than the local MyLM
 probe and much farther from the published number.
 
 The row1 slice proves the full-layer weight ingress/fanout path is not the
@@ -812,10 +985,9 @@ main16 C++ implementation: the fastest verified full-decode object,
 One generator-level phase-body simplification is active: records are emitted
 directly from `accum`, and the old `q4nx_output` scratch plus block-accumulator
 variant were removed. After record-granular compact and c6r1 source-side down
-replay, token31 full decode runs at `25.067 ms`; this is useful raw-core
-preparation, but it confirms the
-larger point: the remaining gap is the scheduled main16 core body, not a spare
-record-copy helper.
+replay, the current source-asm path runs token31 full decode at `28.479 ms`.
+This is useful raw-core preparation, but it confirms the larger point: the
+remaining gap is the scheduled main16 core body, not a spare record-copy helper.
 A separate attempt to remove the defensive partial-row/bounds branches from the
 C++ helper itself was not kept: it made a full-layer main16 ELF grow to
 `.text = 0x4760`, which overflows AIE program memory.
@@ -828,16 +1000,20 @@ full-layer-derived path.
 
 ## Conclusion
 
-The active IRON main16 role is now single-version: compute, fill, flush, and
-record emit live in `main_projection_q4nx_fast.cc`. The old mixed C++ projection
-object was removed from the active generator path because linking both old emit
-and fast compute consumed too much main16 program memory in full-layer slices.
-The dataflow principle is the same as MyLM; the difference is that MyLM lowers
-the same ABI into raw scheduled core bodies, while IRON still surrounds an AIE
-C++ role kernel with generated MLIR phase control.
+The active IRON main16 role is now a generated linked role program:
+`q4nx_main16_layer_scheduler` dispatches Q/K/V/O/upgate/down phase bodies, those
+phase bodies configure shared tile-local control words, and the shared Q4 body
+emits IRON compact headers 10..15. `main_projection_q4nx_fast.cc` still carries
+small callable helpers for the hot-body microbench, but the production
+full-layer path no longer expands a C++ chunk loop or calls
+`q4nx_chunk_accum_slice_i32_fast`. The dataflow principle is the same as MyLM;
+the remaining difference is that MyLM lowers the same ABI into a raw scheduled
+whole-core body, while IRON currently links a generated source-assembly role
+object into the MLIR-AIE core.
 
-The next main16 experiment should be a raw or generated fixed-schedule Q4NX
-microkernel with the existing numerical contract and ABI:
+The next main16 experiment should keep this single object and further compress
+the generated Q4NX source-assembly microkernel under the existing numerical
+contract and ABI:
 
 ```text
 DMA0 activation chunk: 128 dwords
@@ -845,12 +1021,15 @@ DMA1 Q4NX weight chunk: 1280 dwords
 output compact record: 17 dwords
 ```
 
-`tools/check_main16_program_shape.py` is now the structural gate for that
-experiment. It treats the extracted MyLM `c2r2` raw program as the positive
-example (`jl=14`, `acq=16`, `rel=15`, `mylm_q4_calls_to_0x1f0=5`) and rejects
-the current generated IRON full core (`jl=157`, `acq=250`, `rel=250`, plus C++
-Q4 helper symbol references). A candidate replacement main16 ELF must pass this
-shape check before it is worth packaging and running full-layer numeric gates.
+`tools/check_main16_asm_integration.py --strict` is now the active structural
+gate for this source-assembly route. It verifies that the generator and checked
+in asm agree, the final core ELF contains `q4nx_chunk_accum_asm_zol`, the old
+C++ hot-body wrapper is absent, and the production body still has
+`vmac.f/vextbcst.16/ZOL` while avoiding `vextbcst.32`. If we later switch from
+linked scheduler plus source-asm hot body to a whole-core replacement ELF, then
+`tools/check_main16_program_shape.py` becomes the right gate again: it treats
+the extracted MyLM `c2r2` raw program as the positive example and checks the
+raw dispatcher shape before packaging and running numeric gates.
 
 The latest toolchain probe narrows the implementation route. Peano can generate
 AIE hardware loops when phase control lives in a linked C++ AIE core object:
@@ -871,28 +1050,29 @@ row1 packs 17+16+16+16 into 65-dword column records, and c1r1 packs
 
 So the current blocker is not "LLVM-AIE cannot emit a hardware loop", and it is
 not the old phase-sized compact bridge. The active main16 phase control already
-lives in a linked C++ AIE core entry point. The remaining gap is that the C++
-Q4NX microkernel generated from `aie::vector` plus native MAC still is not
-MyLM's raw scheduled microkernel: it has `vextbcst.16`, but far too much
-load/store and conversion traffic. Keep MLIR-AIE for topology and packaging,
-and focus the next performance work on replacing the linked Q4NX microkernel
-with a source-assembly lane body that preserves the exact production Q4NX
+lives in a linked C++ AIE core entry point. The remaining gap is that the active
+source-assembly Q4NX microkernel still is not MyLM's raw scheduled
+microkernel: it has `vextbcst.16`, but far too much conversion, dequant, and
+call-state traffic. Keep MLIR-AIE for topology and packaging, and focus the
+next performance work on shortening this linked Q4NX source-assembly lane body
+while preserving the exact production Q4NX
 rounding contract.
 
 The source-assembly path is now numerically proven on a real-NPU Q4NX lane
-boundary, not only as a shape probe. `run_asm_npu_smoke.py` calls a
-hand-written full 8-group exact Q4NX lane body from an AIE core, reads packed
-uint4/scale/offset/activation from DMA-filled local memory, uses
-`vextbcst.16 + vmac.f`, stores BF16 accumulator output, and matches the BF16
-reference for all 8 groups / 256 input dims in one 16-row lane. This also
-resolved several source-assembly traps: a full static lane unroll overflows
-program memory, `add #0x40` encodes as `-64`, a large source-level hardware
-loop did not execute as intended, and loop-carried `dj0` offsets left
-offset/activation stuck on group0. The passing version uses a counted branch
-loop and pointer registers for scale/offset/activation. This does not complete
-the production lane. It removes the ABI/runtime doubt for source assembly and
-leaves the real work as wiring this scheduled exact body into the production
-main16 scheduler and weight/activation ABI.
+boundary, not only as a shape probe. `run_asm_npu_smoke.py` first proved a
+hand-written full 8-group exact Q4NX lane body could be called from an AIE core
+and match the BF16 reference for all 8 groups / 256 input dims in one 16-row
+lane. `experiments/99_aie2p_q4_direct_target_stages` then resolved the larger
+production-shape issue: full static lane unroll overflows program memory, normal
+source-level `jnz` around the large exact body times out, and unaligned
+source-asm `lc/ls/le` silently runs once. The passing production candidate uses
+pointer registers for scale/offset/activation and a bundle-aligned
+source-assembly ZOL. `exact-group8-hwloop-addnc-aligned` matches the exact
+accumulator value (`dst=3840`) with a small `.text=3008` core. This does not
+complete the performance work, but it removed the hardware-loop and program-size
+doubt. That body is now wired into the production main16 scheduler and
+weight/activation ABI; the next work is to shorten and reschedule it until the
+real NPU gate improves, not merely passes.
 
 ## AIEVec/XLLVM Probe
 
@@ -931,7 +1111,7 @@ practical next steps:
    ops.
 
 This makes AIEVec a useful intermediate route, not a direct drop-in solution
-for the current `q4nx_chunk_accum_fast` replacement.
+for the current `q4nx_chunk_accum_asm_zol` replacement.
 
 ## MLIR-AIE Source Audit
 
@@ -1022,5 +1202,192 @@ This is the concrete performance target, but not yet the active numerical
 contract. IRON's current reference still rounds `bf16(q * scale + offset)` per
 dimension. A replacement kernel must either preserve that rounding exactly or
 change the layer reference and prove end-to-end decode quality; the failed
-group-sum production attempt shows that the algebraic shortcut is not a free
-drop-in replacement.
+scaled-only group-sum production attempt shows that shortcut is not a free
+drop-in replacement. Exp109 shows a better numerical target:
+
+```text
+centered = bf16(bf16(q * scale) + offset) - offset
+result   = sum(centered * activation) + offset * sum(activation_group)
+```
+
+This centered form explains why a fast body can still contain `vadd/vsub/vconv`
+around the group-sum correction. On real layer35 input it removes the large
+systematic error, but a single contracted offset/group-sum MAC is still not
+bit-identical to the direct per-dim accumulation order. Exp110 further shows
+that split per-dim offset MACs are also not enough if they are added as
+separate accumulator contributions; exact parity is restored only when
+`centered + offset` is recomposed before the MAC. Exp111 confirms the active
+exact body already has the right dynamic MAC count; the excessive cost is the
+unscheduled coefficient construction and repeated conversion/control setup.
+Exp112 makes the cost floor explicit: even an ideal exact body still needs
+`512` vector multiplies and `1536` conversion operations per chunk, while the
+MyLM-like group-correction contract needs `16` vector multiplies and `272`
+conversions. That means exact assembly can improve materially, but MyLM-like
+speed requires either a different numerical contract or a still-unknown fused
+rounding path. Exp113 then traces MyLM `vmac.f` operands in the canonical
+steady group: `6/66` vector operands and `2/33` accumulator sources are carried
+across the group boundary. Exp114 refines that trace to half-register cells:
+`25/66` group1 vector operands are mixed-half values and `9/66` have
+cross-group cells. The next useful assembly artifact is therefore a scheduled
+operand graph with explicit half-register fill/steady/pre-drain/drain state,
+not a self-contained 33-MAC macro. The remaining decoder gap is the
+scheduled operand mapping through `vmac.f #0x33c`: exp102 already validates the
+primitive `#0x33c` lane model on real NPU, while exp114 shows that MyLM often
+feeds that MAC with mixed-half `xN` values assembled by prior `vmov/vconv/vext`
+slots. Exp115 turns this into a generator-shaped artifact: `fill -> steady` has
+23 incoming data cells, and the steady-to-steady data-cell signature is stable
+for groups `2..6` (`5121c8604a8461c4`). This gives the next assembly generator
+a concrete boundary-state contract rather than a Markdown-only reverse note.
+Exp116 verifies that boundary by generating a graph-annotated steady assembly
+include from the JSON: stripping comments recovers MyLM group1 exactly
+(`189` slots, `33` `vmac.f`, zero missing graph records). Exp117 extends the
+same approach to the complete hot loop: `fill + steady*5 + pre_drain + drain`
+exact-matches MyLM `0x260..0x1850` (`1532` slots, identical hash) while
+annotating all `165` steady-section `vmac.f` instructions from the graph.
+Exp118 converts that into a full liveness table: every group boundary carries
+the same `27` data cells plus `12` pointer/scalar cells. This is the clearest
+current evidence that the fast body is a fixed register-residency software
+pipeline. Exp119 then extends the operand graph to all `264` `vmac.f` slots:
+the group MAC counts are `28,33,33,33,33,33,33,38`, group1 has a distinct
+fill-to-steady operand signature, and groups `2..5` share the same
+steady-to-steady operand signature. Exp120 merges those two artifacts into the
+first sectionized generator contract: `fill`, `fill_to_steady`,
+`steady_to_steady`, `pre_drain`, and `drain` macros re-expand to the exact
+original `1532` slots and preserve `264` group MACs. Exp121 uses that contract
+as a numerical branch gate: `exact_recompose_coeff` is exact in nominal and
+stress synthetic scenarios, while the MyLM-like group correction keeps the
+`264/528` MAC shape but has stress `>1e-2` mismatches. The production-safe next
+generator should therefore preserve the exp120 live-state sections while
+targeting an exact 32-MAC/group body, unless a later real token gate explicitly
+accepts the MyLM-like numerical contract. Exp122 makes that rewrite mechanical:
+remove one zero-correction MAC per logical group, changing the section MAC shape
+from `28,33,33,33,33,33,33,38` to `27,32,32,32,32,32,32,37`, for `256` static
+MACs and `512` dynamic MACs.
+
+Exp123 deliberately pauses before modifying production assembly and builds a
+slot-level semantics table for MyLM group0 (`0x260..0x52a`). The fill section
+has `192` instruction slots, `28` `vmac.f`, `32` `vextbcst.16`, `8` `vups.4x`,
+`16` `vconv.bf16.fp32`, and no `vst`. Its boundary1 state is not a closed
+per-group result: group0 produces `23` data cells plus `4` control cells that
+remain live into group1, while `4` data cells and `8` control cells are carried
+from entry. This makes the next generator requirement sharper: preserve the
+fill-to-steady live state and only then substitute the exact 32-MAC/group
+arithmetic body.
+
+Exp124 then traces group2 with the group0-1 live state already applied. This
+is the first true steady-to-steady section: `189` slots, `33` `vmac.f`, `32`
+`vextbcst.16`, `8` `vups.4x`, `17` `vconv.bf16.fp32`, and no `vst`. Boundary2
+and boundary3 have the same `27` data cells plus `12` control cells and the
+same relative producer classes (`12` entry, `3` persistent group0, `24`
+previous-group). The transition changes `24` producers (`23` data and `1`
+control) from group1 to group2. This is the reusable steady contract the exact
+rewrite must preserve.
+
+Exp125 quantifies why the helper boundary is expensive, but the first direct
+nocall implementation is not a production path. The current C++ scheduler
+performs `192` Q4NX helper calls per main tile for Q/K/V and `1472` per tile
+for the full layer. Across main16 that is `3072` QKV helper calls and `23552`
+full-layer helper calls. Each helper call executes `13` SAVE slots, `13`
+RESTORE slots, two accumulator loads, and two accumulator stores. SAVE/RESTORE
+alone therefore costs `4992` QKV or `38272` full-layer instruction slots per
+tile.
+
+The tested linked `q4nx_main16_qkv_scheduler_nocall` preserved the old C ABI,
+topology, BD, and lock IDs, and static disassembly confirmed that it did not
+call or jump to `q4nx_chunk_accum_asm_zol`. It still timed out on the
+`full-layer-qkv-prefix` NPU gate, while the old C++ scheduler passes on the
+same dataflow. That narrows the failure to hand-written scheduler
+control/timing rather than row1/c1r2/c1r3 connectivity. The active path is
+therefore back to the known-good C++ scheduler plus generated source-assembly
+Q4NX hot body, but the old QKV/QKVO/full scheduler symbols have been collapsed
+into one `q4nx_main16_layer_scheduler(..., phase_limit)` entry. QKV prefix,
+attention-O, and full layer now differ only by `phase_limit=3/4/7`. A future
+nocall attempt needs progress counters or a Peano-shaped whole scheduler before
+it can replace the active path.
+
+The single-entry refactor has passed the first real gate: `full-layer-qkv-prefix
+token31` runs on NPU and writes current K/V correctly with `phase_limit=3`.
+The full decode gate also still passes with `phase_limit=7`; token31 measured
+`28.479 ms` and `final_hidden_out max_abs=0.0078125` with zero mismatches.
+
+Exp127 also now has the return-address contract required for a real generated
+candidate. The earlier scaffold was compileable but unsafe: nested `jl` calls
+would overwrite the caller's `lr` across entry, dispatcher, phase bodies,
+shared Q4 body, and record emitter. The generator now emits a legal 64-byte
+`lr` frame for every non-leaf generated function and checks that the record
+emitter remains a leaf.
+
+Exp126 turns the replacement target into a whole-main16 contract. The next
+active candidate should be one generated role program with a shared Q4 body,
+Q/K/V/O/up/gate/down phase bodies, and a dispatcher. It should not expose a
+second QKV-only scheduler mode. The first replacement must keep IRON compact
+headers `10..15` at the row1/c1r1 boundary; MyLM's `0x1/0x4/0x8` headers are
+evidence for the raw dispatcher, but the current IRON downstream routing is not
+compatible with them as-is.
+
+Exp127 now makes that target concrete without touching the active path. It
+generates a compileable scaffold with stable symbols for the entry,
+dispatcher, shared Q4 body, compact record emitter, and Q/K/V/O/upgate/down
+phase bodies. The manifest fixes the first linked replacement ABI to the
+current MLIR call convention: `p0..p5` carry weight, activation, and record
+ping-pong buffers, while `r0/r1/r2/r3` carry group, row, num_rows, and the
+exclusive phase limit. It also
+records the core lock contract (`48..53`), the IRON record header formulas,
+and the full dynamic schedule: `1472` Q4 body invocations and `76` compact
+records per main tile. The dispatcher uses the same phase-limit shape as the
+active `q4nx_main16_layer_scheduler`: `3=qkv`, `4=qkvo`, `6=upgate`, `7=full`.
+The record emitter is no longer a pure comment: it
+writes the real IRON header, converts the 32-lane FP32 accumulator into the
+16-dword BF16 record payload, and clears that accumulator. It also has a
+generator check that prevents the emitter from touching caller phase-loop state
+registers such as `r11/r12/r16`, because those registers are needed after the
+emitter returns. `r27` is reserved as the `sel.eqz` predicate because the
+assembler rejected low-register predicates; `r29` is reserved as the zero
+insert index because source assembly accepts `vinsert.32 ..., r29, ...` while
+rejecting the disassembler's printed `#0` form.
+
+The phase bodies now only configure header-run registers and call the shared Q4
+run body once per header run: 3 calls for Q/K/V, then one call each for O,
+upgate, and down. The manifest checks `6` static phase-to-Q4 calls for `1472`
+dynamic chunk executions. The shared Q4 run body owns the record loop, chunk
+loop, DMA lock protocol, ping/pong selection, exact chunk body execution, and
+record emission. Its exact chunk body is emitted from the same
+`qwen3-layer/tools/main16_q4nx_asm_lib.py` source template as the active
+`q4nx_chunk_accum_asm_zol` body, so exp127 no longer carries a second Q4NX
+hot-body copy. The embedded chunk body uses the no-save form (`64 vmac.f`, `64
+vextbcst.16`, `2 vst`, zero save/restore slots). The run body rematerializes
+`r15=1` before parity/lock-release uses and `r14=-1` before acquire uses, and
+keeps persistent buffer pointers in general registers (`r19`, `r20`, `r21`,
+`r22`, `r26`, `r28`, and `r30`) so the exact chunk body can clobber pointer
+registers. The remaining whole-program gap is replacing the current exact
+dequant body with a MyLM-density scheduled body before this scaffold can
+replace `q4nx_main16_layer_scheduler`.
+
+## Current Exact Body Constraints
+
+MyLM hoists the Q4NX scalar constants and control setup at the raw hot-loop
+entry. In the active IRON `q4nx_chunk_accum_asm_zol` external-call body that is
+not currently valid.
+
+The tested hoist variants were:
+
+- move `0x4b01`, `0x3c`, `0x33c`, zero, `crupsmode`, and `s0` to function
+  entry;
+- keep only `crupsmode/s0` at function entry;
+- reduce `Q4_HANDOFF` from six `nop` instructions to four.
+
+All three variants compiled and ran `main16-q4nx-compute-perf`, but failed the
+real `qwen3-8b-qkv-compact-output` numerical gate. The scalar-hoist variants
+produced full payload mismatch; the shorter handoff produced smaller but still
+global mismatch. The current exact body therefore intentionally keeps:
+
+```text
+#19201 / #60 / #828 / crupsmode / s0: 16 occurrences per chunk body
+Q4_HANDOFF: 6 nop instructions before vmov bmll1, bmll0
+```
+
+`check_main16_asm_integration.py --strict` now checks these counts explicitly.
+This does not mean MyLM needs these repeated setup instructions. It means our
+current external-call exact-rounding body has local scheduling and control-state
+dependencies that the MyLM raw dispatcher avoids with a different fixed
+register plan and instruction schedule.

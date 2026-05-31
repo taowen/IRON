@@ -1,0 +1,87 @@
+{
+  "sections": [
+    {
+      "name": "fill",
+      "macro": "Q4NX_EXACT_FILL",
+      "groups": [
+        0
+      ],
+      "template_group": 0,
+      "source_macs_per_group": 28,
+      "exact_macs_per_group": 27,
+      "removed_zero_macs_per_group": 1,
+      "live_in_boundary": null,
+      "live_out_boundary": 1
+    },
+    {
+      "name": "fill_to_steady",
+      "macro": "Q4NX_EXACT_FILL_TO_STEADY",
+      "groups": [
+        1
+      ],
+      "template_group": 1,
+      "source_macs_per_group": 33,
+      "exact_macs_per_group": 32,
+      "removed_zero_macs_per_group": 1,
+      "live_in_boundary": 1,
+      "live_out_boundary": 2
+    },
+    {
+      "name": "steady_to_steady",
+      "macro": "Q4NX_EXACT_STEADY_TO_STEADY",
+      "groups": [
+        2,
+        3,
+        4,
+        5
+      ],
+      "template_group": 2,
+      "source_macs_per_group": 33,
+      "exact_macs_per_group": 32,
+      "removed_zero_macs_per_group": 1,
+      "live_in_boundary": 2,
+      "live_out_boundary": 6
+    },
+    {
+      "name": "pre_drain",
+      "macro": "Q4NX_EXACT_PRE_DRAIN",
+      "groups": [
+        6
+      ],
+      "template_group": 6,
+      "source_macs_per_group": 33,
+      "exact_macs_per_group": 32,
+      "removed_zero_macs_per_group": 1,
+      "live_in_boundary": 6,
+      "live_out_boundary": 7
+    },
+    {
+      "name": "drain",
+      "macro": "Q4NX_EXACT_DRAIN",
+      "groups": [
+        7
+      ],
+      "template_group": 7,
+      "source_macs_per_group": 38,
+      "exact_macs_per_group": 37,
+      "removed_zero_macs_per_group": 1,
+      "live_in_boundary": 7,
+      "live_out_boundary": null
+    }
+  ],
+  "numeric_gate": {
+    "exact_max_abs": 0.0,
+    "exact_mismatches_1e_2": 0,
+    "mylm_stress_max_abs": 0.015625,
+    "mylm_stress_mismatches_1e_2": 16
+  },
+  "checks": {
+    "sections": 5,
+    "source_static_macs": 264,
+    "exact_static_macs": 256,
+    "removed_zero_macs": 8,
+    "exact_dynamic_macs": 512,
+    "exact_gate_passes": true,
+    "mylm_stress_gate_passes": false
+  }
+}

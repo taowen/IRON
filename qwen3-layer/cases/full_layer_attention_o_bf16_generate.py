@@ -383,7 +383,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
     func.func private @qwen3_attention_bf16_init_accum(memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
     func.func private @qwen3_attention_bf16_accum_block(memref<{V_WINDOW_DWORDS}xi32>, memref<{SCALAR_DWORDS + WEIGHT_DWORDS}xi32>, memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, i32, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
     func.func private @qwen3_attention_bf16_finish_accum(memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, memref<{ATTENTION_OUTPUT_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
-    func.func private @q4nx_main16_qkvo_scheduler(memref<{CHUNK_BF16}xbf16>, memref<{CHUNK_BF16}xbf16>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @{full.MAIN16_LAYER_SCHEDULER}(memref<{CHUNK_BF16}xbf16>, memref<{CHUNK_BF16}xbf16>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
 
 {chr(10).join(blocks)}
 {_runtime_sequence(schedule)}
@@ -403,7 +403,7 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         "full_c1r2_write_o_block",
         "qwen3_attention_bf16_make_carrier_masked",
         "qwen3_attention_bf16_finish_accum",
-        "q4nx_main16_qkvo_scheduler",
+        full.MAIN16_LAYER_SCHEDULER,
         f"aie.packet_flow({full.CURRENT_PACKET_K})",
         f"aie.packet_flow({full.CURRENT_PACKET_V})",
         f"aie.packet_flow({PACKET_ID_ATTENTION})",
@@ -467,7 +467,8 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     errors.extend(require_count(CASE_NAME, "qwen3_attention_bf16_accum_block", mlir.count("qwen3_attention_bf16_accum_block"), 5))
     errors.extend(require_count(CASE_NAME, "qwen3_attention_bf16_finish_accum", mlir.count("qwen3_attention_bf16_finish_accum"), 5))
     main_tile_count = len(MAIN_COLUMNS) * len(MAIN_ROWS)
-    errors.extend(require_count(CASE_NAME, "q4nx main16 qkvo scheduler calls", mlir.count("func.call @q4nx_main16_qkvo_scheduler"), main_tile_count))
+    errors.extend(require_count(CASE_NAME, "q4nx main16 layer scheduler calls", mlir.count(f"func.call @{full.MAIN16_LAYER_SCHEDULER}"), main_tile_count))
+    errors.extend(require_count(CASE_NAME, "main16 qkvo phase limit constants", mlir.count(f"%main16_phase_limit_i32 = arith.constant {full.MAIN16_PHASE_LIMIT_QKVO} : i32"), main_tile_count))
     errors.extend(require_count(CASE_NAME, "weight arg2 address patches", mlir.count("arg_idx = 2 : i32"), 18))
     errors.extend(require_count(CASE_NAME, "output arg3 address patch", mlir.count("arg_idx = 3 : i32"), 1))
     errors.extend(require_count(CASE_NAME, "hidden arg4 address patch", mlir.count("arg_idx = 4 : i32"), 1))

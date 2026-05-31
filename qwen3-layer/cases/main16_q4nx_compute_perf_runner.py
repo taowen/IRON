@@ -53,7 +53,8 @@ def check_only(
         for error in errors:
             print(f"  MAIN16 Q4NX PERF FAIL: {error}")
         return False
-    print("  PASS: main16 Q4NX compute perf MLIR isolates the projection kernel")
+    print("  PASS: main16 Q4NX hot-body perf MLIR isolates the callable Q4NX body")
+    print("  note=this is a hot-body microbench, not the generated layer scheduler path")
     print(f"  chunks_per_tile={FULL_LAYER_TOTAL_WEIGHT_CHUNKS}")
     print(f"  main16_tiles={generate.MAIN16_TILES}")
     print(f"  total_tile_chunks={TOTAL_TILE_CHUNKS}")
@@ -97,7 +98,8 @@ def run(
     print(f"qwen3-layer: {CASE_NAME}")
     print("=" * 78)
     print(f"  main16_kernel={generate.MAIN16_KERNEL_OBJECT}")
-    print("  route=main16 core -> shim done output")
+    print("  route=main16 core callable Q4NX hot body -> shim done output")
+    print("  scope=hot-body microbench; production scheduler evidence comes from full-layer-qkv-prefix/full decode")
     print("  DMA=disabled for activation/weight; each tile reuses one local Q4NX chunk")
     print(f"  chunks_per_tile={FULL_LAYER_TOTAL_WEIGHT_CHUNKS}")
     print(f"  total_tile_chunks={TOTAL_TILE_CHUNKS}")

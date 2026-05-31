@@ -226,7 +226,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
     func.func private @full_c1r2_add_o_compact_to_residual(memref<{HIDDEN_DWORDS}xi32>, memref<{full.COMPACT_PACKET_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
     func.func private @full_c1r2_make_post_norm_payload(memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
     func.func private @full_c1r2_write_down_block(memref<{HIDDEN_DWORDS}xi32>, memref<{full.COMPACT_PACKET_DWORDS}xi32>, memref<{OUTPUT_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
-    func.func private @q4nx_main16_qkv_scheduler(memref<{CHUNK_BF16}xbf16>, memref<{CHUNK_BF16}xbf16>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @{full.MAIN16_LAYER_SCHEDULER}(memref<{CHUNK_BF16}xbf16>, memref<{CHUNK_BF16}xbf16>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
 
 {chr(10).join(blocks)}
 {_runtime_sequence(schedule)}
@@ -244,7 +244,7 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         "qwen3_postprocess_q4nx_body_payload",
         "full_c1r2_make_input_norm_payload",
         "full_c1r2_add_o_compact_to_residual",
-        "q4nx_main16_qkv_scheduler",
+        full.MAIN16_LAYER_SCHEDULER,
         f"aie.packet_flow({full.CURRENT_PACKET_K})",
         f"aie.packet_flow({full.CURRENT_PACKET_V})",
         f"pkt_id = {full.CURRENT_PACKET_K}",
@@ -289,7 +289,8 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     errors.extend(require_count(CASE_NAME, "qwen3 compact record absorb", mlir.count("qwen3_postprocess_absorb_qkv_payload_record"), 2))
     errors.extend(require_count(CASE_NAME, "qwen3 q4nx body postprocess", mlir.count("qwen3_postprocess_q4nx_body_payload"), 2))
     main_tile_count = len(MAIN_COLUMNS) * len(MAIN_ROWS)
-    errors.extend(require_count(CASE_NAME, "q4nx qkv scheduler calls", mlir.count("func.call @q4nx_main16_qkv_scheduler"), main_tile_count))
+    errors.extend(require_count(CASE_NAME, "q4nx main16 layer scheduler calls", mlir.count(f"func.call @{full.MAIN16_LAYER_SCHEDULER}"), main_tile_count))
+    errors.extend(require_count(CASE_NAME, "main16 qkv phase limit constants", mlir.count(f"%main16_phase_limit_i32 = arith.constant {full.MAIN16_PHASE_LIMIT_QKV} : i32"), main_tile_count))
     errors.extend(require_count(CASE_NAME, "old q4nx q emit calls", mlir.count("func.call @q4nx_emit_q_accum_body_record"), 0))
     errors.extend(require_count(CASE_NAME, "old q4nx k emit calls", mlir.count("func.call @q4nx_emit_k_accum_body_record"), 0))
     errors.extend(require_count(CASE_NAME, "old q4nx v emit calls", mlir.count("func.call @q4nx_emit_v_accum_body_record"), 0))

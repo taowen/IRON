@@ -1,0 +1,553 @@
+{
+  "active": {
+    "has_q4": true,
+    "has_layer_scheduler": true,
+    "has_rejected_nocall": false,
+    "static_helper_relocations": 7,
+    "q4_counts": {
+      "vmac.f": 64,
+      "vextbcst.16": 64,
+      "vups.4x": 0,
+      "vups.2x": 32,
+      "vunpack": 64,
+      "vmul.f": 64,
+      "vconv.bf16.fp32": 160,
+      "vlda": 2,
+      "vldb": 66,
+      "vst": 2,
+      "add.nc\tlc": 2,
+      "movxm\tls": 2,
+      "movxm\tle": 2
+    }
+  },
+  "mylm": {
+    "program_segments": [
+      {
+        "name": "entry/setup",
+        "offset": 0,
+        "bytes": 492
+      },
+      {
+        "name": "shared Q4NX microkernel",
+        "offset": 496,
+        "bytes": 5760
+      },
+      {
+        "name": "Q/K/V body",
+        "offset": 6256,
+        "bytes": 1544
+      },
+      {
+        "name": "O body",
+        "offset": 7808,
+        "bytes": 1544
+      },
+      {
+        "name": "up/gate body",
+        "offset": 9360,
+        "bytes": 1544
+      },
+      {
+        "name": "down body",
+        "offset": 10912,
+        "bytes": 1560
+      },
+      {
+        "name": "alternate body",
+        "offset": 12480,
+        "bytes": 1544
+      },
+      {
+        "name": "dispatcher",
+        "offset": 14032,
+        "bytes": 504
+      },
+      {
+        "name": "tail/helper",
+        "offset": 14544,
+        "bytes": 324
+      }
+    ],
+    "phase_bodies": [
+      {
+        "name": "Q/K/V",
+        "body": 6256,
+        "header": "0x1",
+        "records": 12
+      },
+      {
+        "name": "O",
+        "body": 7808,
+        "header": "0x4",
+        "records": 8
+      },
+      {
+        "name": "up/gate",
+        "body": 9360,
+        "header": "0x8",
+        "records": 48
+      },
+      {
+        "name": "down",
+        "body": 10912,
+        "header": "0x4",
+        "records": 8
+      }
+    ],
+    "q4": {
+      "slot_count": 1532,
+      "mac_count": 264,
+      "group_macs": {
+        "0": 28,
+        "1": 33,
+        "2": 33,
+        "3": 33,
+        "4": 33,
+        "5": 33,
+        "6": 33,
+        "7": 38
+      },
+      "op_counts": {
+        "add.nc": 4,
+        "lda.s16": 8,
+        "lshl": 2,
+        "mov": 4,
+        "movx": 1,
+        "nop": 108,
+        "nopa": 1,
+        "nopb": 1,
+        "paddb": 2,
+        "vadd": 64,
+        "vbcst.16": 8,
+        "vconv.bf16.fp32": 136,
+        "vextbcst.16": 256,
+        "vlda": 11,
+        "vldb": 46,
+        "vmac.f": 264,
+        "vmov": 400,
+        "vmov.d": 16,
+        "vmul.f": 8,
+        "vsub.f": 64,
+        "vunpack": 64,
+        "vups.4x": 64
+      },
+      "sections": [
+        {
+          "name": "fill",
+          "macro": "MYLM_Q4NX_FILL",
+          "groups": [
+            0
+          ],
+          "template_group": 0,
+          "macs_per_group": 28,
+          "live_in_boundary": null,
+          "live_out_boundary": 1,
+          "signature_hash": null
+        },
+        {
+          "name": "fill_to_steady",
+          "macro": "MYLM_Q4NX_FILL_TO_STEADY",
+          "groups": [
+            1
+          ],
+          "template_group": 1,
+          "macs_per_group": 33,
+          "live_in_boundary": 1,
+          "live_out_boundary": 2,
+          "signature_hash": "070ae3b9658fd953"
+        },
+        {
+          "name": "steady_to_steady",
+          "macro": "MYLM_Q4NX_STEADY_TO_STEADY",
+          "groups": [
+            2,
+            3,
+            4,
+            5
+          ],
+          "template_group": 2,
+          "macs_per_group": 33,
+          "live_in_boundary": 2,
+          "live_out_boundary": 6,
+          "signature_hash": "5466ff6129c65f6b"
+        },
+        {
+          "name": "pre_drain",
+          "macro": "MYLM_Q4NX_PRE_DRAIN",
+          "groups": [
+            6
+          ],
+          "template_group": 6,
+          "macs_per_group": 33,
+          "live_in_boundary": 6,
+          "live_out_boundary": 7,
+          "signature_hash": null
+        },
+        {
+          "name": "drain",
+          "macro": "MYLM_Q4NX_DRAIN",
+          "groups": [
+            7
+          ],
+          "template_group": 7,
+          "macs_per_group": 38,
+          "live_in_boundary": 7,
+          "live_out_boundary": null,
+          "signature_hash": null
+        }
+      ],
+      "boundaries": [
+        {
+          "boundary": 1,
+          "data_count": 27,
+          "control_count": 12,
+          "data_cells": [
+            "acc0.bmll",
+            "acc0.bmlh",
+            "acc0.bmhl",
+            "acc0.bmhh",
+            "acc4.bmlh",
+            "acc4.bmhl",
+            "acc4.bmhh",
+            "acc4.bmll",
+            "vec3.hi",
+            "vec2.hi",
+            "vec4.lo",
+            "vec4.hi",
+            "vec6.hi",
+            "vec2.lo",
+            "vec3.lo",
+            "vec9.lo",
+            "vec9.hi",
+            "vec8.lo",
+            "vec8.hi",
+            "vec10.lo",
+            "vec10.hi",
+            "vec0.lo",
+            "vec0.hi",
+            "acc1.bmll",
+            "acc1.bmlh",
+            "acc1.bmhl",
+            "acc1.bmhh"
+          ],
+          "control_cells": [
+            "p0",
+            "p1",
+            "r16",
+            "unpacksign0",
+            "p5",
+            "p4",
+            "s0",
+            "upssign0",
+            "r0",
+            "r5",
+            "r4",
+            "p3"
+          ]
+        },
+        {
+          "boundary": 2,
+          "data_count": 27,
+          "control_count": 12,
+          "data_cells": [
+            "acc0.bmll",
+            "acc0.bmlh",
+            "acc0.bmhl",
+            "acc0.bmhh",
+            "acc4.bmlh",
+            "acc4.bmhl",
+            "acc4.bmhh",
+            "vec3.hi",
+            "vec2.hi",
+            "vec4.lo",
+            "vec4.hi",
+            "vec6.hi",
+            "acc4.bmll",
+            "vec2.lo",
+            "vec3.lo",
+            "vec9.lo",
+            "vec9.hi",
+            "vec8.lo",
+            "vec8.hi",
+            "vec10.lo",
+            "vec10.hi",
+            "vec0.lo",
+            "vec0.hi",
+            "acc1.bmll",
+            "acc1.bmlh",
+            "acc1.bmhl",
+            "acc1.bmhh"
+          ],
+          "control_cells": [
+            "p0",
+            "p1",
+            "r16",
+            "unpacksign0",
+            "p5",
+            "p4",
+            "s0",
+            "upssign0",
+            "r0",
+            "r5",
+            "r4",
+            "p3"
+          ]
+        },
+        {
+          "boundary": 3,
+          "data_count": 27,
+          "control_count": 12,
+          "data_cells": [
+            "acc0.bmll",
+            "acc0.bmlh",
+            "acc0.bmhl",
+            "acc0.bmhh",
+            "acc4.bmlh",
+            "acc4.bmhl",
+            "acc4.bmhh",
+            "vec3.hi",
+            "vec2.hi",
+            "vec4.lo",
+            "vec4.hi",
+            "vec6.hi",
+            "acc4.bmll",
+            "vec2.lo",
+            "vec3.lo",
+            "vec9.lo",
+            "vec9.hi",
+            "vec8.lo",
+            "vec8.hi",
+            "vec10.lo",
+            "vec10.hi",
+            "vec0.lo",
+            "vec0.hi",
+            "acc1.bmll",
+            "acc1.bmlh",
+            "acc1.bmhl",
+            "acc1.bmhh"
+          ],
+          "control_cells": [
+            "p0",
+            "p1",
+            "r16",
+            "unpacksign0",
+            "p5",
+            "p4",
+            "s0",
+            "upssign0",
+            "r0",
+            "r5",
+            "r4",
+            "p3"
+          ]
+        },
+        {
+          "boundary": 4,
+          "data_count": 27,
+          "control_count": 12,
+          "data_cells": [
+            "acc0.bmll",
+            "acc0.bmlh",
+            "acc0.bmhl",
+            "acc0.bmhh",
+            "acc4.bmlh",
+            "acc4.bmhl",
+            "acc4.bmhh",
+            "vec3.hi",
+            "vec2.hi",
+            "vec4.lo",
+            "vec4.hi",
+            "vec6.hi",
+            "acc4.bmll",
+            "vec2.lo",
+            "vec3.lo",
+            "vec9.lo",
+            "vec9.hi",
+            "vec8.lo",
+            "vec8.hi",
+            "vec10.lo",
+            "vec10.hi",
+            "vec0.lo",
+            "vec0.hi",
+            "acc1.bmll",
+            "acc1.bmlh",
+            "acc1.bmhl",
+            "acc1.bmhh"
+          ],
+          "control_cells": [
+            "p0",
+            "p1",
+            "r16",
+            "unpacksign0",
+            "p5",
+            "p4",
+            "s0",
+            "upssign0",
+            "r0",
+            "r5",
+            "r4",
+            "p3"
+          ]
+        },
+        {
+          "boundary": 5,
+          "data_count": 27,
+          "control_count": 12,
+          "data_cells": [
+            "acc0.bmll",
+            "acc0.bmlh",
+            "acc0.bmhl",
+            "acc0.bmhh",
+            "acc4.bmlh",
+            "acc4.bmhl",
+            "acc4.bmhh",
+            "vec3.hi",
+            "vec2.hi",
+            "vec4.lo",
+            "vec4.hi",
+            "vec6.hi",
+            "acc4.bmll",
+            "vec2.lo",
+            "vec3.lo",
+            "vec9.lo",
+            "vec9.hi",
+            "vec8.lo",
+            "vec8.hi",
+            "vec10.lo",
+            "vec10.hi",
+            "vec0.lo",
+            "vec0.hi",
+            "acc1.bmll",
+            "acc1.bmlh",
+            "acc1.bmhl",
+            "acc1.bmhh"
+          ],
+          "control_cells": [
+            "p0",
+            "p1",
+            "r16",
+            "unpacksign0",
+            "p5",
+            "p4",
+            "s0",
+            "upssign0",
+            "r0",
+            "r5",
+            "r4",
+            "p3"
+          ]
+        },
+        {
+          "boundary": 6,
+          "data_count": 27,
+          "control_count": 12,
+          "data_cells": [
+            "acc0.bmll",
+            "acc0.bmlh",
+            "acc0.bmhl",
+            "acc0.bmhh",
+            "acc4.bmlh",
+            "acc4.bmhl",
+            "acc4.bmhh",
+            "vec3.hi",
+            "vec2.hi",
+            "vec4.lo",
+            "vec4.hi",
+            "vec6.hi",
+            "acc4.bmll",
+            "vec2.lo",
+            "vec3.lo",
+            "vec9.lo",
+            "vec9.hi",
+            "vec8.lo",
+            "vec8.hi",
+            "vec10.lo",
+            "vec10.hi",
+            "vec0.lo",
+            "vec0.hi",
+            "acc1.bmll",
+            "acc1.bmlh",
+            "acc1.bmhl",
+            "acc1.bmhh"
+          ],
+          "control_cells": [
+            "p0",
+            "p1",
+            "r16",
+            "unpacksign0",
+            "p5",
+            "p4",
+            "s0",
+            "upssign0",
+            "r0",
+            "r5",
+            "r4",
+            "p3"
+          ]
+        },
+        {
+          "boundary": 7,
+          "data_count": 27,
+          "control_count": 12,
+          "data_cells": [
+            "acc0.bmll",
+            "acc0.bmlh",
+            "acc0.bmhl",
+            "acc0.bmhh",
+            "acc4.bmlh",
+            "acc4.bmhl",
+            "acc4.bmhh",
+            "vec3.hi",
+            "vec2.hi",
+            "vec4.lo",
+            "vec4.hi",
+            "vec6.hi",
+            "acc4.bmll",
+            "vec2.lo",
+            "vec3.lo",
+            "vec9.lo",
+            "vec9.hi",
+            "vec8.lo",
+            "vec8.hi",
+            "vec10.lo",
+            "vec10.hi",
+            "vec0.lo",
+            "vec0.hi",
+            "acc1.bmll",
+            "acc1.bmlh",
+            "acc1.bmhl",
+            "acc1.bmhh"
+          ],
+          "control_cells": [
+            "p0",
+            "p1",
+            "r16",
+            "unpacksign0",
+            "p5",
+            "p4",
+            "s0",
+            "upssign0",
+            "r0",
+            "r5",
+            "r4",
+            "r7"
+          ]
+        }
+      ]
+    }
+  },
+  "decision": {
+    "active_path": "keep the single q4nx_main16_layer_scheduler(..., phase_limit) entry calling q4nx_chunk_accum_asm_zol until the generated whole-main16 replacement passes the QKV prefix gate",
+    "rejected_path": "do not re-enable the partial q4nx_main16_qkv_scheduler_nocall path; it removed the helper statically but timed out on full-layer-qkv-prefix",
+    "next_path": "generate one main16 role program with MyLM-style sections: shared Q4NX body, Q/K/V body, O body, up/gate body, down body, and dispatcher",
+    "header_policy": "preserve IRON compact headers 10..15 at the row1/c1r1 boundary for the first replacement; MyLM's 0x1/0x4/0x8 headers are a raw-program clue, not a drop-in ABI for current IRON downstream routing",
+    "first_gate": "full-layer-qkv-prefix token31 must pass before enabling the generated main16 program in any full-decode path"
+  },
+  "sources": {
+    "mylm_understanding": "/var/home/taowen/projects/MyLM/tools/re/fused-layer-engine/current-understanding.md",
+    "iron_comparison": "/var/home/taowen/projects/IRON/qwen3-layer/main16_q4nx_mylm_compare.md",
+    "mylm_operand_graph": "/var/home/taowen/projects/IRON/experiments/119_mylm_q4nx_full_operand_graph/mylm_q4nx_full_operand_graph.json",
+    "mylm_generator_contract": "/var/home/taowen/projects/IRON/experiments/120_mylm_q4nx_generator_contract/mylm_q4nx_generator_contract.json",
+    "main16_object": "/var/home/taowen/projects/IRON/qwen3-layer/main_projection_q4nx_fast.o"
+  }
+}

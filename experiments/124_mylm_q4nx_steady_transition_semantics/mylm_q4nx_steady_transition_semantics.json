@@ -1,0 +1,6955 @@
+{
+  "source": "MyLM c2r2 group2 0x7de..0xa92",
+  "checks": {
+    "group": 2,
+    "range": "0x7de..0xa92",
+    "slots": 189,
+    "macs": 33,
+    "vextbcst16": 32,
+    "vups": 8,
+    "vconv_bf16_fp32": 17,
+    "vst": 0,
+    "input_data_cells": 27,
+    "input_control_cells": 12,
+    "output_data_cells": 27,
+    "output_control_cells": 12,
+    "boundary_cell_names_stable": true,
+    "relative_producer_classes_stable": true,
+    "changed_producer_cells": 24,
+    "changed_data_cells": 23,
+    "changed_control_cells": 1
+  },
+  "records": [
+    {
+      "index": 381,
+      "address": "0x7de",
+      "bundle_slot": 0,
+      "op": "vldb",
+      "role": "vector_load",
+      "text": "vldb\t x11, [p1], #0x40",
+      "defs": [
+        "vec11.lo",
+        "vec11.hi"
+      ],
+      "uses": [
+        {
+          "cell": "p1",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 382,
+      "address": "0x7de",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm1, dm1, x9, x10, r4",
+      "defs": [
+        "acc1.bmll",
+        "acc1.bmlh",
+        "acc1.bmhl",
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g1@0x7d2.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g1@0x7d2.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g1@0x7d2.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g1@0x7d2.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec9.lo",
+          "producer": "g1@0x7c2.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "vec9.hi",
+          "producer": "g1@0x7c2.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "vec10.lo",
+          "producer": "g1@0x7ce.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "vec10.hi",
+          "producer": "g1@0x7ce.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 383,
+      "address": "0x7e6",
+      "bundle_slot": 0,
+      "op": "vups.4x",
+      "role": "expanded_q4",
+      "text": "vups.4x\tdm2, x9, s0, upssign0",
+      "defs": [
+        "acc2.bmll",
+        "acc2.bmlh",
+        "acc2.bmhl",
+        "acc2.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "vec9.lo",
+          "producer": "g1@0x7c2.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "vec9.hi",
+          "producer": "g1@0x7c2.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "s0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "upssign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 384,
+      "address": "0x7ea",
+      "bundle_slot": 0,
+      "op": "vadd",
+      "role": "vector_arith",
+      "text": "vadd\tdm1, dm2, dm0, r0",
+      "defs": [
+        "acc1.bmll",
+        "acc1.bmlh",
+        "acc1.bmhl",
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmll",
+          "producer": "g2@0x7e6.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc2.bmlh",
+          "producer": "g2@0x7e6.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc2.bmhl",
+          "producer": "g2@0x7e6.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc2.bmhh",
+          "producer": "g2@0x7e6.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 385,
+      "address": "0x7ee",
+      "bundle_slot": 0,
+      "op": "vups.4x",
+      "role": "expanded_q4",
+      "text": "vups.4x\tdm2, x8, s0, upssign0",
+      "defs": [
+        "acc2.bmll",
+        "acc2.bmlh",
+        "acc2.bmhl",
+        "acc2.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "vec8.lo",
+          "producer": "g1@0x7ca.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "vec8.hi",
+          "producer": "g1@0x7ca.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "s0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "upssign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 386,
+      "address": "0x7ee",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm1, x4, x0, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0x7ea.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0x7ea.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0x7ea.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0x7ea.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "vec4.lo",
+          "producer": "g1@0x76c.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g1@0x76c.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec0.lo",
+          "producer": "g1@0x7d2.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec0.hi",
+          "producer": "g1@0x7d2.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 387,
+      "address": "0x7f6",
+      "bundle_slot": 0,
+      "op": "vsub.f",
+      "role": "vector_arith",
+      "text": "vsub.f\tdm1, dm1, dm0, r5",
+      "defs": [
+        "acc1.bmll",
+        "acc1.bmlh",
+        "acc1.bmhl",
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0x7ea.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0x7ea.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0x7ea.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0x7ea.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r5",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 388,
+      "address": "0x7fa",
+      "bundle_slot": 0,
+      "op": "vadd",
+      "role": "vector_arith",
+      "text": "vadd\tdm2, dm2, dm0, r0",
+      "defs": [
+        "acc2.bmll",
+        "acc2.bmlh",
+        "acc2.bmhl",
+        "acc2.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmll",
+          "producer": "g2@0x7ee.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc2.bmlh",
+          "producer": "g2@0x7ee.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc2.bmhl",
+          "producer": "g2@0x7ee.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc2.bmhh",
+          "producer": "g2@0x7ee.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 389,
+      "address": "0x7fe",
+      "bundle_slot": 0,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm3, x3, x11, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x7ee.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x7ee.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x7ee.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x7ee.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g1@0x7ac.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g1@0x73c.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 390,
+      "address": "0x802",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x7, x11, #0x0",
+      "defs": [
+        "vec7.lo",
+        "vec7.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 391,
+      "address": "0x802",
+      "bundle_slot": 1,
+      "op": "vsub.f",
+      "role": "vector_arith",
+      "text": "vsub.f\tdm3, dm2, dm0, r5",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmll",
+          "producer": "g2@0x7fa.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc2.bmlh",
+          "producer": "g2@0x7fa.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc2.bmhl",
+          "producer": "g2@0x7fa.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc2.bmhh",
+          "producer": "g2@0x7fa.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r5",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 392,
+      "address": "0x80a",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x9, x11, #0x1",
+      "defs": [
+        "vec9.lo",
+        "vec9.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 393,
+      "address": "0x80e",
+      "bundle_slot": 0,
+      "op": "nop",
+      "role": "nop",
+      "text": "nop",
+      "defs": [],
+      "uses": []
+    },
+    {
+      "index": 394,
+      "address": "0x810",
+      "bundle_slot": 0,
+      "op": "nop",
+      "role": "nop",
+      "text": "nop",
+      "defs": [],
+      "uses": []
+    },
+    {
+      "index": 395,
+      "address": "0x812",
+      "bundle_slot": 0,
+      "op": "vunpack",
+      "role": "unpacked_q4",
+      "text": "vunpack\tx1, wl0, unpacksign0",
+      "defs": [
+        "vec1.lo",
+        "vec1.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec0.lo",
+          "producer": "g1@0x7d2.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "unpacksign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 396,
+      "address": "0x812",
+      "bundle_slot": 1,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmll2, bmll1",
+      "defs": [
+        "acc2.bmll"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0x7f6.0:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 397,
+      "address": "0x818",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t wl4, bmll3",
+      "defs": [
+        "vec4.lo"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x802.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 398,
+      "address": "0x818",
+      "bundle_slot": 1,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmlh2, bmlh1",
+      "defs": [
+        "acc2.bmlh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0x7f6.0:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 399,
+      "address": "0x820",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhl2, bmhl1",
+      "defs": [
+        "acc2.bmhl"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0x7f6.0:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 400,
+      "address": "0x824",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x5, cml2",
+      "defs": [
+        "vec5.lo",
+        "vec5.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmll",
+          "producer": "g2@0x812.1:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc2.bmlh",
+          "producer": "g2@0x818.1:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 401,
+      "address": "0x824",
+      "bundle_slot": 1,
+      "op": "vups.4x",
+      "role": "expanded_q4",
+      "text": "vups.4x\tdm1, x5, s0, upssign0",
+      "defs": [
+        "acc1.bmll",
+        "acc1.bmlh",
+        "acc1.bmhl",
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "vec5.lo",
+          "producer": "g2@0x824.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec5.hi",
+          "producer": "g2@0x824.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "s0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "upssign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 402,
+      "address": "0x824",
+      "bundle_slot": 2,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm4, dm4, x4, x2, r4",
+      "defs": [
+        "acc4.bmll",
+        "acc4.bmlh",
+        "acc4.bmhl",
+        "acc4.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g1@0x786.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g1@0x6ce.0:vsub.f",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g1@0x6ce.0:vsub.f",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g1@0x6ce.0:vsub.f",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "vec4.lo",
+          "producer": "g2@0x818.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g1@0x76c.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec2.lo",
+          "producer": "g1@0x790.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec2.hi",
+          "producer": "g1@0x764.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 403,
+      "address": "0x82e",
+      "bundle_slot": 0,
+      "op": "nop",
+      "role": "nop",
+      "text": "nop",
+      "defs": [],
+      "uses": []
+    },
+    {
+      "index": 404,
+      "address": "0x830",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhh2, bmhh1",
+      "defs": [
+        "acc2.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0x824.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        }
+      ]
+    },
+    {
+      "index": 405,
+      "address": "0x834",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl6, wh5",
+      "defs": [
+        "vec6.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec5.hi",
+          "producer": "g2@0x824.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 406,
+      "address": "0x834",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm4, dm4, x6, x1, r4",
+      "defs": [
+        "acc4.bmll",
+        "acc4.bmlh",
+        "acc4.bmhl",
+        "acc4.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0x824.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g2@0x824.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g2@0x824.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g2@0x824.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec6.lo",
+          "producer": "g2@0x834.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec6.hi",
+          "producer": "g1@0x76c.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec1.lo",
+          "producer": "g2@0x812.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "vec1.hi",
+          "producer": "g2@0x812.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 407,
+      "address": "0x83c",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x3, cmh2",
+      "defs": [
+        "vec3.lo",
+        "vec3.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmhl",
+          "producer": "g2@0x820.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc2.bmhh",
+          "producer": "g2@0x830.0:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 408,
+      "address": "0x840",
+      "bundle_slot": 0,
+      "op": "nop",
+      "role": "nop",
+      "text": "nop",
+      "defs": [],
+      "uses": []
+    },
+    {
+      "index": 409,
+      "address": "0x842",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl2, wh3",
+      "defs": [
+        "vec2.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec3.hi",
+          "producer": "g2@0x83c.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 410,
+      "address": "0x846",
+      "bundle_slot": 0,
+      "op": "vadd",
+      "role": "vector_arith",
+      "text": "vadd\tdm4, dm1, dm0, r0",
+      "defs": [
+        "acc4.bmll",
+        "acc4.bmlh",
+        "acc4.bmhl",
+        "acc4.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0x824.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0x824.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0x824.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0x824.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 411,
+      "address": "0x84a",
+      "bundle_slot": 0,
+      "op": "nop",
+      "role": "nop",
+      "text": "nop",
+      "defs": [],
+      "uses": []
+    },
+    {
+      "index": 412,
+      "address": "0x84c",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tlfh0, bmll4",
+      "defs": [
+        "lfh0"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0x846.0:vadd",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 413,
+      "address": "0x84c",
+      "bundle_slot": 1,
+      "op": "vsub.f",
+      "role": "vector_arith",
+      "text": "vsub.f\tdm2, dm4, dm0, r5",
+      "defs": [
+        "acc2.bmll",
+        "acc2.bmlh",
+        "acc2.bmhl",
+        "acc2.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0x846.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g2@0x846.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g2@0x846.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g2@0x846.0:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r5",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 414,
+      "address": "0x854",
+      "bundle_slot": 0,
+      "op": "nop",
+      "role": "nop",
+      "text": "nop",
+      "defs": [],
+      "uses": []
+    },
+    {
+      "index": 415,
+      "address": "0x856",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhl1, bmhl3",
+      "defs": [
+        "acc1.bmhl"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x802.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 416,
+      "address": "0x85a",
+      "bundle_slot": 0,
+      "op": "nop",
+      "role": "nop",
+      "text": "nop",
+      "defs": [],
+      "uses": []
+    },
+    {
+      "index": 417,
+      "address": "0x85c",
+      "bundle_slot": 0,
+      "op": "vldb",
+      "role": "vector_load",
+      "text": "vldb\t x6, [p0], #0x40",
+      "defs": [
+        "vec6.lo",
+        "vec6.hi"
+      ],
+      "uses": [
+        {
+          "cell": "p0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 418,
+      "address": "0x85c",
+      "bundle_slot": 1,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhh1, bmhh3",
+      "defs": [
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x802.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 419,
+      "address": "0x862",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmll1, bmll3",
+      "defs": [
+        "acc1.bmll"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x802.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 420,
+      "address": "0x866",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x8, cmh1",
+      "defs": [
+        "vec8.lo",
+        "vec8.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0x856.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0x85c.1:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 421,
+      "address": "0x866",
+      "bundle_slot": 1,
+      "op": "vups.4x",
+      "role": "expanded_q4",
+      "text": "vups.4x\tdm3, x10, s0, upssign0",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "vec10.lo",
+          "producer": "g1@0x7ce.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "vec10.hi",
+          "producer": "g1@0x7ce.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "s0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "upssign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 422,
+      "address": "0x866",
+      "bundle_slot": 2,
+      "op": "vadd",
+      "role": "vector_arith",
+      "text": "vadd\tdm3, dm3, dm0, r0",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x866.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x866.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x866.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x866.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 423,
+      "address": "0x870",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x10, x11, #0x2",
+      "defs": [
+        "vec10.lo",
+        "vec10.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 424,
+      "address": "0x870",
+      "bundle_slot": 1,
+      "op": "vmul.f",
+      "role": "vector_arith",
+      "text": "vmul.f\tdm3, x5, x7, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "vec5.lo",
+          "producer": "g2@0x824.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec5.hi",
+          "producer": "g2@0x824.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec7.lo",
+          "producer": "g2@0x802.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec7.hi",
+          "producer": "g2@0x802.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 425,
+      "address": "0x878",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmlh1, bmlh3",
+      "defs": [
+        "acc1.bmlh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x870.1:vmul.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 426,
+      "address": "0x878",
+      "bundle_slot": 1,
+      "op": "vsub.f",
+      "role": "vector_arith",
+      "text": "vsub.f\tdm4, dm3, dm0, r5",
+      "defs": [
+        "acc4.bmll",
+        "acc4.bmlh",
+        "acc4.bmhl",
+        "acc4.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x870.1:vmul.f",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x870.1:vmul.f",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x870.1:vmul.f",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x870.1:vmul.f",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r5",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 427,
+      "address": "0x880",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x7, x11, #0x3",
+      "defs": [
+        "vec7.lo",
+        "vec7.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 428,
+      "address": "0x884",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x4, cml1",
+      "defs": [
+        "vec4.lo",
+        "vec4.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0x862.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0x878.0:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 429,
+      "address": "0x884",
+      "bundle_slot": 1,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhh1, bmhh2",
+      "defs": [
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmhh",
+          "producer": "g2@0x84c.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 430,
+      "address": "0x884",
+      "bundle_slot": 2,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm3, x6, x9, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x870.1:vmul.f",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x870.1:vmul.f",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x870.1:vmul.f",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x870.1:vmul.f",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "vec6.lo",
+          "producer": "g2@0x85c.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec6.hi",
+          "producer": "g2@0x85c.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec9.lo",
+          "producer": "g2@0x80a.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec9.hi",
+          "producer": "g2@0x80a.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 431,
+      "address": "0x88e",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x9, x11, #0x8",
+      "defs": [
+        "vec9.lo",
+        "vec9.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 432,
+      "address": "0x892",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl10, wh4",
+      "defs": [
+        "vec10.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec4.hi",
+          "producer": "g2@0x884.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 433,
+      "address": "0x896",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmll1, bmll2",
+      "defs": [
+        "acc1.bmll"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmll",
+          "producer": "g2@0x84c.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 434,
+      "address": "0x896",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm3, x3, x10, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x884.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x884.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x884.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x884.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g2@0x83c.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g2@0x83c.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec10.lo",
+          "producer": "g2@0x892.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec10.hi",
+          "producer": "g2@0x870.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 435,
+      "address": "0x89e",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmll2, bmll4",
+      "defs": [
+        "acc2.bmll"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0x878.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 436,
+      "address": "0x8a2",
+      "bundle_slot": 0,
+      "op": "vunpack",
+      "role": "unpacked_q4",
+      "text": "vunpack\tx1, wh0, unpacksign0",
+      "defs": [
+        "vec1.lo",
+        "vec1.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec0.hi",
+          "producer": "g1@0x7d2.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "unpacksign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 437,
+      "address": "0x8a2",
+      "bundle_slot": 1,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x7, x11, #0x4",
+      "defs": [
+        "vec7.lo",
+        "vec7.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 438,
+      "address": "0x8a8",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmlh1, bmlh2",
+      "defs": [
+        "acc1.bmlh"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmlh",
+          "producer": "g2@0x84c.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 439,
+      "address": "0x8a8",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm3, x2, x7, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x896.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x896.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x896.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x896.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec2.lo",
+          "producer": "g2@0x842.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec2.hi",
+          "producer": "g1@0x764.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec7.lo",
+          "producer": "g2@0x8a2.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec7.hi",
+          "producer": "g2@0x8a2.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 440,
+      "address": "0x8b0",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmlh2, bmlh4",
+      "defs": [
+        "acc2.bmlh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g2@0x878.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 441,
+      "address": "0x8b4",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x5, cml1",
+      "defs": [
+        "vec5.lo",
+        "vec5.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0x896.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0x8a8.0:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 442,
+      "address": "0x8b4",
+      "bundle_slot": 1,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x4, x11, #0x5",
+      "defs": [
+        "vec4.lo",
+        "vec4.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 443,
+      "address": "0x8bc",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhl1, bmhl2",
+      "defs": [
+        "acc1.bmhl"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmhl",
+          "producer": "g2@0x84c.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 444,
+      "address": "0x8bc",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm3, x4, x7, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x8a8.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x8a8.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x8a8.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x8a8.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec4.lo",
+          "producer": "g2@0x8b4.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g2@0x8b4.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec7.lo",
+          "producer": "g2@0x8a2.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec7.hi",
+          "producer": "g2@0x8a2.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 445,
+      "address": "0x8c4",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhl2, bmhl4",
+      "defs": [
+        "acc2.bmhl"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g2@0x878.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 446,
+      "address": "0x8c8",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x2, cmh1",
+      "defs": [
+        "vec2.lo",
+        "vec2.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0x8bc.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0x884.1:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 447,
+      "address": "0x8c8",
+      "bundle_slot": 1,
+      "op": "vups.4x",
+      "role": "expanded_q4",
+      "text": "vups.4x\tdm4, x1, s0, upssign0",
+      "defs": [
+        "acc4.bmll",
+        "acc4.bmlh",
+        "acc4.bmhl",
+        "acc4.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "vec1.lo",
+          "producer": "g2@0x8a2.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "vec1.hi",
+          "producer": "g2@0x8a2.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "s0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "upssign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 448,
+      "address": "0x8c8",
+      "bundle_slot": 2,
+      "op": "vadd",
+      "role": "vector_arith",
+      "text": "vadd\tdm1, dm4, dm0, r0",
+      "defs": [
+        "acc1.bmll",
+        "acc1.bmlh",
+        "acc1.bmhl",
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0x8c8.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g2@0x8c8.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g2@0x8c8.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g2@0x8c8.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 449,
+      "address": "0x8d2",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x3, x11, #0x6",
+      "defs": [
+        "vec3.lo",
+        "vec3.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 450,
+      "address": "0x8d6",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhh2, bmhh4",
+      "defs": [
+        "acc2.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g2@0x8c8.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        }
+      ]
+    },
+    {
+      "index": 451,
+      "address": "0x8d6",
+      "bundle_slot": 1,
+      "op": "vsub.f",
+      "role": "vector_arith",
+      "text": "vsub.f\tdm4, dm1, dm0, r5",
+      "defs": [
+        "acc4.bmll",
+        "acc4.bmlh",
+        "acc4.bmhl",
+        "acc4.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0x8c8.2:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0x8c8.2:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0x8c8.2:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0x8c8.2:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r5",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 452,
+      "address": "0x8de",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x0, x11, #0x7",
+      "defs": [
+        "vec0.lo",
+        "vec0.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 453,
+      "address": "0x8de",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm4, dm3, x10, x4, r4",
+      "defs": [
+        "acc4.bmll",
+        "acc4.bmlh",
+        "acc4.bmhl",
+        "acc4.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x8bc.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x8bc.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x8bc.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x8bc.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec10.lo",
+          "producer": "g2@0x892.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec10.hi",
+          "producer": "g2@0x870.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec4.lo",
+          "producer": "g2@0x8b4.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g2@0x8b4.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 454,
+      "address": "0x8e6",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x4, x11, #0x9",
+      "defs": [
+        "vec4.lo",
+        "vec4.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 455,
+      "address": "0x8ea",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x8, cml2",
+      "defs": [
+        "vec8.lo",
+        "vec8.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmll",
+          "producer": "g2@0x89e.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc2.bmlh",
+          "producer": "g2@0x8b0.0:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 456,
+      "address": "0x8ea",
+      "bundle_slot": 1,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl3, wh8",
+      "defs": [
+        "vec3.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec8.hi",
+          "producer": "g2@0x8ea.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 457,
+      "address": "0x8ea",
+      "bundle_slot": 2,
+      "op": "vmov.d",
+      "role": "register_move",
+      "text": "vmov.d\tdm1, dm4",
+      "defs": [
+        "acc1.bmll",
+        "acc1.bmlh",
+        "acc1.bmhl",
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0x8de.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g2@0x8de.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g2@0x8de.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g2@0x8de.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        }
+      ]
+    },
+    {
+      "index": 458,
+      "address": "0x8f4",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x7, x11, #0xa",
+      "defs": [
+        "vec7.lo",
+        "vec7.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 459,
+      "address": "0x8f4",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm4, dm4, x8, x3, r4",
+      "defs": [
+        "acc4.bmll",
+        "acc4.bmlh",
+        "acc4.bmhl",
+        "acc4.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0x8de.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g2@0x8de.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g2@0x8de.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g2@0x8de.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec8.lo",
+          "producer": "g2@0x8ea.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec8.hi",
+          "producer": "g2@0x8ea.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g2@0x8ea.1:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g2@0x8d2.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 460,
+      "address": "0x8fc",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x10, x11, #0xb",
+      "defs": [
+        "vec10.lo",
+        "vec10.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 461,
+      "address": "0x8fc",
+      "bundle_slot": 1,
+      "op": "vmov.d",
+      "role": "register_move",
+      "text": "vmov.d\tdm3, dm1",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0x8ea.2:vmov.d",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0x8ea.2:vmov.d",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0x8ea.2:vmov.d",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0x8ea.2:vmov.d",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 462,
+      "address": "0x904",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl3, wh2",
+      "defs": [
+        "vec3.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec2.hi",
+          "producer": "g2@0x8c8.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 463,
+      "address": "0x908",
+      "bundle_slot": 0,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm4, dm4, x3, x0, r4",
+      "defs": [
+        "acc4.bmll",
+        "acc4.bmlh",
+        "acc4.bmhl",
+        "acc4.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0x8f4.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g2@0x8f4.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g2@0x8f4.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g2@0x8f4.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g2@0x904.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g2@0x8d2.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec0.lo",
+          "producer": "g2@0x8de.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec0.hi",
+          "producer": "g2@0x8de.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 464,
+      "address": "0x90c",
+      "bundle_slot": 0,
+      "op": "nop",
+      "role": "nop",
+      "text": "nop",
+      "defs": [],
+      "uses": []
+    },
+    {
+      "index": 465,
+      "address": "0x90e",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl5, wh5",
+      "defs": [
+        "vec5.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec5.hi",
+          "producer": "g2@0x8b4.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 466,
+      "address": "0x912",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl9, wh8",
+      "defs": [
+        "vec9.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec8.hi",
+          "producer": "g2@0x8ea.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 467,
+      "address": "0x912",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm4, dm4, x5, x9, r4",
+      "defs": [
+        "acc4.bmll",
+        "acc4.bmlh",
+        "acc4.bmhl",
+        "acc4.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0x908.0:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g2@0x908.0:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g2@0x908.0:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g2@0x908.0:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec5.lo",
+          "producer": "g2@0x90e.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec5.hi",
+          "producer": "g2@0x8b4.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec9.lo",
+          "producer": "g2@0x912.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec9.hi",
+          "producer": "g2@0x88e.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 468,
+      "address": "0x91a",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhl1, bmhl3",
+      "defs": [
+        "acc1.bmhl"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x8fc.1:vmov.d",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 469,
+      "address": "0x91e",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhh1, bmhh3",
+      "defs": [
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x8fc.1:vmov.d",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 470,
+      "address": "0x922",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x1, cmh2",
+      "defs": [
+        "vec1.lo",
+        "vec1.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmhl",
+          "producer": "g2@0x8c4.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc2.bmhh",
+          "producer": "g2@0x8d6.0:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 471,
+      "address": "0x922",
+      "bundle_slot": 1,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmll1, bmll3",
+      "defs": [
+        "acc1.bmll"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x8fc.1:vmov.d",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 472,
+      "address": "0x922",
+      "bundle_slot": 2,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm4, dm4, x5, x4, r4",
+      "defs": [
+        "acc4.bmll",
+        "acc4.bmlh",
+        "acc4.bmhl",
+        "acc4.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0x912.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g2@0x912.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g2@0x912.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g2@0x912.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec5.lo",
+          "producer": "g2@0x90e.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec5.hi",
+          "producer": "g2@0x8b4.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec4.lo",
+          "producer": "g2@0x8e6.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g2@0x8e6.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 473,
+      "address": "0x92c",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x0, cmh1",
+      "defs": [
+        "vec0.lo",
+        "vec0.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0x91a.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0x91e.0:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 474,
+      "address": "0x92c",
+      "bundle_slot": 1,
+      "op": "vups.4x",
+      "role": "expanded_q4",
+      "text": "vups.4x\tdm3, x1, s0, upssign0",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "vec1.lo",
+          "producer": "g2@0x922.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec1.hi",
+          "producer": "g2@0x922.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "s0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "upssign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 475,
+      "address": "0x92c",
+      "bundle_slot": 2,
+      "op": "vadd",
+      "role": "vector_arith",
+      "text": "vadd\tdm2, dm3, dm0, r0",
+      "defs": [
+        "acc2.bmll",
+        "acc2.bmlh",
+        "acc2.bmhl",
+        "acc2.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x92c.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x92c.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x92c.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x92c.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 476,
+      "address": "0x936",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x4, x11, #0xc",
+      "defs": [
+        "vec4.lo",
+        "vec4.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 477,
+      "address": "0x93a",
+      "bundle_slot": 0,
+      "op": "vunpack",
+      "role": "unpacked_q4",
+      "text": "vunpack\tx4, wl6, unpacksign0",
+      "defs": [
+        "vec4.lo",
+        "vec4.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec6.lo",
+          "producer": "g2@0x85c.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "unpacksign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 478,
+      "address": "0x93a",
+      "bundle_slot": 1,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmlh1, bmlh3",
+      "defs": [
+        "acc1.bmlh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x92c.1:vups.4x",
+          "producer_kind": "expanded_q4"
+        }
+      ]
+    },
+    {
+      "index": 479,
+      "address": "0x93a",
+      "bundle_slot": 2,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm4, x2, x7, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0x922.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g2@0x922.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g2@0x922.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g2@0x922.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec2.lo",
+          "producer": "g2@0x8c8.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec2.hi",
+          "producer": "g2@0x8c8.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec7.lo",
+          "producer": "g2@0x8f4.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec7.hi",
+          "producer": "g2@0x8f4.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 480,
+      "address": "0x944",
+      "bundle_slot": 0,
+      "op": "vunpack",
+      "role": "unpacked_q4",
+      "text": "vunpack\tx6, wh6, unpacksign0",
+      "defs": [
+        "vec6.lo",
+        "vec6.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec6.hi",
+          "producer": "g2@0x85c.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "unpacksign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 481,
+      "address": "0x944",
+      "bundle_slot": 1,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x5, x11, #0xd",
+      "defs": [
+        "vec5.lo",
+        "vec5.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 482,
+      "address": "0x944",
+      "bundle_slot": 2,
+      "op": "vsub.f",
+      "role": "vector_arith",
+      "text": "vsub.f\tdm2, dm2, dm0, r5",
+      "defs": [
+        "acc2.bmll",
+        "acc2.bmlh",
+        "acc2.bmhl",
+        "acc2.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmll",
+          "producer": "g2@0x92c.2:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc2.bmlh",
+          "producer": "g2@0x92c.2:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc2.bmhl",
+          "producer": "g2@0x92c.2:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc2.bmhh",
+          "producer": "g2@0x92c.2:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r5",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 483,
+      "address": "0x94e",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x2, cml1",
+      "defs": [
+        "vec2.lo",
+        "vec2.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0x922.1:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0x93a.1:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 484,
+      "address": "0x94e",
+      "bundle_slot": 1,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x10, x11, #0xe",
+      "defs": [
+        "vec10.lo",
+        "vec10.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 485,
+      "address": "0x956",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x3, x11, #0xf",
+      "defs": [
+        "vec3.lo",
+        "vec3.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 486,
+      "address": "0x956",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm1, dm3, x3, x10, r4",
+      "defs": [
+        "acc1.bmll",
+        "acc1.bmlh",
+        "acc1.bmhl",
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x93a.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x93a.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x93a.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x93a.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g2@0x956.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g2@0x956.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec10.lo",
+          "producer": "g2@0x94e.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec10.hi",
+          "producer": "g2@0x94e.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 487,
+      "address": "0x95e",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x7, x11, #0x10",
+      "defs": [
+        "vec7.lo",
+        "vec7.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 488,
+      "address": "0x962",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl8, wh1",
+      "defs": [
+        "vec8.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec1.hi",
+          "producer": "g2@0x922.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 489,
+      "address": "0x966",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x4, x11, #0x15",
+      "defs": [
+        "vec4.lo",
+        "vec4.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 490,
+      "address": "0x966",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm1, x8, x4, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0x956.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0x956.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0x956.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0x956.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec8.lo",
+          "producer": "g2@0x962.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec8.hi",
+          "producer": "g2@0x8ea.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec4.lo",
+          "producer": "g2@0x966.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g2@0x966.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 491,
+      "address": "0x96e",
+      "bundle_slot": 0,
+      "op": "vups.4x",
+      "role": "expanded_q4",
+      "text": "vups.4x\tdm4, x4, s0, upssign0",
+      "defs": [
+        "acc4.bmll",
+        "acc4.bmlh",
+        "acc4.bmhl",
+        "acc4.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "vec4.lo",
+          "producer": "g2@0x966.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g2@0x966.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "s0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "upssign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 492,
+      "address": "0x96e",
+      "bundle_slot": 1,
+      "op": "vadd",
+      "role": "vector_arith",
+      "text": "vadd\tdm4, dm4, dm0, r0",
+      "defs": [
+        "acc4.bmll",
+        "acc4.bmlh",
+        "acc4.bmhl",
+        "acc4.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0x96e.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g2@0x96e.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g2@0x96e.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g2@0x96e.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 493,
+      "address": "0x976",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl5, wh2",
+      "defs": [
+        "vec5.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec2.hi",
+          "producer": "g2@0x94e.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 494,
+      "address": "0x97a",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x9, x11, #0x11",
+      "defs": [
+        "vec9.lo",
+        "vec9.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 495,
+      "address": "0x97a",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm3, x9, x5, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x966.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x966.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x966.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x966.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec9.lo",
+          "producer": "g2@0x97a.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec9.hi",
+          "producer": "g2@0x97a.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec5.lo",
+          "producer": "g2@0x976.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec5.hi",
+          "producer": "g2@0x944.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 496,
+      "address": "0x982",
+      "bundle_slot": 0,
+      "op": "vsub.f",
+      "role": "vector_arith",
+      "text": "vsub.f\tdm4, dm4, dm0, r5",
+      "defs": [
+        "acc4.bmll",
+        "acc4.bmlh",
+        "acc4.bmhl",
+        "acc4.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0x96e.1:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g2@0x96e.1:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g2@0x96e.1:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g2@0x96e.1:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r5",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 497,
+      "address": "0x986",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x1, x11, #0x12",
+      "defs": [
+        "vec1.lo",
+        "vec1.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 498,
+      "address": "0x98a",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmll1, bmll2",
+      "defs": [
+        "acc1.bmll"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmll",
+          "producer": "g2@0x944.2:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 499,
+      "address": "0x98a",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm3, x1, x10, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x97a.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x97a.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x97a.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x97a.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec1.lo",
+          "producer": "g2@0x986.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec1.hi",
+          "producer": "g2@0x986.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec10.lo",
+          "producer": "g2@0x94e.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec10.hi",
+          "producer": "g2@0x94e.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 500,
+      "address": "0x992",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x10, x11, #0x18",
+      "defs": [
+        "vec10.lo",
+        "vec10.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 501,
+      "address": "0x996",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl3, wh0",
+      "defs": [
+        "vec3.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec0.hi",
+          "producer": "g2@0x92c.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 502,
+      "address": "0x99a",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x8, x11, #0x13",
+      "defs": [
+        "vec8.lo",
+        "vec8.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 503,
+      "address": "0x99a",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm3, x8, x3, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x98a.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x98a.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x98a.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x98a.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec8.lo",
+          "producer": "g2@0x99a.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec8.hi",
+          "producer": "g2@0x99a.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g2@0x996.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g2@0x956.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 504,
+      "address": "0x9a2",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmlh1, bmlh2",
+      "defs": [
+        "acc1.bmlh"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmlh",
+          "producer": "g2@0x944.2:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 505,
+      "address": "0x9a6",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x7, x11, #0x14",
+      "defs": [
+        "vec7.lo",
+        "vec7.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 506,
+      "address": "0x9aa",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x2, cml1",
+      "defs": [
+        "vec2.lo",
+        "vec2.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0x98a.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0x9a2.0:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 507,
+      "address": "0x9aa",
+      "bundle_slot": 1,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhl1, bmhl2",
+      "defs": [
+        "acc1.bmhl"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmhl",
+          "producer": "g2@0x944.2:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 508,
+      "address": "0x9aa",
+      "bundle_slot": 2,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm3, x2, x7, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x99a.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x99a.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x99a.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x99a.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec2.lo",
+          "producer": "g2@0x9aa.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec2.hi",
+          "producer": "g2@0x9aa.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec7.lo",
+          "producer": "g2@0x9a6.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec7.hi",
+          "producer": "g2@0x9a6.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 509,
+      "address": "0x9b4",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhh1, bmhh2",
+      "defs": [
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmhh",
+          "producer": "g2@0x944.2:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 510,
+      "address": "0x9b8",
+      "bundle_slot": 0,
+      "op": "vups.4x",
+      "role": "expanded_q4",
+      "text": "vups.4x\tdm1, x6, s0, upssign0",
+      "defs": [
+        "acc1.bmll",
+        "acc1.bmlh",
+        "acc1.bmhl",
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "vec6.lo",
+          "producer": "g2@0x944.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "vec6.hi",
+          "producer": "g2@0x944.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "s0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "upssign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 511,
+      "address": "0x9b8",
+      "bundle_slot": 1,
+      "op": "vadd",
+      "role": "vector_arith",
+      "text": "vadd\tdm2, dm1, dm0, r0",
+      "defs": [
+        "acc2.bmll",
+        "acc2.bmlh",
+        "acc2.bmhl",
+        "acc2.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0x9b8.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0x9b8.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0x9b8.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0x9b8.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 512,
+      "address": "0x9c0",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x5, cmh1",
+      "defs": [
+        "vec5.lo",
+        "vec5.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0x9b8.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0x9b8.0:vups.4x",
+          "producer_kind": "expanded_q4"
+        }
+      ]
+    },
+    {
+      "index": 513,
+      "address": "0x9c0",
+      "bundle_slot": 1,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x6, x11, #0x16",
+      "defs": [
+        "vec6.lo",
+        "vec6.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 514,
+      "address": "0x9c0",
+      "bundle_slot": 2,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm3, x5, x9, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x9aa.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x9aa.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x9aa.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x9aa.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec5.lo",
+          "producer": "g2@0x9c0.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec5.hi",
+          "producer": "g2@0x9c0.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec9.lo",
+          "producer": "g2@0x97a.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec9.hi",
+          "producer": "g2@0x97a.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 515,
+      "address": "0x9ca",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x9, x11, #0x17",
+      "defs": [
+        "vec9.lo",
+        "vec9.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 516,
+      "address": "0x9ca",
+      "bundle_slot": 1,
+      "op": "vsub.f",
+      "role": "vector_arith",
+      "text": "vsub.f\tdm2, dm2, dm0, r5",
+      "defs": [
+        "acc2.bmll",
+        "acc2.bmlh",
+        "acc2.bmhl",
+        "acc2.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmll",
+          "producer": "g2@0x9b8.1:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc2.bmlh",
+          "producer": "g2@0x9b8.1:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc2.bmhl",
+          "producer": "g2@0x9b8.1:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc2.bmhh",
+          "producer": "g2@0x9b8.1:vadd",
+          "producer_kind": "vector_arith"
+        },
+        {
+          "cell": "acc0.bmll",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmlh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhl",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "acc0.bmhh",
+          "producer": "entry",
+          "producer_kind": "entry"
+        },
+        {
+          "cell": "r5",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 517,
+      "address": "0x9d2",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x0, x11, #0x19",
+      "defs": [
+        "vec0.lo",
+        "vec0.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 518,
+      "address": "0x9d6",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmll1, bmll4",
+      "defs": [
+        "acc1.bmll"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0x982.0:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 519,
+      "address": "0x9d6",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm3, x0, x1, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x9c0.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x9c0.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x9c0.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x9c0.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec0.lo",
+          "producer": "g2@0x9d2.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec0.hi",
+          "producer": "g2@0x9d2.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec1.lo",
+          "producer": "g2@0x986.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec1.hi",
+          "producer": "g2@0x986.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 520,
+      "address": "0x9de",
+      "bundle_slot": 0,
+      "op": "nop",
+      "role": "nop",
+      "text": "nop",
+      "defs": [],
+      "uses": []
+    },
+    {
+      "index": 521,
+      "address": "0x9e0",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl8, wh5",
+      "defs": [
+        "vec8.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec5.hi",
+          "producer": "g2@0x9c0.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 522,
+      "address": "0x9e4",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmlh1, bmlh4",
+      "defs": [
+        "acc1.bmlh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g2@0x982.0:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 523,
+      "address": "0x9e4",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm3, x3, x8, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x9d6.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x9d6.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x9d6.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x9d6.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g2@0x996.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g2@0x956.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec8.lo",
+          "producer": "g2@0x9e0.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec8.hi",
+          "producer": "g2@0x99a.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 524,
+      "address": "0x9ec",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhh1, bmhh4",
+      "defs": [
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g2@0x982.0:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 525,
+      "address": "0x9f0",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x3, cml1",
+      "defs": [
+        "vec3.lo",
+        "vec3.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0x9d6.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0x9e4.0:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 526,
+      "address": "0x9f0",
+      "bundle_slot": 1,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl2, wh2",
+      "defs": [
+        "vec2.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec2.hi",
+          "producer": "g2@0x9aa.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 527,
+      "address": "0x9f8",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhl1, bmhl4",
+      "defs": [
+        "acc1.bmhl"
+      ],
+      "uses": [
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g2@0x982.0:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 528,
+      "address": "0x9f8",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm3, x2, x7, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x9e4.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x9e4.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x9e4.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x9e4.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec2.lo",
+          "producer": "g2@0x9f0.1:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec2.hi",
+          "producer": "g2@0x9aa.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec7.lo",
+          "producer": "g2@0x9a6.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec7.hi",
+          "producer": "g2@0x9a6.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 529,
+      "address": "0xa00",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmll1, bmll2",
+      "defs": [
+        "acc1.bmll"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmll",
+          "producer": "g2@0x9ca.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 530,
+      "address": "0xa04",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x1, cmh1",
+      "defs": [
+        "vec1.lo",
+        "vec1.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0x9f8.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0x9ec.0:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 531,
+      "address": "0xa04",
+      "bundle_slot": 1,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmlh1, bmlh2",
+      "defs": [
+        "acc1.bmlh"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmlh",
+          "producer": "g2@0x9ca.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 532,
+      "address": "0xa0c",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhl1, bmhl2",
+      "defs": [
+        "acc1.bmhl"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmhl",
+          "producer": "g2@0x9ca.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 533,
+      "address": "0xa0c",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm3, dm3, x2, x4, r4",
+      "defs": [
+        "acc3.bmll",
+        "acc3.bmlh",
+        "acc3.bmhl",
+        "acc3.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0x9f8.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0x9f8.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0x9f8.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0x9f8.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec2.lo",
+          "producer": "g2@0x9f0.1:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec2.hi",
+          "producer": "g2@0x9aa.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec4.lo",
+          "producer": "g2@0x966.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g2@0x966.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 534,
+      "address": "0xa14",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmhh1, bmhh2",
+      "defs": [
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmhh",
+          "producer": "g2@0x9ca.1:vsub.f",
+          "producer_kind": "vector_arith"
+        }
+      ]
+    },
+    {
+      "index": 535,
+      "address": "0xa18",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x5, cml1",
+      "defs": [
+        "vec5.lo",
+        "vec5.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0xa00.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0xa04.1:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 536,
+      "address": "0xa18",
+      "bundle_slot": 1,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x2, x11, #0x1a",
+      "defs": [
+        "vec2.lo",
+        "vec2.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 537,
+      "address": "0xa20",
+      "bundle_slot": 0,
+      "op": "vconv.bf16.fp32",
+      "role": "bf16_coeff",
+      "text": "vconv.bf16.fp32\t x4, cmh1",
+      "defs": [
+        "vec4.lo",
+        "vec4.hi"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0xa0c.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0xa14.0:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 538,
+      "address": "0xa20",
+      "bundle_slot": 1,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x6, x11, #0x1b",
+      "defs": [
+        "vec6.lo",
+        "vec6.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 539,
+      "address": "0xa20",
+      "bundle_slot": 2,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm2, dm3, x5, x6, r4",
+      "defs": [
+        "acc2.bmll",
+        "acc2.bmlh",
+        "acc2.bmhl",
+        "acc2.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc3.bmll",
+          "producer": "g2@0xa0c.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmlh",
+          "producer": "g2@0xa0c.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhl",
+          "producer": "g2@0xa0c.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc3.bmhh",
+          "producer": "g2@0xa0c.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec5.lo",
+          "producer": "g2@0xa18.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec5.hi",
+          "producer": "g2@0xa18.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec6.lo",
+          "producer": "g2@0xa20.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec6.hi",
+          "producer": "g2@0xa20.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 540,
+      "address": "0xa2a",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x7, x11, #0x1c",
+      "defs": [
+        "vec7.lo",
+        "vec7.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 541,
+      "address": "0xa2e",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl8, wh1",
+      "defs": [
+        "vec8.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec1.hi",
+          "producer": "g2@0xa04.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 542,
+      "address": "0xa32",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl9, wh5",
+      "defs": [
+        "vec9.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec5.hi",
+          "producer": "g2@0xa18.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 543,
+      "address": "0xa32",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm1, dm2, x8, x9, r4",
+      "defs": [
+        "acc1.bmll",
+        "acc1.bmlh",
+        "acc1.bmhl",
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc2.bmll",
+          "producer": "g2@0xa20.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc2.bmlh",
+          "producer": "g2@0xa20.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc2.bmhl",
+          "producer": "g2@0xa20.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc2.bmhh",
+          "producer": "g2@0xa20.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec8.lo",
+          "producer": "g2@0xa2e.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec8.hi",
+          "producer": "g2@0x99a.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec9.lo",
+          "producer": "g2@0xa32.0:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec9.hi",
+          "producer": "g2@0x9ca.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 544,
+      "address": "0xa3a",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\tbmll4, lfh0",
+      "defs": [
+        "acc4.bmll"
+      ],
+      "uses": [
+        {
+          "cell": "lfh0",
+          "producer": "g2@0x84c.0:vmov",
+          "producer_kind": "register_move"
+        }
+      ]
+    },
+    {
+      "index": 545,
+      "address": "0xa3e",
+      "bundle_slot": 0,
+      "op": "lda.s16",
+      "role": "lda.s16",
+      "text": "lda.s16\t r7, [p3], #0x2",
+      "defs": [
+        "r7",
+        "p3"
+      ],
+      "uses": [
+        {
+          "cell": "p3",
+          "producer": "g1@0x78a.0:lda.s16",
+          "producer_kind": "lda.s16"
+        }
+      ]
+    },
+    {
+      "index": 546,
+      "address": "0xa3e",
+      "bundle_slot": 1,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl3, wh3",
+      "defs": [
+        "vec3.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec3.hi",
+          "producer": "g2@0x9f0.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 547,
+      "address": "0xa44",
+      "bundle_slot": 0,
+      "op": "vldb",
+      "role": "vector_load",
+      "text": "vldb\t wl2, [p5], #0x40",
+      "defs": [
+        "vec2.lo"
+      ],
+      "uses": [
+        {
+          "cell": "p5",
+          "producer": "g0@0x26c.3:add.nc",
+          "producer_kind": "add.nc"
+        }
+      ]
+    },
+    {
+      "index": 548,
+      "address": "0xa44",
+      "bundle_slot": 1,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x10, x11, #0x1d",
+      "defs": [
+        "vec10.lo",
+        "vec10.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 549,
+      "address": "0xa44",
+      "bundle_slot": 2,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm1, dm1, x3, x10, r4",
+      "defs": [
+        "acc1.bmll",
+        "acc1.bmlh",
+        "acc1.bmhl",
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0xa32.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0xa32.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0xa32.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0xa32.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g2@0xa3e.1:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g2@0x9f0.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec10.lo",
+          "producer": "g2@0xa44.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec10.hi",
+          "producer": "g2@0xa44.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 550,
+      "address": "0xa4e",
+      "bundle_slot": 0,
+      "op": "nop",
+      "role": "nop",
+      "text": "nop",
+      "defs": [],
+      "uses": []
+    },
+    {
+      "index": 551,
+      "address": "0xa50",
+      "bundle_slot": 0,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x0, x11, #0x1e",
+      "defs": [
+        "vec0.lo",
+        "vec0.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 552,
+      "address": "0xa54",
+      "bundle_slot": 0,
+      "op": "vlda",
+      "role": "vector_load",
+      "text": "vlda\t x8, [p0], #0x40",
+      "defs": [
+        "vec8.lo",
+        "vec8.hi"
+      ],
+      "uses": [
+        {
+          "cell": "p0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 553,
+      "address": "0xa54",
+      "bundle_slot": 1,
+      "op": "vldb",
+      "role": "vector_load",
+      "text": "vldb\t wl6, [p4], #0x40",
+      "defs": [
+        "vec6.lo"
+      ],
+      "uses": [
+        {
+          "cell": "p4",
+          "producer": "g0@0x284.2:add.nc",
+          "producer_kind": "add.nc"
+        }
+      ]
+    },
+    {
+      "index": 554,
+      "address": "0xa54",
+      "bundle_slot": 2,
+      "op": "vextbcst.16",
+      "role": "activation_lane_broadcast",
+      "text": "vextbcst.16\t x11, x11, #0x1f",
+      "defs": [
+        "vec11.lo",
+        "vec11.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec11.lo",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec11.hi",
+          "producer": "g2@0x7de.0:vldb",
+          "producer_kind": "vector_load"
+        }
+      ]
+    },
+    {
+      "index": 555,
+      "address": "0xa54",
+      "bundle_slot": 3,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm1, dm1, x3, x0, r4",
+      "defs": [
+        "acc1.bmll",
+        "acc1.bmlh",
+        "acc1.bmhl",
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0xa44.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0xa44.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0xa44.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0xa44.2:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g2@0xa3e.1:vmov",
+          "producer_kind": "register_move"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g2@0x9f0.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        },
+        {
+          "cell": "vec0.lo",
+          "producer": "g2@0xa50.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "vec0.hi",
+          "producer": "g2@0xa50.0:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 556,
+      "address": "0xa60",
+      "bundle_slot": 0,
+      "op": "vmov",
+      "role": "register_move",
+      "text": "vmov\twl3, wh4",
+      "defs": [
+        "vec3.lo"
+      ],
+      "uses": [
+        {
+          "cell": "vec4.hi",
+          "producer": "g2@0xa20.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff"
+        }
+      ]
+    },
+    {
+      "index": 557,
+      "address": "0xa64",
+      "bundle_slot": 0,
+      "op": "vbcst.16",
+      "role": "scalar_broadcast",
+      "text": "vbcst.16\t x1, r7",
+      "defs": [
+        "vec1.lo",
+        "vec1.hi"
+      ],
+      "uses": [
+        {
+          "cell": "r7",
+          "producer": "g2@0xa3e.0:lda.s16",
+          "producer_kind": "lda.s16"
+        }
+      ]
+    },
+    {
+      "index": 558,
+      "address": "0xa68",
+      "bundle_slot": 0,
+      "op": "vldb",
+      "role": "vector_load",
+      "text": "vldb\t x7, [p0], #0x40",
+      "defs": [
+        "vec7.lo",
+        "vec7.hi"
+      ],
+      "uses": [
+        {
+          "cell": "p0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 559,
+      "address": "0xa68",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm1, dm1, x1, x2, r4",
+      "defs": [
+        "acc1.bmll",
+        "acc1.bmlh",
+        "acc1.bmhl",
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0xa54.3:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0xa54.3:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0xa54.3:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0xa54.3:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec1.lo",
+          "producer": "g2@0xa64.0:vbcst.16",
+          "producer_kind": "scalar_broadcast"
+        },
+        {
+          "cell": "vec1.hi",
+          "producer": "g2@0xa64.0:vbcst.16",
+          "producer_kind": "scalar_broadcast"
+        },
+        {
+          "cell": "vec2.lo",
+          "producer": "g2@0xa44.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec2.hi",
+          "producer": "g2@0xa18.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 560,
+      "address": "0xa70",
+      "bundle_slot": 0,
+      "op": "vunpack",
+      "role": "unpacked_q4",
+      "text": "vunpack\tx5, wl7, unpacksign0",
+      "defs": [
+        "vec5.lo",
+        "vec5.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec7.lo",
+          "producer": "g2@0xa68.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "unpacksign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 561,
+      "address": "0xa74",
+      "bundle_slot": 0,
+      "op": "nop",
+      "role": "nop",
+      "text": "nop",
+      "defs": [],
+      "uses": []
+    },
+    {
+      "index": 562,
+      "address": "0xa76",
+      "bundle_slot": 0,
+      "op": "vunpack",
+      "role": "unpacked_q4",
+      "text": "vunpack\tx9, wl8, unpacksign0",
+      "defs": [
+        "vec9.lo",
+        "vec9.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec8.lo",
+          "producer": "g2@0xa54.0:vlda",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "unpacksign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 563,
+      "address": "0xa76",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm1, dm1, x8, x6, r4",
+      "defs": [
+        "acc1.bmll",
+        "acc1.bmlh",
+        "acc1.bmhl",
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0xa68.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0xa68.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0xa68.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0xa68.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec8.lo",
+          "producer": "g2@0xa54.0:vlda",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec8.hi",
+          "producer": "g2@0xa54.0:vlda",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec6.lo",
+          "producer": "g2@0xa54.1:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec6.hi",
+          "producer": "g2@0xa20.1:vextbcst.16",
+          "producer_kind": "activation_lane_broadcast"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 564,
+      "address": "0xa7e",
+      "bundle_slot": 0,
+      "op": "vunpack",
+      "role": "unpacked_q4",
+      "text": "vunpack\tx8, wh8, unpacksign0",
+      "defs": [
+        "vec8.lo",
+        "vec8.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec8.hi",
+          "producer": "g2@0xa54.0:vlda",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "unpacksign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 565,
+      "address": "0xa82",
+      "bundle_slot": 0,
+      "op": "vunpack",
+      "role": "unpacked_q4",
+      "text": "vunpack\tx10, wh7, unpacksign0",
+      "defs": [
+        "vec10.lo",
+        "vec10.hi"
+      ],
+      "uses": [
+        {
+          "cell": "vec7.hi",
+          "producer": "g2@0xa68.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "unpacksign0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 566,
+      "address": "0xa86",
+      "bundle_slot": 0,
+      "op": "vldb",
+      "role": "vector_load",
+      "text": "vldb\t x0, [p0], #0x40",
+      "defs": [
+        "vec0.lo",
+        "vec0.hi"
+      ],
+      "uses": [
+        {
+          "cell": "p0",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 567,
+      "address": "0xa86",
+      "bundle_slot": 1,
+      "op": "vmac.f",
+      "role": "mac_accumulate",
+      "text": "vmac.f\tdm1, dm1, x5, x7, r4",
+      "defs": [
+        "acc1.bmll",
+        "acc1.bmlh",
+        "acc1.bmhl",
+        "acc1.bmhh"
+      ],
+      "uses": [
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0xa76.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0xa76.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0xa76.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0xa76.1:vmac.f",
+          "producer_kind": "mac_accumulate"
+        },
+        {
+          "cell": "vec5.lo",
+          "producer": "g2@0xa70.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "vec5.hi",
+          "producer": "g2@0xa70.0:vunpack",
+          "producer_kind": "unpacked_q4"
+        },
+        {
+          "cell": "vec7.lo",
+          "producer": "g2@0xa68.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "vec7.hi",
+          "producer": "g2@0xa68.0:vldb",
+          "producer_kind": "vector_load"
+        },
+        {
+          "cell": "r4",
+          "producer": "entry",
+          "producer_kind": "entry"
+        }
+      ]
+    },
+    {
+      "index": 568,
+      "address": "0xa8e",
+      "bundle_slot": 0,
+      "op": "nop",
+      "role": "nop",
+      "text": "nop",
+      "defs": [],
+      "uses": []
+    },
+    {
+      "index": 569,
+      "address": "0xa90",
+      "bundle_slot": 0,
+      "op": "nop",
+      "role": "nop",
+      "text": "nop",
+      "defs": [],
+      "uses": []
+    }
+  ],
+  "input_boundary": {
+    "boundary": 2,
+    "summary": {
+      "boundary": 2,
+      "data_cells": 27,
+      "control_cells": 12,
+      "producer_classes": {
+        "entry": 12,
+        "persistent_group0": 3,
+        "previous_group": 24
+      }
+    },
+    "cells": [
+      {
+        "cell": "acc0.bmll",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x29e.1:vadd",
+        "last_use": "g7@0x1754.1:vsub.f",
+        "use_count": 128,
+        "span_slots": 1442,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "acc0.bmlh",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x29e.1:vadd",
+        "last_use": "g7@0x1754.1:vsub.f",
+        "use_count": 128,
+        "span_slots": 1442,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "acc0.bmhl",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x29e.1:vadd",
+        "last_use": "g7@0x1754.1:vsub.f",
+        "use_count": 128,
+        "span_slots": 1442,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "acc0.bmhh",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x29e.1:vadd",
+        "last_use": "g7@0x1754.1:vsub.f",
+        "use_count": 128,
+        "span_slots": 1442,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "acc4.bmlh",
+        "producer": "g1@0x6ce.0:vsub.f",
+        "producer_kind": "vector_arith",
+        "first_use": "g1@0x730.0:vmov",
+        "last_use": "g2@0x824.2:vmac.f",
+        "use_count": 2,
+        "span_slots": 95,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "acc4.bmhl",
+        "producer": "g1@0x6ce.0:vsub.f",
+        "producer_kind": "vector_arith",
+        "first_use": "g1@0x744.0:vmov",
+        "last_use": "g2@0x824.2:vmac.f",
+        "use_count": 2,
+        "span_slots": 95,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "acc4.bmhh",
+        "producer": "g1@0x6ce.0:vsub.f",
+        "producer_kind": "vector_arith",
+        "first_use": "g1@0x738.0:vmov",
+        "last_use": "g2@0x824.2:vmac.f",
+        "use_count": 2,
+        "span_slots": 95,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec3.hi",
+        "producer": "g1@0x73c.0:vconv.bf16.fp32",
+        "producer_kind": "bf16_coeff",
+        "first_use": "g1@0x78a.1:vmov",
+        "last_use": "g2@0x7fe.0:vmac.f",
+        "use_count": 4,
+        "span_slots": 53,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec2.hi",
+        "producer": "g1@0x764.1:vextbcst.16",
+        "producer_kind": "activation_lane",
+        "first_use": "g1@0x7b4.1:vmac.f",
+        "last_use": "g2@0x8a8.1:vmac.f",
+        "use_count": 3,
+        "span_slots": 92,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec4.lo",
+        "producer": "g1@0x76c.0:vconv.bf16.fp32",
+        "producer_kind": "bf16_coeff",
+        "first_use": "g2@0x7ee.1:vmac.f",
+        "last_use": "g2@0x7ee.1:vmac.f",
+        "use_count": 1,
+        "span_slots": 38,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec4.hi",
+        "producer": "g1@0x76c.0:vconv.bf16.fp32",
+        "producer_kind": "bf16_coeff",
+        "first_use": "g1@0x7ac.0:vmov",
+        "last_use": "g2@0x824.2:vmac.f",
+        "use_count": 3,
+        "span_slots": 54,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec6.hi",
+        "producer": "g1@0x76c.1:vextbcst.16",
+        "producer_kind": "activation_lane",
+        "first_use": "g1@0x76c.2:vmac.f",
+        "last_use": "g2@0x834.1:vmac.f",
+        "use_count": 3,
+        "span_slots": 57,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "acc4.bmll",
+        "producer": "g1@0x786.0:vmov",
+        "producer_kind": "register_move",
+        "first_use": "g2@0x824.2:vmac.f",
+        "last_use": "g2@0x824.2:vmac.f",
+        "use_count": 1,
+        "span_slots": 47,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec2.lo",
+        "producer": "g1@0x790.0:vldb",
+        "producer_kind": "vector_load",
+        "first_use": "g1@0x7b4.1:vmac.f",
+        "last_use": "g2@0x824.2:vmac.f",
+        "use_count": 2,
+        "span_slots": 44,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec3.lo",
+        "producer": "g1@0x7ac.0:vmov",
+        "producer_kind": "register_move",
+        "first_use": "g2@0x7fe.0:vmac.f",
+        "last_use": "g2@0x7fe.0:vmac.f",
+        "use_count": 1,
+        "span_slots": 22,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec9.lo",
+        "producer": "g1@0x7c2.0:vunpack",
+        "producer_kind": "unpacked_q4",
+        "first_use": "g2@0x7de.1:vmac.f",
+        "last_use": "g2@0x7e6.0:vups.4x",
+        "use_count": 2,
+        "span_slots": 10,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec9.hi",
+        "producer": "g1@0x7c2.0:vunpack",
+        "producer_kind": "unpacked_q4",
+        "first_use": "g2@0x7de.1:vmac.f",
+        "last_use": "g2@0x7e6.0:vups.4x",
+        "use_count": 2,
+        "span_slots": 10,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec8.lo",
+        "producer": "g1@0x7ca.0:vunpack",
+        "producer_kind": "unpacked_q4",
+        "first_use": "g2@0x7ee.0:vups.4x",
+        "last_use": "g2@0x7ee.0:vups.4x",
+        "use_count": 1,
+        "span_slots": 10,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec8.hi",
+        "producer": "g1@0x7ca.0:vunpack",
+        "producer_kind": "unpacked_q4",
+        "first_use": "g2@0x7ee.0:vups.4x",
+        "last_use": "g2@0x7ee.0:vups.4x",
+        "use_count": 1,
+        "span_slots": 10,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec10.lo",
+        "producer": "g1@0x7ce.0:vunpack",
+        "producer_kind": "unpacked_q4",
+        "first_use": "g2@0x7de.1:vmac.f",
+        "last_use": "g2@0x866.1:vups.4x",
+        "use_count": 2,
+        "span_slots": 45,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec10.hi",
+        "producer": "g1@0x7ce.0:vunpack",
+        "producer_kind": "unpacked_q4",
+        "first_use": "g2@0x7de.1:vmac.f",
+        "last_use": "g2@0x866.1:vups.4x",
+        "use_count": 2,
+        "span_slots": 45,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec0.lo",
+        "producer": "g1@0x7d2.0:vldb",
+        "producer_kind": "vector_load",
+        "first_use": "g2@0x7ee.1:vmac.f",
+        "last_use": "g2@0x812.0:vunpack",
+        "use_count": 2,
+        "span_slots": 18,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec0.hi",
+        "producer": "g1@0x7d2.0:vldb",
+        "producer_kind": "vector_load",
+        "first_use": "g2@0x7ee.1:vmac.f",
+        "last_use": "g2@0x8a2.0:vunpack",
+        "use_count": 2,
+        "span_slots": 59,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "acc1.bmll",
+        "producer": "g1@0x7d2.1:vmac.f",
+        "producer_kind": "accumulator_carry",
+        "first_use": "g2@0x7de.1:vmac.f",
+        "last_use": "g2@0x7de.1:vmac.f",
+        "use_count": 1,
+        "span_slots": 4,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "acc1.bmlh",
+        "producer": "g1@0x7d2.1:vmac.f",
+        "producer_kind": "accumulator_carry",
+        "first_use": "g2@0x7de.1:vmac.f",
+        "last_use": "g2@0x7de.1:vmac.f",
+        "use_count": 1,
+        "span_slots": 4,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "acc1.bmhl",
+        "producer": "g1@0x7d2.1:vmac.f",
+        "producer_kind": "accumulator_carry",
+        "first_use": "g2@0x7de.1:vmac.f",
+        "last_use": "g2@0x7de.1:vmac.f",
+        "use_count": 1,
+        "span_slots": 4,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "acc1.bmhh",
+        "producer": "g1@0x7d2.1:vmac.f",
+        "producer_kind": "accumulator_carry",
+        "first_use": "g2@0x7de.1:vmac.f",
+        "last_use": "g2@0x7de.1:vmac.f",
+        "use_count": 1,
+        "span_slots": 4,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "p0",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x260.0:vlda",
+        "last_use": "g7@0x15e6.0:vldb",
+        "use_count": 32,
+        "span_slots": 1364,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "p1",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x260.1:vldb",
+        "last_use": "g7@0x156e.0:paddb",
+        "use_count": 9,
+        "span_slots": 1328,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "r16",
+        "producer": "g0@0x260.3:add.nc",
+        "producer_kind": "add.nc",
+        "first_use": "g0@0x284.2:add.nc",
+        "last_use": "g7@0x17d4.0:mov",
+        "use_count": 2,
+        "span_slots": 1493,
+        "relative_producer_class": "persistent_group0"
+      },
+      {
+        "cell": "unpacksign0",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x26c.1:vunpack",
+        "last_use": "g7@0x16ce.0:vunpack",
+        "use_count": 64,
+        "span_slots": 1422,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "p5",
+        "producer": "g0@0x26c.3:add.nc",
+        "producer_kind": "add.nc",
+        "first_use": "g0@0x4dc.0:vldb",
+        "last_use": "g7@0x17ca.0:vldb",
+        "use_count": 8,
+        "span_slots": 1486,
+        "relative_producer_class": "persistent_group0"
+      },
+      {
+        "cell": "p4",
+        "producer": "g0@0x284.2:add.nc",
+        "producer_kind": "add.nc",
+        "first_use": "g0@0x4ec.1:vldb",
+        "last_use": "g7@0x17de.0:vldb",
+        "use_count": 8,
+        "span_slots": 1485,
+        "relative_producer_class": "persistent_group0"
+      },
+      {
+        "cell": "s0",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x29e.0:vups.4x",
+        "last_use": "g7@0x1742.0:vups.4x",
+        "use_count": 64,
+        "span_slots": 1437,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "upssign0",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x29e.0:vups.4x",
+        "last_use": "g7@0x1742.0:vups.4x",
+        "use_count": 64,
+        "span_slots": 1437,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "r0",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x29e.1:vadd",
+        "last_use": "g7@0x1742.1:vadd",
+        "use_count": 64,
+        "span_slots": 1437,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "r5",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x2ae.1:vsub.f",
+        "last_use": "g7@0x1754.1:vsub.f",
+        "use_count": 64,
+        "span_slots": 1438,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "r4",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x30a.1:vmul.f",
+        "last_use": "g7@0x1838.0:vmac.f",
+        "use_count": 272,
+        "span_slots": 1481,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "p3",
+        "producer": "g1@0x78a.0:lda.s16",
+        "producer_kind": "lda.s16",
+        "first_use": "g2@0xa3e.0:lda.s16",
+        "last_use": "g2@0xa3e.0:lda.s16",
+        "use_count": 1,
+        "span_slots": 189,
+        "relative_producer_class": "previous_group"
+      }
+    ]
+  },
+  "output_boundary": {
+    "boundary": 3,
+    "summary": {
+      "boundary": 3,
+      "data_cells": 27,
+      "control_cells": 12,
+      "producer_classes": {
+        "entry": 12,
+        "persistent_group0": 3,
+        "previous_group": 24
+      }
+    },
+    "cells": [
+      {
+        "cell": "acc0.bmll",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x29e.1:vadd",
+        "last_use": "g7@0x1754.1:vsub.f",
+        "use_count": 128,
+        "span_slots": 1442,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "acc0.bmlh",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x29e.1:vadd",
+        "last_use": "g7@0x1754.1:vsub.f",
+        "use_count": 128,
+        "span_slots": 1442,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "acc0.bmhl",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x29e.1:vadd",
+        "last_use": "g7@0x1754.1:vsub.f",
+        "use_count": 128,
+        "span_slots": 1442,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "acc0.bmhh",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x29e.1:vadd",
+        "last_use": "g7@0x1754.1:vsub.f",
+        "use_count": 128,
+        "span_slots": 1442,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "acc4.bmlh",
+        "producer": "g2@0x982.0:vsub.f",
+        "producer_kind": "vector_arith",
+        "first_use": "g2@0x9e4.0:vmov",
+        "last_use": "g3@0xad8.2:vmac.f",
+        "use_count": 2,
+        "span_slots": 95,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "acc4.bmhl",
+        "producer": "g2@0x982.0:vsub.f",
+        "producer_kind": "vector_arith",
+        "first_use": "g2@0x9f8.0:vmov",
+        "last_use": "g3@0xad8.2:vmac.f",
+        "use_count": 2,
+        "span_slots": 95,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "acc4.bmhh",
+        "producer": "g2@0x982.0:vsub.f",
+        "producer_kind": "vector_arith",
+        "first_use": "g2@0x9ec.0:vmov",
+        "last_use": "g3@0xad8.2:vmac.f",
+        "use_count": 2,
+        "span_slots": 95,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec3.hi",
+        "producer": "g2@0x9f0.0:vconv.bf16.fp32",
+        "producer_kind": "bf16_coeff",
+        "first_use": "g2@0xa3e.1:vmov",
+        "last_use": "g3@0xab2.0:vmac.f",
+        "use_count": 4,
+        "span_slots": 53,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec2.hi",
+        "producer": "g2@0xa18.1:vextbcst.16",
+        "producer_kind": "activation_lane",
+        "first_use": "g2@0xa68.1:vmac.f",
+        "last_use": "g3@0xb5c.1:vmac.f",
+        "use_count": 3,
+        "span_slots": 92,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec4.lo",
+        "producer": "g2@0xa20.0:vconv.bf16.fp32",
+        "producer_kind": "bf16_coeff",
+        "first_use": "g3@0xaa2.1:vmac.f",
+        "last_use": "g3@0xaa2.1:vmac.f",
+        "use_count": 1,
+        "span_slots": 38,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec4.hi",
+        "producer": "g2@0xa20.0:vconv.bf16.fp32",
+        "producer_kind": "bf16_coeff",
+        "first_use": "g2@0xa60.0:vmov",
+        "last_use": "g3@0xad8.2:vmac.f",
+        "use_count": 3,
+        "span_slots": 54,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec6.hi",
+        "producer": "g2@0xa20.1:vextbcst.16",
+        "producer_kind": "activation_lane",
+        "first_use": "g2@0xa20.2:vmac.f",
+        "last_use": "g3@0xae8.1:vmac.f",
+        "use_count": 3,
+        "span_slots": 57,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "acc4.bmll",
+        "producer": "g2@0xa3a.0:vmov",
+        "producer_kind": "register_move",
+        "first_use": "g3@0xad8.2:vmac.f",
+        "last_use": "g3@0xad8.2:vmac.f",
+        "use_count": 1,
+        "span_slots": 47,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec2.lo",
+        "producer": "g2@0xa44.0:vldb",
+        "producer_kind": "vector_load",
+        "first_use": "g2@0xa68.1:vmac.f",
+        "last_use": "g3@0xad8.2:vmac.f",
+        "use_count": 2,
+        "span_slots": 44,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec3.lo",
+        "producer": "g2@0xa60.0:vmov",
+        "producer_kind": "register_move",
+        "first_use": "g3@0xab2.0:vmac.f",
+        "last_use": "g3@0xab2.0:vmac.f",
+        "use_count": 1,
+        "span_slots": 22,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec9.lo",
+        "producer": "g2@0xa76.0:vunpack",
+        "producer_kind": "unpacked_q4",
+        "first_use": "g3@0xa92.1:vmac.f",
+        "last_use": "g3@0xa9a.0:vups.4x",
+        "use_count": 2,
+        "span_slots": 10,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec9.hi",
+        "producer": "g2@0xa76.0:vunpack",
+        "producer_kind": "unpacked_q4",
+        "first_use": "g3@0xa92.1:vmac.f",
+        "last_use": "g3@0xa9a.0:vups.4x",
+        "use_count": 2,
+        "span_slots": 10,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec8.lo",
+        "producer": "g2@0xa7e.0:vunpack",
+        "producer_kind": "unpacked_q4",
+        "first_use": "g3@0xaa2.0:vups.4x",
+        "last_use": "g3@0xaa2.0:vups.4x",
+        "use_count": 1,
+        "span_slots": 10,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec8.hi",
+        "producer": "g2@0xa7e.0:vunpack",
+        "producer_kind": "unpacked_q4",
+        "first_use": "g3@0xaa2.0:vups.4x",
+        "last_use": "g3@0xaa2.0:vups.4x",
+        "use_count": 1,
+        "span_slots": 10,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec10.lo",
+        "producer": "g2@0xa82.0:vunpack",
+        "producer_kind": "unpacked_q4",
+        "first_use": "g3@0xa92.1:vmac.f",
+        "last_use": "g3@0xb1a.1:vups.4x",
+        "use_count": 2,
+        "span_slots": 45,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec10.hi",
+        "producer": "g2@0xa82.0:vunpack",
+        "producer_kind": "unpacked_q4",
+        "first_use": "g3@0xa92.1:vmac.f",
+        "last_use": "g3@0xb1a.1:vups.4x",
+        "use_count": 2,
+        "span_slots": 45,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec0.lo",
+        "producer": "g2@0xa86.0:vldb",
+        "producer_kind": "vector_load",
+        "first_use": "g3@0xaa2.1:vmac.f",
+        "last_use": "g3@0xac6.0:vunpack",
+        "use_count": 2,
+        "span_slots": 18,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "vec0.hi",
+        "producer": "g2@0xa86.0:vldb",
+        "producer_kind": "vector_load",
+        "first_use": "g3@0xaa2.1:vmac.f",
+        "last_use": "g3@0xb56.0:vunpack",
+        "use_count": 2,
+        "span_slots": 59,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "acc1.bmll",
+        "producer": "g2@0xa86.1:vmac.f",
+        "producer_kind": "accumulator_carry",
+        "first_use": "g3@0xa92.1:vmac.f",
+        "last_use": "g3@0xa92.1:vmac.f",
+        "use_count": 1,
+        "span_slots": 4,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "acc1.bmlh",
+        "producer": "g2@0xa86.1:vmac.f",
+        "producer_kind": "accumulator_carry",
+        "first_use": "g3@0xa92.1:vmac.f",
+        "last_use": "g3@0xa92.1:vmac.f",
+        "use_count": 1,
+        "span_slots": 4,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "acc1.bmhl",
+        "producer": "g2@0xa86.1:vmac.f",
+        "producer_kind": "accumulator_carry",
+        "first_use": "g3@0xa92.1:vmac.f",
+        "last_use": "g3@0xa92.1:vmac.f",
+        "use_count": 1,
+        "span_slots": 4,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "acc1.bmhh",
+        "producer": "g2@0xa86.1:vmac.f",
+        "producer_kind": "accumulator_carry",
+        "first_use": "g3@0xa92.1:vmac.f",
+        "last_use": "g3@0xa92.1:vmac.f",
+        "use_count": 1,
+        "span_slots": 4,
+        "relative_producer_class": "previous_group"
+      },
+      {
+        "cell": "p0",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x260.0:vlda",
+        "last_use": "g7@0x15e6.0:vldb",
+        "use_count": 32,
+        "span_slots": 1364,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "p1",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x260.1:vldb",
+        "last_use": "g7@0x156e.0:paddb",
+        "use_count": 9,
+        "span_slots": 1328,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "r16",
+        "producer": "g0@0x260.3:add.nc",
+        "producer_kind": "add.nc",
+        "first_use": "g0@0x284.2:add.nc",
+        "last_use": "g7@0x17d4.0:mov",
+        "use_count": 2,
+        "span_slots": 1493,
+        "relative_producer_class": "persistent_group0"
+      },
+      {
+        "cell": "unpacksign0",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x26c.1:vunpack",
+        "last_use": "g7@0x16ce.0:vunpack",
+        "use_count": 64,
+        "span_slots": 1422,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "p5",
+        "producer": "g0@0x26c.3:add.nc",
+        "producer_kind": "add.nc",
+        "first_use": "g0@0x4dc.0:vldb",
+        "last_use": "g7@0x17ca.0:vldb",
+        "use_count": 8,
+        "span_slots": 1486,
+        "relative_producer_class": "persistent_group0"
+      },
+      {
+        "cell": "p4",
+        "producer": "g0@0x284.2:add.nc",
+        "producer_kind": "add.nc",
+        "first_use": "g0@0x4ec.1:vldb",
+        "last_use": "g7@0x17de.0:vldb",
+        "use_count": 8,
+        "span_slots": 1485,
+        "relative_producer_class": "persistent_group0"
+      },
+      {
+        "cell": "s0",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x29e.0:vups.4x",
+        "last_use": "g7@0x1742.0:vups.4x",
+        "use_count": 64,
+        "span_slots": 1437,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "upssign0",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x29e.0:vups.4x",
+        "last_use": "g7@0x1742.0:vups.4x",
+        "use_count": 64,
+        "span_slots": 1437,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "r0",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x29e.1:vadd",
+        "last_use": "g7@0x1742.1:vadd",
+        "use_count": 64,
+        "span_slots": 1437,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "r5",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x2ae.1:vsub.f",
+        "last_use": "g7@0x1754.1:vsub.f",
+        "use_count": 64,
+        "span_slots": 1438,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "r4",
+        "producer": "entry",
+        "producer_kind": "entry",
+        "first_use": "g0@0x30a.1:vmul.f",
+        "last_use": "g7@0x1838.0:vmac.f",
+        "use_count": 272,
+        "span_slots": 1481,
+        "relative_producer_class": "entry"
+      },
+      {
+        "cell": "p3",
+        "producer": "g2@0xa3e.0:lda.s16",
+        "producer_kind": "lda.s16",
+        "first_use": "g3@0xcf2.0:lda.s16",
+        "last_use": "g3@0xcf2.0:lda.s16",
+        "use_count": 1,
+        "span_slots": 189,
+        "relative_producer_class": "previous_group"
+      }
+    ]
+  },
+  "producer_changes": [
+    {
+      "cell": "acc1.bmhh",
+      "before": "g1@0x7d2.1:vmac.f",
+      "after": "g2@0xa86.1:vmac.f",
+      "before_kind": "accumulator_carry",
+      "after_kind": "accumulator_carry"
+    },
+    {
+      "cell": "acc1.bmhl",
+      "before": "g1@0x7d2.1:vmac.f",
+      "after": "g2@0xa86.1:vmac.f",
+      "before_kind": "accumulator_carry",
+      "after_kind": "accumulator_carry"
+    },
+    {
+      "cell": "acc1.bmlh",
+      "before": "g1@0x7d2.1:vmac.f",
+      "after": "g2@0xa86.1:vmac.f",
+      "before_kind": "accumulator_carry",
+      "after_kind": "accumulator_carry"
+    },
+    {
+      "cell": "acc1.bmll",
+      "before": "g1@0x7d2.1:vmac.f",
+      "after": "g2@0xa86.1:vmac.f",
+      "before_kind": "accumulator_carry",
+      "after_kind": "accumulator_carry"
+    },
+    {
+      "cell": "acc4.bmhh",
+      "before": "g1@0x6ce.0:vsub.f",
+      "after": "g2@0x982.0:vsub.f",
+      "before_kind": "vector_arith",
+      "after_kind": "vector_arith"
+    },
+    {
+      "cell": "acc4.bmhl",
+      "before": "g1@0x6ce.0:vsub.f",
+      "after": "g2@0x982.0:vsub.f",
+      "before_kind": "vector_arith",
+      "after_kind": "vector_arith"
+    },
+    {
+      "cell": "acc4.bmlh",
+      "before": "g1@0x6ce.0:vsub.f",
+      "after": "g2@0x982.0:vsub.f",
+      "before_kind": "vector_arith",
+      "after_kind": "vector_arith"
+    },
+    {
+      "cell": "acc4.bmll",
+      "before": "g1@0x786.0:vmov",
+      "after": "g2@0xa3a.0:vmov",
+      "before_kind": "register_move",
+      "after_kind": "register_move"
+    },
+    {
+      "cell": "p3",
+      "before": "g1@0x78a.0:lda.s16",
+      "after": "g2@0xa3e.0:lda.s16",
+      "before_kind": "lda.s16",
+      "after_kind": "lda.s16"
+    },
+    {
+      "cell": "vec0.hi",
+      "before": "g1@0x7d2.0:vldb",
+      "after": "g2@0xa86.0:vldb",
+      "before_kind": "vector_load",
+      "after_kind": "vector_load"
+    },
+    {
+      "cell": "vec0.lo",
+      "before": "g1@0x7d2.0:vldb",
+      "after": "g2@0xa86.0:vldb",
+      "before_kind": "vector_load",
+      "after_kind": "vector_load"
+    },
+    {
+      "cell": "vec10.hi",
+      "before": "g1@0x7ce.0:vunpack",
+      "after": "g2@0xa82.0:vunpack",
+      "before_kind": "unpacked_q4",
+      "after_kind": "unpacked_q4"
+    },
+    {
+      "cell": "vec10.lo",
+      "before": "g1@0x7ce.0:vunpack",
+      "after": "g2@0xa82.0:vunpack",
+      "before_kind": "unpacked_q4",
+      "after_kind": "unpacked_q4"
+    },
+    {
+      "cell": "vec2.hi",
+      "before": "g1@0x764.1:vextbcst.16",
+      "after": "g2@0xa18.1:vextbcst.16",
+      "before_kind": "activation_lane",
+      "after_kind": "activation_lane"
+    },
+    {
+      "cell": "vec2.lo",
+      "before": "g1@0x790.0:vldb",
+      "after": "g2@0xa44.0:vldb",
+      "before_kind": "vector_load",
+      "after_kind": "vector_load"
+    },
+    {
+      "cell": "vec3.hi",
+      "before": "g1@0x73c.0:vconv.bf16.fp32",
+      "after": "g2@0x9f0.0:vconv.bf16.fp32",
+      "before_kind": "bf16_coeff",
+      "after_kind": "bf16_coeff"
+    },
+    {
+      "cell": "vec3.lo",
+      "before": "g1@0x7ac.0:vmov",
+      "after": "g2@0xa60.0:vmov",
+      "before_kind": "register_move",
+      "after_kind": "register_move"
+    },
+    {
+      "cell": "vec4.hi",
+      "before": "g1@0x76c.0:vconv.bf16.fp32",
+      "after": "g2@0xa20.0:vconv.bf16.fp32",
+      "before_kind": "bf16_coeff",
+      "after_kind": "bf16_coeff"
+    },
+    {
+      "cell": "vec4.lo",
+      "before": "g1@0x76c.0:vconv.bf16.fp32",
+      "after": "g2@0xa20.0:vconv.bf16.fp32",
+      "before_kind": "bf16_coeff",
+      "after_kind": "bf16_coeff"
+    },
+    {
+      "cell": "vec6.hi",
+      "before": "g1@0x76c.1:vextbcst.16",
+      "after": "g2@0xa20.1:vextbcst.16",
+      "before_kind": "activation_lane",
+      "after_kind": "activation_lane"
+    },
+    {
+      "cell": "vec8.hi",
+      "before": "g1@0x7ca.0:vunpack",
+      "after": "g2@0xa7e.0:vunpack",
+      "before_kind": "unpacked_q4",
+      "after_kind": "unpacked_q4"
+    },
+    {
+      "cell": "vec8.lo",
+      "before": "g1@0x7ca.0:vunpack",
+      "after": "g2@0xa7e.0:vunpack",
+      "before_kind": "unpacked_q4",
+      "after_kind": "unpacked_q4"
+    },
+    {
+      "cell": "vec9.hi",
+      "before": "g1@0x7c2.0:vunpack",
+      "after": "g2@0xa76.0:vunpack",
+      "before_kind": "unpacked_q4",
+      "after_kind": "unpacked_q4"
+    },
+    {
+      "cell": "vec9.lo",
+      "before": "g1@0x7c2.0:vunpack",
+      "after": "g2@0xa76.0:vunpack",
+      "before_kind": "unpacked_q4",
+      "after_kind": "unpacked_q4"
+    }
+  ]
+}

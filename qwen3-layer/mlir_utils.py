@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import re
 
+MAIN16_LAYER_SCHEDULER_NAME = "q4nx_main16_layer_scheduler"
+MAIN16_CONTROL_ADDR = 0x3D00
+MAIN16_CONTROL_BYTES = 24
+MAIN16_RECORD_CONTROL_GUARD_BYTES = 0xE4
+
 
 def shim_bd_address(column: int, bd_id: int) -> int:
     return column * 0x02000000 + 0x1D004 + bd_id * 0x20
@@ -336,11 +341,7 @@ def require_main_record_phase_barrier(scope: str, mlir: str, first_acquire: int)
 
 def require_main_record_pingpong(scope: str, mlir: str) -> list[str]:
     errors: list[str] = []
-    linked_main16_core_kernel = (
-        "q4nx_main16_full_scheduler" in mlir
-        or "q4nx_main16_qkv_scheduler" in mlir
-        or "q4nx_main16_qkvo_scheduler" in mlir
-    )
+    linked_main16_core_kernel = MAIN16_LAYER_SCHEDULER_NAME in mlir
     pattern = (
         r"%(m[0-9]+_[0-9]+)_records_empty = aie\.lock\([^)]*\) "
         r"\{init = ([0-9]+) : i32"
@@ -360,6 +361,19 @@ def require_main_record_pingpong(scope: str, mlir: str) -> list[str]:
             rf"aie\.use_lock\(%{tile}_records_full,\s*Release,\s*([0-9]+)\)",
             mlir,
         )
+        if linked_main16_core_kernel:
+            control_buffer = re.search(
+                rf"%{tile}_[A-Za-z0-9_]*control[A-Za-z0-9_]* = "
+                rf"aie\.buffer\(%{tile}\) "
+                rf"\{{address = {MAIN16_CONTROL_ADDR} : i32",
+                mlir,
+            )
+            if control_buffer is not None:
+                errors.append(
+                    f"{scope}: {tile} declares a standalone control buffer at "
+                    f"0x{MAIN16_CONTROL_ADDR:04x}; generated main16 control words "
+                    "must live inside record_ping ownership"
+                )
         if not empty_acquires and not linked_main16_core_kernel:
             errors.append(f"{scope}: {tile}_records_empty is never acquired by the main core")
         for value in empty_acquires:
@@ -372,10 +386,39 @@ def require_main_record_pingpong(scope: str, mlir: str) -> list[str]:
         for suffix, bd_id, next_bd in (("ping", 4, 5), ("pong", 5, 4)):
             buffer_name = f"{tile}_record_{suffix}"
             buffer_marker = f"%{buffer_name} = aie.buffer(%{tile}) "
+            buffer_decl = re.search(
+                rf"%{buffer_name} = aie\.buffer\(%{tile}\) "
+                rf"\{{address = ([0-9]+) : i32, sym_name = \"{buffer_name}\"\}} "
+                rf": memref<([0-9]+)xi32>",
+                mlir,
+            )
             if buffer_marker not in mlir:
                 errors.append(f"{scope}: missing {buffer_name} buffer")
+            if linked_main16_core_kernel and suffix == "ping":
+                if buffer_decl is None:
+                    errors.append(f"{scope}: missing parseable {buffer_name} declaration")
+                else:
+                    address = int(buffer_decl.group(1))
+                    size_bytes = int(buffer_decl.group(2)) * 4
+                    if not (
+                        address <= MAIN16_CONTROL_ADDR
+                        and MAIN16_CONTROL_ADDR + MAIN16_CONTROL_BYTES <= address + size_bytes
+                    ):
+                        errors.append(
+                            f"{scope}: {buffer_name} range "
+                            f"0x{address:04x}..0x{address + size_bytes:04x} does not own "
+                            f"generated main16 control words "
+                            f"0x{MAIN16_CONTROL_ADDR:04x}.."
+                            f"0x{MAIN16_CONTROL_ADDR + MAIN16_CONTROL_BYTES:04x}"
+                        )
+                    if MAIN16_CONTROL_ADDR < address + MAIN16_RECORD_CONTROL_GUARD_BYTES:
+                        errors.append(
+                            f"{scope}: {buffer_name} control words start at "
+                            f"0x{MAIN16_CONTROL_ADDR:04x}, inside the guarded record "
+                            f"flush area ending at 0x{address + MAIN16_RECORD_CONTROL_GUARD_BYTES:04x}"
+                        )
             bd_pattern = (
-                rf"aie\.dma_bd\(%{buffer_name} : memref<17xi32>, "
+                rf"aie\.dma_bd\(%{buffer_name} : memref<[0-9]+xi32>, "
                 rf"{source_offset}, {source_length}\) "
                 rf"\{{(?=[^}}]*bd_id = {bd_id} : i32)"
                 rf"(?=[^}}]*next_bd_id = {next_bd} : i32)[^}}]*\}}"
@@ -390,8 +433,8 @@ def require_main_record_pingpong(scope: str, mlir: str) -> list[str]:
 
 def require_compact_record_packet_granularity(scope: str, mlir: str) -> list[str]:
     main_record_source = (
-        "record_ping : memref<17xi32>, 0, 17" in mlir
-        and "record_pong : memref<17xi32>, 0, 17" in mlir
+        re.search(r"record_ping : memref<[0-9]+xi32>, 0, 17", mlir) is not None
+        and re.search(r"record_pong : memref<[0-9]+xi32>, 0, 17", mlir) is not None
     )
     phase_sized_column_receive = (
         "memref<520xi32>, 0, 136" in mlir

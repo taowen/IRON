@@ -1,0 +1,289 @@
+# MyLM Q4NX Steady Transition Semantics
+
+This experiment annotates MyLM group2 with the group0-1 live state already
+applied. Group2 is the first true steady-to-steady section, so this is the
+best current learning artifact for a reusable assembly generator.
+
+## Checks
+
+- Group range: `0x7de..0xa92`
+- Parsed instruction slots: `189`
+- `vmac.f`: `33`
+- `vextbcst.16`: `32`
+- `vups.4x`: `8`
+- `vconv.bf16.fp32`: `17`
+- `vst`: `0`
+- Input boundary data/control cells: `27` / `12`
+- Output boundary data/control cells: `27` / `12`
+- Boundary cell names stable: `True`
+- Relative producer classes stable: `True`
+- Changed producer cells: `24`
+- Changed data/control cells: `23` / `1`
+
+## Interpretation
+
+- Group2 is a state transformer: it keeps the same boundary cell set while replacing the previous group's live producers with group2 producers.
+- The persistent entry/group0 cells are part of the steady contract and must not be treated as local temporaries.
+- A production exact rewrite should preserve this boundary transition before replacing MyLM's arithmetic contract.
+
+## Role Counts
+
+| Role | Slots |
+| --- | ---: |
+| `register_move` | 52 |
+| `mac_accumulate` | 33 |
+| `activation_lane_broadcast` | 32 |
+| `vector_arith` | 17 |
+| `bf16_coeff` | 17 |
+| `nop` | 13 |
+| `expanded_q4` | 8 |
+| `unpacked_q4` | 8 |
+| `vector_load` | 7 |
+| `lda.s16` | 1 |
+| `scalar_broadcast` | 1 |
+
+## Key Opcode Counts
+
+| Op | Slots |
+| --- | ---: |
+| `vmac.f` | 33 |
+| `vextbcst.16` | 32 |
+| `vups.4x` | 8 |
+| `vunpack` | 8 |
+| `vconv.bf16.fp32` | 17 |
+| `vlda` | 1 |
+| `vldb` | 6 |
+| `lda.s16` | 1 |
+| `vbcst.16` | 1 |
+| `vst` | 0 |
+
+## Steady Boundary Transition
+
+| Boundary | Data Cells | Control Cells | Producer Classes |
+| ---: | ---: | ---: | --- |
+| 2 | 27 | 12 | `{'entry': 12, 'persistent_group0': 3, 'previous_group': 24}` |
+| 3 | 27 | 12 | `{'entry': 12, 'persistent_group0': 3, 'previous_group': 24}` |
+
+- Producer changes across group2: `24`
+- Changed data/control cells: `23` / `1`
+
+| Cell | Before | After | Kind |
+| --- | --- | --- | --- |
+| `acc1.bmhh` | `g1@0x7d2.1:vmac.f` | `g2@0xa86.1:vmac.f` | `accumulator_carry -> accumulator_carry` |
+| `acc1.bmhl` | `g1@0x7d2.1:vmac.f` | `g2@0xa86.1:vmac.f` | `accumulator_carry -> accumulator_carry` |
+| `acc1.bmlh` | `g1@0x7d2.1:vmac.f` | `g2@0xa86.1:vmac.f` | `accumulator_carry -> accumulator_carry` |
+| `acc1.bmll` | `g1@0x7d2.1:vmac.f` | `g2@0xa86.1:vmac.f` | `accumulator_carry -> accumulator_carry` |
+| `acc4.bmhh` | `g1@0x6ce.0:vsub.f` | `g2@0x982.0:vsub.f` | `vector_arith -> vector_arith` |
+| `acc4.bmhl` | `g1@0x6ce.0:vsub.f` | `g2@0x982.0:vsub.f` | `vector_arith -> vector_arith` |
+| `acc4.bmlh` | `g1@0x6ce.0:vsub.f` | `g2@0x982.0:vsub.f` | `vector_arith -> vector_arith` |
+| `acc4.bmll` | `g1@0x786.0:vmov` | `g2@0xa3a.0:vmov` | `register_move -> register_move` |
+| `p3` | `g1@0x78a.0:lda.s16` | `g2@0xa3e.0:lda.s16` | `lda.s16 -> lda.s16` |
+| `vec0.hi` | `g1@0x7d2.0:vldb` | `g2@0xa86.0:vldb` | `vector_load -> vector_load` |
+| `vec0.lo` | `g1@0x7d2.0:vldb` | `g2@0xa86.0:vldb` | `vector_load -> vector_load` |
+| `vec10.hi` | `g1@0x7ce.0:vunpack` | `g2@0xa82.0:vunpack` | `unpacked_q4 -> unpacked_q4` |
+| `vec10.lo` | `g1@0x7ce.0:vunpack` | `g2@0xa82.0:vunpack` | `unpacked_q4 -> unpacked_q4` |
+| `vec2.hi` | `g1@0x764.1:vextbcst.16` | `g2@0xa18.1:vextbcst.16` | `activation_lane -> activation_lane` |
+| `vec2.lo` | `g1@0x790.0:vldb` | `g2@0xa44.0:vldb` | `vector_load -> vector_load` |
+| `vec3.hi` | `g1@0x73c.0:vconv.bf16.fp32` | `g2@0x9f0.0:vconv.bf16.fp32` | `bf16_coeff -> bf16_coeff` |
+| `vec3.lo` | `g1@0x7ac.0:vmov` | `g2@0xa60.0:vmov` | `register_move -> register_move` |
+| `vec4.hi` | `g1@0x76c.0:vconv.bf16.fp32` | `g2@0xa20.0:vconv.bf16.fp32` | `bf16_coeff -> bf16_coeff` |
+| `vec4.lo` | `g1@0x76c.0:vconv.bf16.fp32` | `g2@0xa20.0:vconv.bf16.fp32` | `bf16_coeff -> bf16_coeff` |
+| `vec6.hi` | `g1@0x76c.1:vextbcst.16` | `g2@0xa20.1:vextbcst.16` | `activation_lane -> activation_lane` |
+| `vec8.hi` | `g1@0x7ca.0:vunpack` | `g2@0xa7e.0:vunpack` | `unpacked_q4 -> unpacked_q4` |
+| `vec8.lo` | `g1@0x7ca.0:vunpack` | `g2@0xa7e.0:vunpack` | `unpacked_q4 -> unpacked_q4` |
+| `vec9.hi` | `g1@0x7c2.0:vunpack` | `g2@0xa76.0:vunpack` | `unpacked_q4 -> unpacked_q4` |
+| `vec9.lo` | `g1@0x7c2.0:vunpack` | `g2@0xa76.0:vunpack` | `unpacked_q4 -> unpacked_q4` |
+
+## Group2 Instruction Table
+
+| Address | Slot | Op | Role | Def Cells | Use Cells And Producers | Instruction |
+| --- | ---: | --- | --- | --- | --- | --- |
+| `0x7de` | 0 | `vldb` | `vector_load` | `vec11.lo, vec11.hi` | `p1<-entry:entry` | `vldb	 x11, [p1], #0x40` |
+| `0x7de` | 1 | `vmac.f` | `mac_accumulate` | `acc1.bmll, acc1.bmlh, acc1.bmhl, acc1.bmhh` | `acc1.bmll<-mac_accumulate:g1@0x7d2.1:vmac.f; acc1.bmlh<-mac_accumulate:g1@0x7d2.1:vmac.f; acc1.bmhl<-mac_accumulate:g1@0x7d2.1:vmac.f; acc1.bmhh<-mac_accumulate:g1@0x7d2.1:vmac.f; vec9.lo<-unpacked_q4:g1@0x7c2.0:vunpack; vec9.hi<-unpacked_q4:g1@0x7c2.0:vunpack; vec10.lo<-unpacked_q4:g1@0x7ce.0:vunpack; vec10.hi<-unpacked_q4:g1@0x7ce.0:vunpack; r4<-entry:entry` | `vmac.f	dm1, dm1, x9, x10, r4` |
+| `0x7e6` | 0 | `vups.4x` | `expanded_q4` | `acc2.bmll, acc2.bmlh, acc2.bmhl, acc2.bmhh` | `vec9.lo<-unpacked_q4:g1@0x7c2.0:vunpack; vec9.hi<-unpacked_q4:g1@0x7c2.0:vunpack; s0<-entry:entry; upssign0<-entry:entry` | `vups.4x	dm2, x9, s0, upssign0` |
+| `0x7ea` | 0 | `vadd` | `vector_arith` | `acc1.bmll, acc1.bmlh, acc1.bmhl, acc1.bmhh` | `acc2.bmll<-expanded_q4:g2@0x7e6.0:vups.4x; acc2.bmlh<-expanded_q4:g2@0x7e6.0:vups.4x; acc2.bmhl<-expanded_q4:g2@0x7e6.0:vups.4x; acc2.bmhh<-expanded_q4:g2@0x7e6.0:vups.4x; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r0<-entry:entry` | `vadd	dm1, dm2, dm0, r0` |
+| `0x7ee` | 0 | `vups.4x` | `expanded_q4` | `acc2.bmll, acc2.bmlh, acc2.bmhl, acc2.bmhh` | `vec8.lo<-unpacked_q4:g1@0x7ca.0:vunpack; vec8.hi<-unpacked_q4:g1@0x7ca.0:vunpack; s0<-entry:entry; upssign0<-entry:entry` | `vups.4x	dm2, x8, s0, upssign0` |
+| `0x7ee` | 1 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc1.bmll<-vector_arith:g2@0x7ea.0:vadd; acc1.bmlh<-vector_arith:g2@0x7ea.0:vadd; acc1.bmhl<-vector_arith:g2@0x7ea.0:vadd; acc1.bmhh<-vector_arith:g2@0x7ea.0:vadd; vec4.lo<-bf16_coeff:g1@0x76c.0:vconv.bf16.fp32; vec4.hi<-bf16_coeff:g1@0x76c.0:vconv.bf16.fp32; vec0.lo<-vector_load:g1@0x7d2.0:vldb; vec0.hi<-vector_load:g1@0x7d2.0:vldb; r4<-entry:entry` | `vmac.f	dm3, dm1, x4, x0, r4` |
+| `0x7f6` | 0 | `vsub.f` | `vector_arith` | `acc1.bmll, acc1.bmlh, acc1.bmhl, acc1.bmhh` | `acc1.bmll<-vector_arith:g2@0x7ea.0:vadd; acc1.bmlh<-vector_arith:g2@0x7ea.0:vadd; acc1.bmhl<-vector_arith:g2@0x7ea.0:vadd; acc1.bmhh<-vector_arith:g2@0x7ea.0:vadd; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r5<-entry:entry` | `vsub.f	dm1, dm1, dm0, r5` |
+| `0x7fa` | 0 | `vadd` | `vector_arith` | `acc2.bmll, acc2.bmlh, acc2.bmhl, acc2.bmhh` | `acc2.bmll<-expanded_q4:g2@0x7ee.0:vups.4x; acc2.bmlh<-expanded_q4:g2@0x7ee.0:vups.4x; acc2.bmhl<-expanded_q4:g2@0x7ee.0:vups.4x; acc2.bmhh<-expanded_q4:g2@0x7ee.0:vups.4x; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r0<-entry:entry` | `vadd	dm2, dm2, dm0, r0` |
+| `0x7fe` | 0 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x7ee.1:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x7ee.1:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x7ee.1:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x7ee.1:vmac.f; vec3.lo<-register_move:g1@0x7ac.0:vmov; vec3.hi<-bf16_coeff:g1@0x73c.0:vconv.bf16.fp32; vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb; r4<-entry:entry` | `vmac.f	dm3, dm3, x3, x11, r4` |
+| `0x802` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec7.lo, vec7.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x7, x11, #0x0` |
+| `0x802` | 1 | `vsub.f` | `vector_arith` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc2.bmll<-vector_arith:g2@0x7fa.0:vadd; acc2.bmlh<-vector_arith:g2@0x7fa.0:vadd; acc2.bmhl<-vector_arith:g2@0x7fa.0:vadd; acc2.bmhh<-vector_arith:g2@0x7fa.0:vadd; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r5<-entry:entry` | `vsub.f	dm3, dm2, dm0, r5` |
+| `0x80a` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec9.lo, vec9.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x9, x11, #0x1` |
+| `0x80e` | 0 | `nop` | `nop` | `` | `` | `nop` |
+| `0x810` | 0 | `nop` | `nop` | `` | `` | `nop` |
+| `0x812` | 0 | `vunpack` | `unpacked_q4` | `vec1.lo, vec1.hi` | `vec0.lo<-vector_load:g1@0x7d2.0:vldb; unpacksign0<-entry:entry` | `vunpack	x1, wl0, unpacksign0` |
+| `0x812` | 1 | `vmov` | `register_move` | `acc2.bmll` | `acc1.bmll<-vector_arith:g2@0x7f6.0:vsub.f` | `vmov	bmll2, bmll1` |
+| `0x818` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec4.lo` | `acc3.bmll<-vector_arith:g2@0x802.1:vsub.f` | `vconv.bf16.fp32	 wl4, bmll3` |
+| `0x818` | 1 | `vmov` | `register_move` | `acc2.bmlh` | `acc1.bmlh<-vector_arith:g2@0x7f6.0:vsub.f` | `vmov	bmlh2, bmlh1` |
+| `0x820` | 0 | `vmov` | `register_move` | `acc2.bmhl` | `acc1.bmhl<-vector_arith:g2@0x7f6.0:vsub.f` | `vmov	bmhl2, bmhl1` |
+| `0x824` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec5.lo, vec5.hi` | `acc2.bmll<-register_move:g2@0x812.1:vmov; acc2.bmlh<-register_move:g2@0x818.1:vmov` | `vconv.bf16.fp32	 x5, cml2` |
+| `0x824` | 1 | `vups.4x` | `expanded_q4` | `acc1.bmll, acc1.bmlh, acc1.bmhl, acc1.bmhh` | `vec5.lo<-bf16_coeff:g2@0x824.0:vconv.bf16.fp32; vec5.hi<-bf16_coeff:g2@0x824.0:vconv.bf16.fp32; s0<-entry:entry; upssign0<-entry:entry` | `vups.4x	dm1, x5, s0, upssign0` |
+| `0x824` | 2 | `vmac.f` | `mac_accumulate` | `acc4.bmll, acc4.bmlh, acc4.bmhl, acc4.bmhh` | `acc4.bmll<-register_move:g1@0x786.0:vmov; acc4.bmlh<-vector_arith:g1@0x6ce.0:vsub.f; acc4.bmhl<-vector_arith:g1@0x6ce.0:vsub.f; acc4.bmhh<-vector_arith:g1@0x6ce.0:vsub.f; vec4.lo<-bf16_coeff:g2@0x818.0:vconv.bf16.fp32; vec4.hi<-bf16_coeff:g1@0x76c.0:vconv.bf16.fp32; vec2.lo<-vector_load:g1@0x790.0:vldb; vec2.hi<-activation_lane_broadcast:g1@0x764.1:vextbcst.16; r4<-entry:entry` | `vmac.f	dm4, dm4, x4, x2, r4` |
+| `0x82e` | 0 | `nop` | `nop` | `` | `` | `nop` |
+| `0x830` | 0 | `vmov` | `register_move` | `acc2.bmhh` | `acc1.bmhh<-expanded_q4:g2@0x824.1:vups.4x` | `vmov	bmhh2, bmhh1` |
+| `0x834` | 0 | `vmov` | `register_move` | `vec6.lo` | `vec5.hi<-bf16_coeff:g2@0x824.0:vconv.bf16.fp32` | `vmov	wl6, wh5` |
+| `0x834` | 1 | `vmac.f` | `mac_accumulate` | `acc4.bmll, acc4.bmlh, acc4.bmhl, acc4.bmhh` | `acc4.bmll<-mac_accumulate:g2@0x824.2:vmac.f; acc4.bmlh<-mac_accumulate:g2@0x824.2:vmac.f; acc4.bmhl<-mac_accumulate:g2@0x824.2:vmac.f; acc4.bmhh<-mac_accumulate:g2@0x824.2:vmac.f; vec6.lo<-register_move:g2@0x834.0:vmov; vec6.hi<-activation_lane_broadcast:g1@0x76c.1:vextbcst.16; vec1.lo<-unpacked_q4:g2@0x812.0:vunpack; vec1.hi<-unpacked_q4:g2@0x812.0:vunpack; r4<-entry:entry` | `vmac.f	dm4, dm4, x6, x1, r4` |
+| `0x83c` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec3.lo, vec3.hi` | `acc2.bmhl<-register_move:g2@0x820.0:vmov; acc2.bmhh<-register_move:g2@0x830.0:vmov` | `vconv.bf16.fp32	 x3, cmh2` |
+| `0x840` | 0 | `nop` | `nop` | `` | `` | `nop` |
+| `0x842` | 0 | `vmov` | `register_move` | `vec2.lo` | `vec3.hi<-bf16_coeff:g2@0x83c.0:vconv.bf16.fp32` | `vmov	wl2, wh3` |
+| `0x846` | 0 | `vadd` | `vector_arith` | `acc4.bmll, acc4.bmlh, acc4.bmhl, acc4.bmhh` | `acc1.bmll<-expanded_q4:g2@0x824.1:vups.4x; acc1.bmlh<-expanded_q4:g2@0x824.1:vups.4x; acc1.bmhl<-expanded_q4:g2@0x824.1:vups.4x; acc1.bmhh<-expanded_q4:g2@0x824.1:vups.4x; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r0<-entry:entry` | `vadd	dm4, dm1, dm0, r0` |
+| `0x84a` | 0 | `nop` | `nop` | `` | `` | `nop` |
+| `0x84c` | 0 | `vmov` | `register_move` | `lfh0` | `acc4.bmll<-vector_arith:g2@0x846.0:vadd` | `vmov	lfh0, bmll4` |
+| `0x84c` | 1 | `vsub.f` | `vector_arith` | `acc2.bmll, acc2.bmlh, acc2.bmhl, acc2.bmhh` | `acc4.bmll<-vector_arith:g2@0x846.0:vadd; acc4.bmlh<-vector_arith:g2@0x846.0:vadd; acc4.bmhl<-vector_arith:g2@0x846.0:vadd; acc4.bmhh<-vector_arith:g2@0x846.0:vadd; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r5<-entry:entry` | `vsub.f	dm2, dm4, dm0, r5` |
+| `0x854` | 0 | `nop` | `nop` | `` | `` | `nop` |
+| `0x856` | 0 | `vmov` | `register_move` | `acc1.bmhl` | `acc3.bmhl<-vector_arith:g2@0x802.1:vsub.f` | `vmov	bmhl1, bmhl3` |
+| `0x85a` | 0 | `nop` | `nop` | `` | `` | `nop` |
+| `0x85c` | 0 | `vldb` | `vector_load` | `vec6.lo, vec6.hi` | `p0<-entry:entry` | `vldb	 x6, [p0], #0x40` |
+| `0x85c` | 1 | `vmov` | `register_move` | `acc1.bmhh` | `acc3.bmhh<-vector_arith:g2@0x802.1:vsub.f` | `vmov	bmhh1, bmhh3` |
+| `0x862` | 0 | `vmov` | `register_move` | `acc1.bmll` | `acc3.bmll<-vector_arith:g2@0x802.1:vsub.f` | `vmov	bmll1, bmll3` |
+| `0x866` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec8.lo, vec8.hi` | `acc1.bmhl<-register_move:g2@0x856.0:vmov; acc1.bmhh<-register_move:g2@0x85c.1:vmov` | `vconv.bf16.fp32	 x8, cmh1` |
+| `0x866` | 1 | `vups.4x` | `expanded_q4` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `vec10.lo<-unpacked_q4:g1@0x7ce.0:vunpack; vec10.hi<-unpacked_q4:g1@0x7ce.0:vunpack; s0<-entry:entry; upssign0<-entry:entry` | `vups.4x	dm3, x10, s0, upssign0` |
+| `0x866` | 2 | `vadd` | `vector_arith` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-expanded_q4:g2@0x866.1:vups.4x; acc3.bmlh<-expanded_q4:g2@0x866.1:vups.4x; acc3.bmhl<-expanded_q4:g2@0x866.1:vups.4x; acc3.bmhh<-expanded_q4:g2@0x866.1:vups.4x; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r0<-entry:entry` | `vadd	dm3, dm3, dm0, r0` |
+| `0x870` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec10.lo, vec10.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x10, x11, #0x2` |
+| `0x870` | 1 | `vmul.f` | `vector_arith` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `vec5.lo<-bf16_coeff:g2@0x824.0:vconv.bf16.fp32; vec5.hi<-bf16_coeff:g2@0x824.0:vconv.bf16.fp32; vec7.lo<-activation_lane_broadcast:g2@0x802.0:vextbcst.16; vec7.hi<-activation_lane_broadcast:g2@0x802.0:vextbcst.16; r4<-entry:entry` | `vmul.f	dm3, x5, x7, r4` |
+| `0x878` | 0 | `vmov` | `register_move` | `acc1.bmlh` | `acc3.bmlh<-vector_arith:g2@0x870.1:vmul.f` | `vmov	bmlh1, bmlh3` |
+| `0x878` | 1 | `vsub.f` | `vector_arith` | `acc4.bmll, acc4.bmlh, acc4.bmhl, acc4.bmhh` | `acc3.bmll<-vector_arith:g2@0x870.1:vmul.f; acc3.bmlh<-vector_arith:g2@0x870.1:vmul.f; acc3.bmhl<-vector_arith:g2@0x870.1:vmul.f; acc3.bmhh<-vector_arith:g2@0x870.1:vmul.f; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r5<-entry:entry` | `vsub.f	dm4, dm3, dm0, r5` |
+| `0x880` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec7.lo, vec7.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x7, x11, #0x3` |
+| `0x884` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec4.lo, vec4.hi` | `acc1.bmll<-register_move:g2@0x862.0:vmov; acc1.bmlh<-register_move:g2@0x878.0:vmov` | `vconv.bf16.fp32	 x4, cml1` |
+| `0x884` | 1 | `vmov` | `register_move` | `acc1.bmhh` | `acc2.bmhh<-vector_arith:g2@0x84c.1:vsub.f` | `vmov	bmhh1, bmhh2` |
+| `0x884` | 2 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-vector_arith:g2@0x870.1:vmul.f; acc3.bmlh<-vector_arith:g2@0x870.1:vmul.f; acc3.bmhl<-vector_arith:g2@0x870.1:vmul.f; acc3.bmhh<-vector_arith:g2@0x870.1:vmul.f; vec6.lo<-vector_load:g2@0x85c.0:vldb; vec6.hi<-vector_load:g2@0x85c.0:vldb; vec9.lo<-activation_lane_broadcast:g2@0x80a.0:vextbcst.16; vec9.hi<-activation_lane_broadcast:g2@0x80a.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm3, x6, x9, r4` |
+| `0x88e` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec9.lo, vec9.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x9, x11, #0x8` |
+| `0x892` | 0 | `vmov` | `register_move` | `vec10.lo` | `vec4.hi<-bf16_coeff:g2@0x884.0:vconv.bf16.fp32` | `vmov	wl10, wh4` |
+| `0x896` | 0 | `vmov` | `register_move` | `acc1.bmll` | `acc2.bmll<-vector_arith:g2@0x84c.1:vsub.f` | `vmov	bmll1, bmll2` |
+| `0x896` | 1 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x884.2:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x884.2:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x884.2:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x884.2:vmac.f; vec3.lo<-bf16_coeff:g2@0x83c.0:vconv.bf16.fp32; vec3.hi<-bf16_coeff:g2@0x83c.0:vconv.bf16.fp32; vec10.lo<-register_move:g2@0x892.0:vmov; vec10.hi<-activation_lane_broadcast:g2@0x870.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm3, x3, x10, r4` |
+| `0x89e` | 0 | `vmov` | `register_move` | `acc2.bmll` | `acc4.bmll<-vector_arith:g2@0x878.1:vsub.f` | `vmov	bmll2, bmll4` |
+| `0x8a2` | 0 | `vunpack` | `unpacked_q4` | `vec1.lo, vec1.hi` | `vec0.hi<-vector_load:g1@0x7d2.0:vldb; unpacksign0<-entry:entry` | `vunpack	x1, wh0, unpacksign0` |
+| `0x8a2` | 1 | `vextbcst.16` | `activation_lane_broadcast` | `vec7.lo, vec7.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x7, x11, #0x4` |
+| `0x8a8` | 0 | `vmov` | `register_move` | `acc1.bmlh` | `acc2.bmlh<-vector_arith:g2@0x84c.1:vsub.f` | `vmov	bmlh1, bmlh2` |
+| `0x8a8` | 1 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x896.1:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x896.1:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x896.1:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x896.1:vmac.f; vec2.lo<-register_move:g2@0x842.0:vmov; vec2.hi<-activation_lane_broadcast:g1@0x764.1:vextbcst.16; vec7.lo<-activation_lane_broadcast:g2@0x8a2.1:vextbcst.16; vec7.hi<-activation_lane_broadcast:g2@0x8a2.1:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm3, x2, x7, r4` |
+| `0x8b0` | 0 | `vmov` | `register_move` | `acc2.bmlh` | `acc4.bmlh<-vector_arith:g2@0x878.1:vsub.f` | `vmov	bmlh2, bmlh4` |
+| `0x8b4` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec5.lo, vec5.hi` | `acc1.bmll<-register_move:g2@0x896.0:vmov; acc1.bmlh<-register_move:g2@0x8a8.0:vmov` | `vconv.bf16.fp32	 x5, cml1` |
+| `0x8b4` | 1 | `vextbcst.16` | `activation_lane_broadcast` | `vec4.lo, vec4.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x4, x11, #0x5` |
+| `0x8bc` | 0 | `vmov` | `register_move` | `acc1.bmhl` | `acc2.bmhl<-vector_arith:g2@0x84c.1:vsub.f` | `vmov	bmhl1, bmhl2` |
+| `0x8bc` | 1 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x8a8.1:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x8a8.1:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x8a8.1:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x8a8.1:vmac.f; vec4.lo<-activation_lane_broadcast:g2@0x8b4.1:vextbcst.16; vec4.hi<-activation_lane_broadcast:g2@0x8b4.1:vextbcst.16; vec7.lo<-activation_lane_broadcast:g2@0x8a2.1:vextbcst.16; vec7.hi<-activation_lane_broadcast:g2@0x8a2.1:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm3, x4, x7, r4` |
+| `0x8c4` | 0 | `vmov` | `register_move` | `acc2.bmhl` | `acc4.bmhl<-vector_arith:g2@0x878.1:vsub.f` | `vmov	bmhl2, bmhl4` |
+| `0x8c8` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec2.lo, vec2.hi` | `acc1.bmhl<-register_move:g2@0x8bc.0:vmov; acc1.bmhh<-register_move:g2@0x884.1:vmov` | `vconv.bf16.fp32	 x2, cmh1` |
+| `0x8c8` | 1 | `vups.4x` | `expanded_q4` | `acc4.bmll, acc4.bmlh, acc4.bmhl, acc4.bmhh` | `vec1.lo<-unpacked_q4:g2@0x8a2.0:vunpack; vec1.hi<-unpacked_q4:g2@0x8a2.0:vunpack; s0<-entry:entry; upssign0<-entry:entry` | `vups.4x	dm4, x1, s0, upssign0` |
+| `0x8c8` | 2 | `vadd` | `vector_arith` | `acc1.bmll, acc1.bmlh, acc1.bmhl, acc1.bmhh` | `acc4.bmll<-expanded_q4:g2@0x8c8.1:vups.4x; acc4.bmlh<-expanded_q4:g2@0x8c8.1:vups.4x; acc4.bmhl<-expanded_q4:g2@0x8c8.1:vups.4x; acc4.bmhh<-expanded_q4:g2@0x8c8.1:vups.4x; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r0<-entry:entry` | `vadd	dm1, dm4, dm0, r0` |
+| `0x8d2` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec3.lo, vec3.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x3, x11, #0x6` |
+| `0x8d6` | 0 | `vmov` | `register_move` | `acc2.bmhh` | `acc4.bmhh<-expanded_q4:g2@0x8c8.1:vups.4x` | `vmov	bmhh2, bmhh4` |
+| `0x8d6` | 1 | `vsub.f` | `vector_arith` | `acc4.bmll, acc4.bmlh, acc4.bmhl, acc4.bmhh` | `acc1.bmll<-vector_arith:g2@0x8c8.2:vadd; acc1.bmlh<-vector_arith:g2@0x8c8.2:vadd; acc1.bmhl<-vector_arith:g2@0x8c8.2:vadd; acc1.bmhh<-vector_arith:g2@0x8c8.2:vadd; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r5<-entry:entry` | `vsub.f	dm4, dm1, dm0, r5` |
+| `0x8de` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec0.lo, vec0.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x0, x11, #0x7` |
+| `0x8de` | 1 | `vmac.f` | `mac_accumulate` | `acc4.bmll, acc4.bmlh, acc4.bmhl, acc4.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x8bc.1:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x8bc.1:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x8bc.1:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x8bc.1:vmac.f; vec10.lo<-register_move:g2@0x892.0:vmov; vec10.hi<-activation_lane_broadcast:g2@0x870.0:vextbcst.16; vec4.lo<-activation_lane_broadcast:g2@0x8b4.1:vextbcst.16; vec4.hi<-activation_lane_broadcast:g2@0x8b4.1:vextbcst.16; r4<-entry:entry` | `vmac.f	dm4, dm3, x10, x4, r4` |
+| `0x8e6` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec4.lo, vec4.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x4, x11, #0x9` |
+| `0x8ea` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec8.lo, vec8.hi` | `acc2.bmll<-register_move:g2@0x89e.0:vmov; acc2.bmlh<-register_move:g2@0x8b0.0:vmov` | `vconv.bf16.fp32	 x8, cml2` |
+| `0x8ea` | 1 | `vmov` | `register_move` | `vec3.lo` | `vec8.hi<-bf16_coeff:g2@0x8ea.0:vconv.bf16.fp32` | `vmov	wl3, wh8` |
+| `0x8ea` | 2 | `vmov.d` | `register_move` | `acc1.bmll, acc1.bmlh, acc1.bmhl, acc1.bmhh` | `acc4.bmll<-mac_accumulate:g2@0x8de.1:vmac.f; acc4.bmlh<-mac_accumulate:g2@0x8de.1:vmac.f; acc4.bmhl<-mac_accumulate:g2@0x8de.1:vmac.f; acc4.bmhh<-mac_accumulate:g2@0x8de.1:vmac.f` | `vmov.d	dm1, dm4` |
+| `0x8f4` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec7.lo, vec7.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x7, x11, #0xa` |
+| `0x8f4` | 1 | `vmac.f` | `mac_accumulate` | `acc4.bmll, acc4.bmlh, acc4.bmhl, acc4.bmhh` | `acc4.bmll<-mac_accumulate:g2@0x8de.1:vmac.f; acc4.bmlh<-mac_accumulate:g2@0x8de.1:vmac.f; acc4.bmhl<-mac_accumulate:g2@0x8de.1:vmac.f; acc4.bmhh<-mac_accumulate:g2@0x8de.1:vmac.f; vec8.lo<-bf16_coeff:g2@0x8ea.0:vconv.bf16.fp32; vec8.hi<-bf16_coeff:g2@0x8ea.0:vconv.bf16.fp32; vec3.lo<-register_move:g2@0x8ea.1:vmov; vec3.hi<-activation_lane_broadcast:g2@0x8d2.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm4, dm4, x8, x3, r4` |
+| `0x8fc` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec10.lo, vec10.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x10, x11, #0xb` |
+| `0x8fc` | 1 | `vmov.d` | `register_move` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc1.bmll<-register_move:g2@0x8ea.2:vmov.d; acc1.bmlh<-register_move:g2@0x8ea.2:vmov.d; acc1.bmhl<-register_move:g2@0x8ea.2:vmov.d; acc1.bmhh<-register_move:g2@0x8ea.2:vmov.d` | `vmov.d	dm3, dm1` |
+| `0x904` | 0 | `vmov` | `register_move` | `vec3.lo` | `vec2.hi<-bf16_coeff:g2@0x8c8.0:vconv.bf16.fp32` | `vmov	wl3, wh2` |
+| `0x908` | 0 | `vmac.f` | `mac_accumulate` | `acc4.bmll, acc4.bmlh, acc4.bmhl, acc4.bmhh` | `acc4.bmll<-mac_accumulate:g2@0x8f4.1:vmac.f; acc4.bmlh<-mac_accumulate:g2@0x8f4.1:vmac.f; acc4.bmhl<-mac_accumulate:g2@0x8f4.1:vmac.f; acc4.bmhh<-mac_accumulate:g2@0x8f4.1:vmac.f; vec3.lo<-register_move:g2@0x904.0:vmov; vec3.hi<-activation_lane_broadcast:g2@0x8d2.0:vextbcst.16; vec0.lo<-activation_lane_broadcast:g2@0x8de.0:vextbcst.16; vec0.hi<-activation_lane_broadcast:g2@0x8de.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm4, dm4, x3, x0, r4` |
+| `0x90c` | 0 | `nop` | `nop` | `` | `` | `nop` |
+| `0x90e` | 0 | `vmov` | `register_move` | `vec5.lo` | `vec5.hi<-bf16_coeff:g2@0x8b4.0:vconv.bf16.fp32` | `vmov	wl5, wh5` |
+| `0x912` | 0 | `vmov` | `register_move` | `vec9.lo` | `vec8.hi<-bf16_coeff:g2@0x8ea.0:vconv.bf16.fp32` | `vmov	wl9, wh8` |
+| `0x912` | 1 | `vmac.f` | `mac_accumulate` | `acc4.bmll, acc4.bmlh, acc4.bmhl, acc4.bmhh` | `acc4.bmll<-mac_accumulate:g2@0x908.0:vmac.f; acc4.bmlh<-mac_accumulate:g2@0x908.0:vmac.f; acc4.bmhl<-mac_accumulate:g2@0x908.0:vmac.f; acc4.bmhh<-mac_accumulate:g2@0x908.0:vmac.f; vec5.lo<-register_move:g2@0x90e.0:vmov; vec5.hi<-bf16_coeff:g2@0x8b4.0:vconv.bf16.fp32; vec9.lo<-register_move:g2@0x912.0:vmov; vec9.hi<-activation_lane_broadcast:g2@0x88e.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm4, dm4, x5, x9, r4` |
+| `0x91a` | 0 | `vmov` | `register_move` | `acc1.bmhl` | `acc3.bmhl<-register_move:g2@0x8fc.1:vmov.d` | `vmov	bmhl1, bmhl3` |
+| `0x91e` | 0 | `vmov` | `register_move` | `acc1.bmhh` | `acc3.bmhh<-register_move:g2@0x8fc.1:vmov.d` | `vmov	bmhh1, bmhh3` |
+| `0x922` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec1.lo, vec1.hi` | `acc2.bmhl<-register_move:g2@0x8c4.0:vmov; acc2.bmhh<-register_move:g2@0x8d6.0:vmov` | `vconv.bf16.fp32	 x1, cmh2` |
+| `0x922` | 1 | `vmov` | `register_move` | `acc1.bmll` | `acc3.bmll<-register_move:g2@0x8fc.1:vmov.d` | `vmov	bmll1, bmll3` |
+| `0x922` | 2 | `vmac.f` | `mac_accumulate` | `acc4.bmll, acc4.bmlh, acc4.bmhl, acc4.bmhh` | `acc4.bmll<-mac_accumulate:g2@0x912.1:vmac.f; acc4.bmlh<-mac_accumulate:g2@0x912.1:vmac.f; acc4.bmhl<-mac_accumulate:g2@0x912.1:vmac.f; acc4.bmhh<-mac_accumulate:g2@0x912.1:vmac.f; vec5.lo<-register_move:g2@0x90e.0:vmov; vec5.hi<-bf16_coeff:g2@0x8b4.0:vconv.bf16.fp32; vec4.lo<-activation_lane_broadcast:g2@0x8e6.0:vextbcst.16; vec4.hi<-activation_lane_broadcast:g2@0x8e6.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm4, dm4, x5, x4, r4` |
+| `0x92c` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec0.lo, vec0.hi` | `acc1.bmhl<-register_move:g2@0x91a.0:vmov; acc1.bmhh<-register_move:g2@0x91e.0:vmov` | `vconv.bf16.fp32	 x0, cmh1` |
+| `0x92c` | 1 | `vups.4x` | `expanded_q4` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `vec1.lo<-bf16_coeff:g2@0x922.0:vconv.bf16.fp32; vec1.hi<-bf16_coeff:g2@0x922.0:vconv.bf16.fp32; s0<-entry:entry; upssign0<-entry:entry` | `vups.4x	dm3, x1, s0, upssign0` |
+| `0x92c` | 2 | `vadd` | `vector_arith` | `acc2.bmll, acc2.bmlh, acc2.bmhl, acc2.bmhh` | `acc3.bmll<-expanded_q4:g2@0x92c.1:vups.4x; acc3.bmlh<-expanded_q4:g2@0x92c.1:vups.4x; acc3.bmhl<-expanded_q4:g2@0x92c.1:vups.4x; acc3.bmhh<-expanded_q4:g2@0x92c.1:vups.4x; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r0<-entry:entry` | `vadd	dm2, dm3, dm0, r0` |
+| `0x936` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec4.lo, vec4.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x4, x11, #0xc` |
+| `0x93a` | 0 | `vunpack` | `unpacked_q4` | `vec4.lo, vec4.hi` | `vec6.lo<-vector_load:g2@0x85c.0:vldb; unpacksign0<-entry:entry` | `vunpack	x4, wl6, unpacksign0` |
+| `0x93a` | 1 | `vmov` | `register_move` | `acc1.bmlh` | `acc3.bmlh<-expanded_q4:g2@0x92c.1:vups.4x` | `vmov	bmlh1, bmlh3` |
+| `0x93a` | 2 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc4.bmll<-mac_accumulate:g2@0x922.2:vmac.f; acc4.bmlh<-mac_accumulate:g2@0x922.2:vmac.f; acc4.bmhl<-mac_accumulate:g2@0x922.2:vmac.f; acc4.bmhh<-mac_accumulate:g2@0x922.2:vmac.f; vec2.lo<-bf16_coeff:g2@0x8c8.0:vconv.bf16.fp32; vec2.hi<-bf16_coeff:g2@0x8c8.0:vconv.bf16.fp32; vec7.lo<-activation_lane_broadcast:g2@0x8f4.0:vextbcst.16; vec7.hi<-activation_lane_broadcast:g2@0x8f4.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm4, x2, x7, r4` |
+| `0x944` | 0 | `vunpack` | `unpacked_q4` | `vec6.lo, vec6.hi` | `vec6.hi<-vector_load:g2@0x85c.0:vldb; unpacksign0<-entry:entry` | `vunpack	x6, wh6, unpacksign0` |
+| `0x944` | 1 | `vextbcst.16` | `activation_lane_broadcast` | `vec5.lo, vec5.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x5, x11, #0xd` |
+| `0x944` | 2 | `vsub.f` | `vector_arith` | `acc2.bmll, acc2.bmlh, acc2.bmhl, acc2.bmhh` | `acc2.bmll<-vector_arith:g2@0x92c.2:vadd; acc2.bmlh<-vector_arith:g2@0x92c.2:vadd; acc2.bmhl<-vector_arith:g2@0x92c.2:vadd; acc2.bmhh<-vector_arith:g2@0x92c.2:vadd; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r5<-entry:entry` | `vsub.f	dm2, dm2, dm0, r5` |
+| `0x94e` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec2.lo, vec2.hi` | `acc1.bmll<-register_move:g2@0x922.1:vmov; acc1.bmlh<-register_move:g2@0x93a.1:vmov` | `vconv.bf16.fp32	 x2, cml1` |
+| `0x94e` | 1 | `vextbcst.16` | `activation_lane_broadcast` | `vec10.lo, vec10.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x10, x11, #0xe` |
+| `0x956` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec3.lo, vec3.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x3, x11, #0xf` |
+| `0x956` | 1 | `vmac.f` | `mac_accumulate` | `acc1.bmll, acc1.bmlh, acc1.bmhl, acc1.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x93a.2:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x93a.2:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x93a.2:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x93a.2:vmac.f; vec3.lo<-activation_lane_broadcast:g2@0x956.0:vextbcst.16; vec3.hi<-activation_lane_broadcast:g2@0x956.0:vextbcst.16; vec10.lo<-activation_lane_broadcast:g2@0x94e.1:vextbcst.16; vec10.hi<-activation_lane_broadcast:g2@0x94e.1:vextbcst.16; r4<-entry:entry` | `vmac.f	dm1, dm3, x3, x10, r4` |
+| `0x95e` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec7.lo, vec7.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x7, x11, #0x10` |
+| `0x962` | 0 | `vmov` | `register_move` | `vec8.lo` | `vec1.hi<-bf16_coeff:g2@0x922.0:vconv.bf16.fp32` | `vmov	wl8, wh1` |
+| `0x966` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec4.lo, vec4.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x4, x11, #0x15` |
+| `0x966` | 1 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc1.bmll<-mac_accumulate:g2@0x956.1:vmac.f; acc1.bmlh<-mac_accumulate:g2@0x956.1:vmac.f; acc1.bmhl<-mac_accumulate:g2@0x956.1:vmac.f; acc1.bmhh<-mac_accumulate:g2@0x956.1:vmac.f; vec8.lo<-register_move:g2@0x962.0:vmov; vec8.hi<-bf16_coeff:g2@0x8ea.0:vconv.bf16.fp32; vec4.lo<-activation_lane_broadcast:g2@0x966.0:vextbcst.16; vec4.hi<-activation_lane_broadcast:g2@0x966.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm1, x8, x4, r4` |
+| `0x96e` | 0 | `vups.4x` | `expanded_q4` | `acc4.bmll, acc4.bmlh, acc4.bmhl, acc4.bmhh` | `vec4.lo<-activation_lane_broadcast:g2@0x966.0:vextbcst.16; vec4.hi<-activation_lane_broadcast:g2@0x966.0:vextbcst.16; s0<-entry:entry; upssign0<-entry:entry` | `vups.4x	dm4, x4, s0, upssign0` |
+| `0x96e` | 1 | `vadd` | `vector_arith` | `acc4.bmll, acc4.bmlh, acc4.bmhl, acc4.bmhh` | `acc4.bmll<-expanded_q4:g2@0x96e.0:vups.4x; acc4.bmlh<-expanded_q4:g2@0x96e.0:vups.4x; acc4.bmhl<-expanded_q4:g2@0x96e.0:vups.4x; acc4.bmhh<-expanded_q4:g2@0x96e.0:vups.4x; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r0<-entry:entry` | `vadd	dm4, dm4, dm0, r0` |
+| `0x976` | 0 | `vmov` | `register_move` | `vec5.lo` | `vec2.hi<-bf16_coeff:g2@0x94e.0:vconv.bf16.fp32` | `vmov	wl5, wh2` |
+| `0x97a` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec9.lo, vec9.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x9, x11, #0x11` |
+| `0x97a` | 1 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x966.1:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x966.1:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x966.1:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x966.1:vmac.f; vec9.lo<-activation_lane_broadcast:g2@0x97a.0:vextbcst.16; vec9.hi<-activation_lane_broadcast:g2@0x97a.0:vextbcst.16; vec5.lo<-register_move:g2@0x976.0:vmov; vec5.hi<-activation_lane_broadcast:g2@0x944.1:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm3, x9, x5, r4` |
+| `0x982` | 0 | `vsub.f` | `vector_arith` | `acc4.bmll, acc4.bmlh, acc4.bmhl, acc4.bmhh` | `acc4.bmll<-vector_arith:g2@0x96e.1:vadd; acc4.bmlh<-vector_arith:g2@0x96e.1:vadd; acc4.bmhl<-vector_arith:g2@0x96e.1:vadd; acc4.bmhh<-vector_arith:g2@0x96e.1:vadd; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r5<-entry:entry` | `vsub.f	dm4, dm4, dm0, r5` |
+| `0x986` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec1.lo, vec1.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x1, x11, #0x12` |
+| `0x98a` | 0 | `vmov` | `register_move` | `acc1.bmll` | `acc2.bmll<-vector_arith:g2@0x944.2:vsub.f` | `vmov	bmll1, bmll2` |
+| `0x98a` | 1 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x97a.1:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x97a.1:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x97a.1:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x97a.1:vmac.f; vec1.lo<-activation_lane_broadcast:g2@0x986.0:vextbcst.16; vec1.hi<-activation_lane_broadcast:g2@0x986.0:vextbcst.16; vec10.lo<-activation_lane_broadcast:g2@0x94e.1:vextbcst.16; vec10.hi<-activation_lane_broadcast:g2@0x94e.1:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm3, x1, x10, r4` |
+| `0x992` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec10.lo, vec10.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x10, x11, #0x18` |
+| `0x996` | 0 | `vmov` | `register_move` | `vec3.lo` | `vec0.hi<-bf16_coeff:g2@0x92c.0:vconv.bf16.fp32` | `vmov	wl3, wh0` |
+| `0x99a` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec8.lo, vec8.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x8, x11, #0x13` |
+| `0x99a` | 1 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x98a.1:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x98a.1:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x98a.1:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x98a.1:vmac.f; vec8.lo<-activation_lane_broadcast:g2@0x99a.0:vextbcst.16; vec8.hi<-activation_lane_broadcast:g2@0x99a.0:vextbcst.16; vec3.lo<-register_move:g2@0x996.0:vmov; vec3.hi<-activation_lane_broadcast:g2@0x956.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm3, x8, x3, r4` |
+| `0x9a2` | 0 | `vmov` | `register_move` | `acc1.bmlh` | `acc2.bmlh<-vector_arith:g2@0x944.2:vsub.f` | `vmov	bmlh1, bmlh2` |
+| `0x9a6` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec7.lo, vec7.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x7, x11, #0x14` |
+| `0x9aa` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec2.lo, vec2.hi` | `acc1.bmll<-register_move:g2@0x98a.0:vmov; acc1.bmlh<-register_move:g2@0x9a2.0:vmov` | `vconv.bf16.fp32	 x2, cml1` |
+| `0x9aa` | 1 | `vmov` | `register_move` | `acc1.bmhl` | `acc2.bmhl<-vector_arith:g2@0x944.2:vsub.f` | `vmov	bmhl1, bmhl2` |
+| `0x9aa` | 2 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x99a.1:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x99a.1:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x99a.1:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x99a.1:vmac.f; vec2.lo<-bf16_coeff:g2@0x9aa.0:vconv.bf16.fp32; vec2.hi<-bf16_coeff:g2@0x9aa.0:vconv.bf16.fp32; vec7.lo<-activation_lane_broadcast:g2@0x9a6.0:vextbcst.16; vec7.hi<-activation_lane_broadcast:g2@0x9a6.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm3, x2, x7, r4` |
+| `0x9b4` | 0 | `vmov` | `register_move` | `acc1.bmhh` | `acc2.bmhh<-vector_arith:g2@0x944.2:vsub.f` | `vmov	bmhh1, bmhh2` |
+| `0x9b8` | 0 | `vups.4x` | `expanded_q4` | `acc1.bmll, acc1.bmlh, acc1.bmhl, acc1.bmhh` | `vec6.lo<-unpacked_q4:g2@0x944.0:vunpack; vec6.hi<-unpacked_q4:g2@0x944.0:vunpack; s0<-entry:entry; upssign0<-entry:entry` | `vups.4x	dm1, x6, s0, upssign0` |
+| `0x9b8` | 1 | `vadd` | `vector_arith` | `acc2.bmll, acc2.bmlh, acc2.bmhl, acc2.bmhh` | `acc1.bmll<-expanded_q4:g2@0x9b8.0:vups.4x; acc1.bmlh<-expanded_q4:g2@0x9b8.0:vups.4x; acc1.bmhl<-expanded_q4:g2@0x9b8.0:vups.4x; acc1.bmhh<-expanded_q4:g2@0x9b8.0:vups.4x; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r0<-entry:entry` | `vadd	dm2, dm1, dm0, r0` |
+| `0x9c0` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec5.lo, vec5.hi` | `acc1.bmhl<-expanded_q4:g2@0x9b8.0:vups.4x; acc1.bmhh<-expanded_q4:g2@0x9b8.0:vups.4x` | `vconv.bf16.fp32	 x5, cmh1` |
+| `0x9c0` | 1 | `vextbcst.16` | `activation_lane_broadcast` | `vec6.lo, vec6.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x6, x11, #0x16` |
+| `0x9c0` | 2 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x9aa.2:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x9aa.2:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x9aa.2:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x9aa.2:vmac.f; vec5.lo<-bf16_coeff:g2@0x9c0.0:vconv.bf16.fp32; vec5.hi<-bf16_coeff:g2@0x9c0.0:vconv.bf16.fp32; vec9.lo<-activation_lane_broadcast:g2@0x97a.0:vextbcst.16; vec9.hi<-activation_lane_broadcast:g2@0x97a.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm3, x5, x9, r4` |
+| `0x9ca` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec9.lo, vec9.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x9, x11, #0x17` |
+| `0x9ca` | 1 | `vsub.f` | `vector_arith` | `acc2.bmll, acc2.bmlh, acc2.bmhl, acc2.bmhh` | `acc2.bmll<-vector_arith:g2@0x9b8.1:vadd; acc2.bmlh<-vector_arith:g2@0x9b8.1:vadd; acc2.bmhl<-vector_arith:g2@0x9b8.1:vadd; acc2.bmhh<-vector_arith:g2@0x9b8.1:vadd; acc0.bmll<-entry:entry; acc0.bmlh<-entry:entry; acc0.bmhl<-entry:entry; acc0.bmhh<-entry:entry; r5<-entry:entry` | `vsub.f	dm2, dm2, dm0, r5` |
+| `0x9d2` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec0.lo, vec0.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x0, x11, #0x19` |
+| `0x9d6` | 0 | `vmov` | `register_move` | `acc1.bmll` | `acc4.bmll<-vector_arith:g2@0x982.0:vsub.f` | `vmov	bmll1, bmll4` |
+| `0x9d6` | 1 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x9c0.2:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x9c0.2:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x9c0.2:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x9c0.2:vmac.f; vec0.lo<-activation_lane_broadcast:g2@0x9d2.0:vextbcst.16; vec0.hi<-activation_lane_broadcast:g2@0x9d2.0:vextbcst.16; vec1.lo<-activation_lane_broadcast:g2@0x986.0:vextbcst.16; vec1.hi<-activation_lane_broadcast:g2@0x986.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm3, x0, x1, r4` |
+| `0x9de` | 0 | `nop` | `nop` | `` | `` | `nop` |
+| `0x9e0` | 0 | `vmov` | `register_move` | `vec8.lo` | `vec5.hi<-bf16_coeff:g2@0x9c0.0:vconv.bf16.fp32` | `vmov	wl8, wh5` |
+| `0x9e4` | 0 | `vmov` | `register_move` | `acc1.bmlh` | `acc4.bmlh<-vector_arith:g2@0x982.0:vsub.f` | `vmov	bmlh1, bmlh4` |
+| `0x9e4` | 1 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x9d6.1:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x9d6.1:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x9d6.1:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x9d6.1:vmac.f; vec3.lo<-register_move:g2@0x996.0:vmov; vec3.hi<-activation_lane_broadcast:g2@0x956.0:vextbcst.16; vec8.lo<-register_move:g2@0x9e0.0:vmov; vec8.hi<-activation_lane_broadcast:g2@0x99a.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm3, x3, x8, r4` |
+| `0x9ec` | 0 | `vmov` | `register_move` | `acc1.bmhh` | `acc4.bmhh<-vector_arith:g2@0x982.0:vsub.f` | `vmov	bmhh1, bmhh4` |
+| `0x9f0` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec3.lo, vec3.hi` | `acc1.bmll<-register_move:g2@0x9d6.0:vmov; acc1.bmlh<-register_move:g2@0x9e4.0:vmov` | `vconv.bf16.fp32	 x3, cml1` |
+| `0x9f0` | 1 | `vmov` | `register_move` | `vec2.lo` | `vec2.hi<-bf16_coeff:g2@0x9aa.0:vconv.bf16.fp32` | `vmov	wl2, wh2` |
+| `0x9f8` | 0 | `vmov` | `register_move` | `acc1.bmhl` | `acc4.bmhl<-vector_arith:g2@0x982.0:vsub.f` | `vmov	bmhl1, bmhl4` |
+| `0x9f8` | 1 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x9e4.1:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x9e4.1:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x9e4.1:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x9e4.1:vmac.f; vec2.lo<-register_move:g2@0x9f0.1:vmov; vec2.hi<-bf16_coeff:g2@0x9aa.0:vconv.bf16.fp32; vec7.lo<-activation_lane_broadcast:g2@0x9a6.0:vextbcst.16; vec7.hi<-activation_lane_broadcast:g2@0x9a6.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm3, x2, x7, r4` |
+| `0xa00` | 0 | `vmov` | `register_move` | `acc1.bmll` | `acc2.bmll<-vector_arith:g2@0x9ca.1:vsub.f` | `vmov	bmll1, bmll2` |
+| `0xa04` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec1.lo, vec1.hi` | `acc1.bmhl<-register_move:g2@0x9f8.0:vmov; acc1.bmhh<-register_move:g2@0x9ec.0:vmov` | `vconv.bf16.fp32	 x1, cmh1` |
+| `0xa04` | 1 | `vmov` | `register_move` | `acc1.bmlh` | `acc2.bmlh<-vector_arith:g2@0x9ca.1:vsub.f` | `vmov	bmlh1, bmlh2` |
+| `0xa0c` | 0 | `vmov` | `register_move` | `acc1.bmhl` | `acc2.bmhl<-vector_arith:g2@0x9ca.1:vsub.f` | `vmov	bmhl1, bmhl2` |
+| `0xa0c` | 1 | `vmac.f` | `mac_accumulate` | `acc3.bmll, acc3.bmlh, acc3.bmhl, acc3.bmhh` | `acc3.bmll<-mac_accumulate:g2@0x9f8.1:vmac.f; acc3.bmlh<-mac_accumulate:g2@0x9f8.1:vmac.f; acc3.bmhl<-mac_accumulate:g2@0x9f8.1:vmac.f; acc3.bmhh<-mac_accumulate:g2@0x9f8.1:vmac.f; vec2.lo<-register_move:g2@0x9f0.1:vmov; vec2.hi<-bf16_coeff:g2@0x9aa.0:vconv.bf16.fp32; vec4.lo<-activation_lane_broadcast:g2@0x966.0:vextbcst.16; vec4.hi<-activation_lane_broadcast:g2@0x966.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm3, dm3, x2, x4, r4` |
+| `0xa14` | 0 | `vmov` | `register_move` | `acc1.bmhh` | `acc2.bmhh<-vector_arith:g2@0x9ca.1:vsub.f` | `vmov	bmhh1, bmhh2` |
+| `0xa18` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec5.lo, vec5.hi` | `acc1.bmll<-register_move:g2@0xa00.0:vmov; acc1.bmlh<-register_move:g2@0xa04.1:vmov` | `vconv.bf16.fp32	 x5, cml1` |
+| `0xa18` | 1 | `vextbcst.16` | `activation_lane_broadcast` | `vec2.lo, vec2.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x2, x11, #0x1a` |
+| `0xa20` | 0 | `vconv.bf16.fp32` | `bf16_coeff` | `vec4.lo, vec4.hi` | `acc1.bmhl<-register_move:g2@0xa0c.0:vmov; acc1.bmhh<-register_move:g2@0xa14.0:vmov` | `vconv.bf16.fp32	 x4, cmh1` |
+| `0xa20` | 1 | `vextbcst.16` | `activation_lane_broadcast` | `vec6.lo, vec6.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x6, x11, #0x1b` |
+| `0xa20` | 2 | `vmac.f` | `mac_accumulate` | `acc2.bmll, acc2.bmlh, acc2.bmhl, acc2.bmhh` | `acc3.bmll<-mac_accumulate:g2@0xa0c.1:vmac.f; acc3.bmlh<-mac_accumulate:g2@0xa0c.1:vmac.f; acc3.bmhl<-mac_accumulate:g2@0xa0c.1:vmac.f; acc3.bmhh<-mac_accumulate:g2@0xa0c.1:vmac.f; vec5.lo<-bf16_coeff:g2@0xa18.0:vconv.bf16.fp32; vec5.hi<-bf16_coeff:g2@0xa18.0:vconv.bf16.fp32; vec6.lo<-activation_lane_broadcast:g2@0xa20.1:vextbcst.16; vec6.hi<-activation_lane_broadcast:g2@0xa20.1:vextbcst.16; r4<-entry:entry` | `vmac.f	dm2, dm3, x5, x6, r4` |
+| `0xa2a` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec7.lo, vec7.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x7, x11, #0x1c` |
+| `0xa2e` | 0 | `vmov` | `register_move` | `vec8.lo` | `vec1.hi<-bf16_coeff:g2@0xa04.0:vconv.bf16.fp32` | `vmov	wl8, wh1` |
+| `0xa32` | 0 | `vmov` | `register_move` | `vec9.lo` | `vec5.hi<-bf16_coeff:g2@0xa18.0:vconv.bf16.fp32` | `vmov	wl9, wh5` |
+| `0xa32` | 1 | `vmac.f` | `mac_accumulate` | `acc1.bmll, acc1.bmlh, acc1.bmhl, acc1.bmhh` | `acc2.bmll<-mac_accumulate:g2@0xa20.2:vmac.f; acc2.bmlh<-mac_accumulate:g2@0xa20.2:vmac.f; acc2.bmhl<-mac_accumulate:g2@0xa20.2:vmac.f; acc2.bmhh<-mac_accumulate:g2@0xa20.2:vmac.f; vec8.lo<-register_move:g2@0xa2e.0:vmov; vec8.hi<-activation_lane_broadcast:g2@0x99a.0:vextbcst.16; vec9.lo<-register_move:g2@0xa32.0:vmov; vec9.hi<-activation_lane_broadcast:g2@0x9ca.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm1, dm2, x8, x9, r4` |
+| `0xa3a` | 0 | `vmov` | `register_move` | `acc4.bmll` | `lfh0<-register_move:g2@0x84c.0:vmov` | `vmov	bmll4, lfh0` |
+| `0xa3e` | 0 | `lda.s16` | `lda.s16` | `r7, p3` | `p3<-lda.s16:g1@0x78a.0:lda.s16` | `lda.s16	 r7, [p3], #0x2` |
+| `0xa3e` | 1 | `vmov` | `register_move` | `vec3.lo` | `vec3.hi<-bf16_coeff:g2@0x9f0.0:vconv.bf16.fp32` | `vmov	wl3, wh3` |
+| `0xa44` | 0 | `vldb` | `vector_load` | `vec2.lo` | `p5<-add.nc:g0@0x26c.3:add.nc` | `vldb	 wl2, [p5], #0x40` |
+| `0xa44` | 1 | `vextbcst.16` | `activation_lane_broadcast` | `vec10.lo, vec10.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x10, x11, #0x1d` |
+| `0xa44` | 2 | `vmac.f` | `mac_accumulate` | `acc1.bmll, acc1.bmlh, acc1.bmhl, acc1.bmhh` | `acc1.bmll<-mac_accumulate:g2@0xa32.1:vmac.f; acc1.bmlh<-mac_accumulate:g2@0xa32.1:vmac.f; acc1.bmhl<-mac_accumulate:g2@0xa32.1:vmac.f; acc1.bmhh<-mac_accumulate:g2@0xa32.1:vmac.f; vec3.lo<-register_move:g2@0xa3e.1:vmov; vec3.hi<-bf16_coeff:g2@0x9f0.0:vconv.bf16.fp32; vec10.lo<-activation_lane_broadcast:g2@0xa44.1:vextbcst.16; vec10.hi<-activation_lane_broadcast:g2@0xa44.1:vextbcst.16; r4<-entry:entry` | `vmac.f	dm1, dm1, x3, x10, r4` |
+| `0xa4e` | 0 | `nop` | `nop` | `` | `` | `nop` |
+| `0xa50` | 0 | `vextbcst.16` | `activation_lane_broadcast` | `vec0.lo, vec0.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x0, x11, #0x1e` |
+| `0xa54` | 0 | `vlda` | `vector_load` | `vec8.lo, vec8.hi` | `p0<-entry:entry` | `vlda	 x8, [p0], #0x40` |
+| `0xa54` | 1 | `vldb` | `vector_load` | `vec6.lo` | `p4<-add.nc:g0@0x284.2:add.nc` | `vldb	 wl6, [p4], #0x40` |
+| `0xa54` | 2 | `vextbcst.16` | `activation_lane_broadcast` | `vec11.lo, vec11.hi` | `vec11.lo<-vector_load:g2@0x7de.0:vldb; vec11.hi<-vector_load:g2@0x7de.0:vldb` | `vextbcst.16	 x11, x11, #0x1f` |
+| `0xa54` | 3 | `vmac.f` | `mac_accumulate` | `acc1.bmll, acc1.bmlh, acc1.bmhl, acc1.bmhh` | `acc1.bmll<-mac_accumulate:g2@0xa44.2:vmac.f; acc1.bmlh<-mac_accumulate:g2@0xa44.2:vmac.f; acc1.bmhl<-mac_accumulate:g2@0xa44.2:vmac.f; acc1.bmhh<-mac_accumulate:g2@0xa44.2:vmac.f; vec3.lo<-register_move:g2@0xa3e.1:vmov; vec3.hi<-bf16_coeff:g2@0x9f0.0:vconv.bf16.fp32; vec0.lo<-activation_lane_broadcast:g2@0xa50.0:vextbcst.16; vec0.hi<-activation_lane_broadcast:g2@0xa50.0:vextbcst.16; r4<-entry:entry` | `vmac.f	dm1, dm1, x3, x0, r4` |
+| `0xa60` | 0 | `vmov` | `register_move` | `vec3.lo` | `vec4.hi<-bf16_coeff:g2@0xa20.0:vconv.bf16.fp32` | `vmov	wl3, wh4` |
+| `0xa64` | 0 | `vbcst.16` | `scalar_broadcast` | `vec1.lo, vec1.hi` | `r7<-lda.s16:g2@0xa3e.0:lda.s16` | `vbcst.16	 x1, r7` |
+| `0xa68` | 0 | `vldb` | `vector_load` | `vec7.lo, vec7.hi` | `p0<-entry:entry` | `vldb	 x7, [p0], #0x40` |
+| `0xa68` | 1 | `vmac.f` | `mac_accumulate` | `acc1.bmll, acc1.bmlh, acc1.bmhl, acc1.bmhh` | `acc1.bmll<-mac_accumulate:g2@0xa54.3:vmac.f; acc1.bmlh<-mac_accumulate:g2@0xa54.3:vmac.f; acc1.bmhl<-mac_accumulate:g2@0xa54.3:vmac.f; acc1.bmhh<-mac_accumulate:g2@0xa54.3:vmac.f; vec1.lo<-scalar_broadcast:g2@0xa64.0:vbcst.16; vec1.hi<-scalar_broadcast:g2@0xa64.0:vbcst.16; vec2.lo<-vector_load:g2@0xa44.0:vldb; vec2.hi<-activation_lane_broadcast:g2@0xa18.1:vextbcst.16; r4<-entry:entry` | `vmac.f	dm1, dm1, x1, x2, r4` |
+| `0xa70` | 0 | `vunpack` | `unpacked_q4` | `vec5.lo, vec5.hi` | `vec7.lo<-vector_load:g2@0xa68.0:vldb; unpacksign0<-entry:entry` | `vunpack	x5, wl7, unpacksign0` |
+| `0xa74` | 0 | `nop` | `nop` | `` | `` | `nop` |
+| `0xa76` | 0 | `vunpack` | `unpacked_q4` | `vec9.lo, vec9.hi` | `vec8.lo<-vector_load:g2@0xa54.0:vlda; unpacksign0<-entry:entry` | `vunpack	x9, wl8, unpacksign0` |
+| `0xa76` | 1 | `vmac.f` | `mac_accumulate` | `acc1.bmll, acc1.bmlh, acc1.bmhl, acc1.bmhh` | `acc1.bmll<-mac_accumulate:g2@0xa68.1:vmac.f; acc1.bmlh<-mac_accumulate:g2@0xa68.1:vmac.f; acc1.bmhl<-mac_accumulate:g2@0xa68.1:vmac.f; acc1.bmhh<-mac_accumulate:g2@0xa68.1:vmac.f; vec8.lo<-vector_load:g2@0xa54.0:vlda; vec8.hi<-vector_load:g2@0xa54.0:vlda; vec6.lo<-vector_load:g2@0xa54.1:vldb; vec6.hi<-activation_lane_broadcast:g2@0xa20.1:vextbcst.16; r4<-entry:entry` | `vmac.f	dm1, dm1, x8, x6, r4` |
+| `0xa7e` | 0 | `vunpack` | `unpacked_q4` | `vec8.lo, vec8.hi` | `vec8.hi<-vector_load:g2@0xa54.0:vlda; unpacksign0<-entry:entry` | `vunpack	x8, wh8, unpacksign0` |
+| `0xa82` | 0 | `vunpack` | `unpacked_q4` | `vec10.lo, vec10.hi` | `vec7.hi<-vector_load:g2@0xa68.0:vldb; unpacksign0<-entry:entry` | `vunpack	x10, wh7, unpacksign0` |
+| `0xa86` | 0 | `vldb` | `vector_load` | `vec0.lo, vec0.hi` | `p0<-entry:entry` | `vldb	 x0, [p0], #0x40` |
+| `0xa86` | 1 | `vmac.f` | `mac_accumulate` | `acc1.bmll, acc1.bmlh, acc1.bmhl, acc1.bmhh` | `acc1.bmll<-mac_accumulate:g2@0xa76.1:vmac.f; acc1.bmlh<-mac_accumulate:g2@0xa76.1:vmac.f; acc1.bmhl<-mac_accumulate:g2@0xa76.1:vmac.f; acc1.bmhh<-mac_accumulate:g2@0xa76.1:vmac.f; vec5.lo<-unpacked_q4:g2@0xa70.0:vunpack; vec5.hi<-unpacked_q4:g2@0xa70.0:vunpack; vec7.lo<-vector_load:g2@0xa68.0:vldb; vec7.hi<-vector_load:g2@0xa68.0:vldb; r4<-entry:entry` | `vmac.f	dm1, dm1, x5, x7, r4` |
+| `0xa8e` | 0 | `nop` | `nop` | `` | `` | `nop` |
+| `0xa90` | 0 | `nop` | `nop` | `` | `` | `nop` |

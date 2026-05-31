@@ -150,7 +150,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
 {chr(10).join(flows)}
 
     func.func private @full_c1r2_make_input_norm_payload(memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, memref<{HIDDEN_DWORDS}xi32>, i32) attributes {{link_with = "{experiment_dir}/full_vector_station.o"}}
-    func.func private @q4nx_main16_qkv_scheduler(memref<{CHUNK_BF16}xbf16>, memref<{CHUNK_BF16}xbf16>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx_fast.o"}}
+    func.func private @{full.MAIN16_LAYER_SCHEDULER}(memref<{CHUNK_BF16}xbf16>, memref<{CHUNK_BF16}xbf16>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_CHUNK_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, memref<{full.MAIN_RECORD_PINGPONG_DWORDS}xi32>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/main_projection_q4nx_fast.o"}}
 
 {chr(10).join(blocks)}
 {_runtime_sequence(schedule)}
@@ -164,7 +164,7 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         f"case marker {CASE_NAME}",
         f"compact phase trace {_phase_trace_marker(qkv.QKV_CACHE_PHASE_TRACE)}",
         "full_c1r2_make_input_norm_payload",
-        "q4nx_main16_qkv_scheduler",
+        full.MAIN16_LAYER_SCHEDULER,
         f"aie.flow(%bridge, DMA : {BRIDGE_COMPACT_OUT_CHANNEL}, %shim_compact, DMA : {COMPACT_OUT_CHANNEL})",
         f"memref<{COMPACT_OUT_DWORDS}xi32>",
         f"memref<{TOTAL_WEIGHT_AND_AUX_I32}xi32>",
@@ -176,7 +176,8 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     )
     errors = [f"missing qwen3 qkv compact-output marker: {marker}" for marker in required if marker not in mlir]
     errors.extend(require_count(CASE_NAME, "packet flow", mlir.count("aie.packet_flow("), 1))
-    errors.extend(require_count(CASE_NAME, "q4nx qkv scheduler calls", mlir.count("func.call @q4nx_main16_qkv_scheduler"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
+    errors.extend(require_count(CASE_NAME, "q4nx main16 layer scheduler calls", mlir.count(f"func.call @{full.MAIN16_LAYER_SCHEDULER}"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
+    errors.extend(require_count(CASE_NAME, "main16 qkv phase limit constants", mlir.count(f"%main16_phase_limit_i32 = arith.constant {full.MAIN16_PHASE_LIMIT_QKV} : i32"), len(MAIN_COLUMNS) * len(MAIN_ROWS)))
     errors.extend(require_count(CASE_NAME, "aux-prefixed weight arg1 address patches", mlir.count("arg_idx = 1 : i32"), 9))
     errors.extend(require_count(CASE_NAME, "hidden arg2 address patch", mlir.count("arg_idx = 2 : i32"), 1))
     errors.extend(require_unique_packet_flows(CASE_NAME, mlir))

@@ -96,7 +96,6 @@ from compact_dataflow import (
     _phase_trace_errors,
     _phase_trace_marker,
     compact_phase_trace,
-    main_packet,
     q4nx_weight_column_memtile,
 )
 from physical_contract import validate_q4nx_down_full_layer_ownership
@@ -182,8 +181,12 @@ QKV_PREFIX_PHASE_TRACE = compact_phase_trace(("q", "k", "v"))
 QKVO_PHASE_TRACE = compact_phase_trace(("q", "k", "v", "o"))
 QKV_BODY_PHASE_TRACE = compact_phase_trace(("q", "k", "v", "o", "upgate", "down"))
 MAIN16_KERNEL_OBJECT = "main_projection_q4nx_fast.o"
+MAIN16_LAYER_SCHEDULER = "q4nx_main16_layer_scheduler"
+MAIN16_PHASE_LIMIT_QKV = 3
+MAIN16_PHASE_LIMIT_QKVO = 4
+MAIN16_PHASE_LIMIT_FULL = 7
 QKV_BODY_DWORDS = Q_DWORDS + CURRENT_DWORDS * 2
-MAIN_RECORD_PINGPONG_DWORDS = RECORD_DWORDS
+MAIN_RECORD_PINGPONG_DWORDS = 128
 MAIN16_ALL_PHASES = ("Q", "K", "V", "O", "UPGATE", "DOWN")
 MAIN_ACTIVATION_EMPTY_LOCK = 0
 MAIN_ACTIVATION_FULL_LOCK = 1
@@ -194,7 +197,10 @@ MAIN_RECORD_FULL_LOCK = 5
 MAIN_ACTIVATION_BDS = (0, 1)
 MAIN_WEIGHT_BDS = (2, 3)
 MAIN_RECORD_BDS = (4, 5)
+MAIN_ACCUM_ADDR = 0x2000
+MAIN_ACCUM_DWORDS = RECORD_PAYLOAD_DWORDS * 2
 MAIN_RECORD_PING_ADDR = 0x3C1C
+MAIN_CONTROL_ADDR = 0x3D00
 MAIN_RECORD_PONG_ADDR = 0x541C
 
 
@@ -210,6 +216,14 @@ class Main16Buffer:
 
 MAIN16_BUFFERS = (
     Main16Buffer(
+        "accum",
+        MAIN_ACCUM_ADDR,
+        MAIN_ACCUM_DWORDS * 4,
+        MAIN16_ALL_PHASES,
+        "generated main16 scheduler FP32 accumulator scratch",
+        f"memref<{MAIN_ACCUM_DWORDS}xi32>",
+    ),
+    Main16Buffer(
         "wt_ping",
         0x2800,
         CHUNK_BF16 * 2,
@@ -222,7 +236,7 @@ MAIN16_BUFFERS = (
         MAIN_RECORD_PING_ADDR,
         MAIN_RECORD_PINGPONG_DWORDS * 4,
         MAIN16_ALL_PHASES,
-        "compact record ping",
+        "compact record ping plus generated scheduler control scratch",
         f"memref<{MAIN_RECORD_PINGPONG_DWORDS}xi32>",
     ),
     Main16Buffer(
@@ -839,7 +853,7 @@ def _all_phases() -> tuple[str, ...]:
     return MAIN16_ALL_PHASES
 
 
-def _main_record_dma_blocks(tile: str, row: int, packet: int) -> str:
+def _main_record_dma_blocks(tile: str, row: int) -> str:
     source_offset = 0 if row == 0 else 1
     source_length = RECORD_DWORDS if row == 0 else RECORD_PAYLOAD_DWORDS
     record_type = _record_pingpong_type()
@@ -855,39 +869,19 @@ def _main_record_dma_blocks(tile: str, row: int, packet: int) -> str:
       aie.next_bd ^record_ping"""
 
 
-def _main16_full_scheduler_call(tile: str, group: int, row: int) -> str:
+def _main16_layer_scheduler_call(tile: str, group: int, row: int, phase_limit: int) -> str:
     record_type = _record_pingpong_type()
     return f"""
       %m_i32 = arith.constant 32 : i32
       %group_i32 = arith.constant {group} : i32
       %row_i32 = arith.constant {row} : i32
-      func.call @q4nx_main16_full_scheduler(%{tile}_wt_ping, %{tile}_wt_pong, %{tile}_chunk_ping, %{tile}_chunk_pong, {_record_ping_name(tile)}, {_record_pong_name(tile)}, %group_i32, %row_i32, %m_i32)
-        : (memref<{CHUNK_BF16}xbf16>, memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{MAIN_CHUNK_DWORDS}xi32>, {record_type}, {record_type}, i32, i32, i32) -> ()"""
-
-
-def _main16_qkv_scheduler_call(tile: str, group: int, row: int) -> str:
-    record_type = _record_pingpong_type()
-    return f"""
-      %m_i32 = arith.constant 32 : i32
-      %group_i32 = arith.constant {group} : i32
-      %row_i32 = arith.constant {row} : i32
-      func.call @q4nx_main16_qkv_scheduler(%{tile}_wt_ping, %{tile}_wt_pong, %{tile}_chunk_ping, %{tile}_chunk_pong, {_record_ping_name(tile)}, {_record_pong_name(tile)}, %group_i32, %row_i32, %m_i32)
-        : (memref<{CHUNK_BF16}xbf16>, memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{MAIN_CHUNK_DWORDS}xi32>, {record_type}, {record_type}, i32, i32, i32) -> ()"""
-
-
-def _main16_qkvo_scheduler_call(tile: str, group: int, row: int) -> str:
-    record_type = _record_pingpong_type()
-    return f"""
-      %m_i32 = arith.constant 32 : i32
-      %group_i32 = arith.constant {group} : i32
-      %row_i32 = arith.constant {row} : i32
-      func.call @q4nx_main16_qkvo_scheduler(%{tile}_wt_ping, %{tile}_wt_pong, %{tile}_chunk_ping, %{tile}_chunk_pong, {_record_ping_name(tile)}, {_record_pong_name(tile)}, %group_i32, %row_i32, %m_i32)
-        : (memref<{CHUNK_BF16}xbf16>, memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{MAIN_CHUNK_DWORDS}xi32>, {record_type}, {record_type}, i32, i32, i32) -> ()"""
+      %main16_phase_limit_i32 = arith.constant {phase_limit} : i32
+      func.call @{MAIN16_LAYER_SCHEDULER}(%{tile}_wt_ping, %{tile}_wt_pong, %{tile}_chunk_ping, %{tile}_chunk_pong, {_record_ping_name(tile)}, {_record_pong_name(tile)}, %group_i32, %row_i32, %m_i32, %main16_phase_limit_i32)
+        : (memref<{CHUNK_BF16}xbf16>, memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{MAIN_CHUNK_DWORDS}xi32>, {record_type}, {record_type}, i32, i32, i32, i32) -> ()"""
 
 
 def main16_qkv_prefix_tile(group: int, row: int) -> str:
     tile = _main_symbol(group, row)
-    packet = main_packet(group, row)
     buffer_decls = "\n".join(
         f"    %{tile}_{buffer.name} = aie.buffer(%{tile}) "
         f'{_main_buffer_attr(f"{tile}_{buffer.name}", buffer.address)} : {buffer.memref}'
@@ -898,7 +892,7 @@ def main16_qkv_prefix_tile(group: int, row: int) -> str:
 {_main_lock_decls(tile, 2)}
 
     %{tile}_core = aie.core(%{tile}) {{
-{_main16_qkv_scheduler_call(tile, group, row)}
+{_main16_layer_scheduler_call(tile, group, row, MAIN16_PHASE_LIMIT_QKV)}
       aie.end
     }}
 
@@ -930,7 +924,7 @@ def main16_qkv_prefix_tile(group: int, row: int) -> str:
 
     ^record_start:
       %record_dma = aie.dma_start(MM2S, 1, ^record_ping, ^end)
-{_main_record_dma_blocks(tile, row, packet)}
+{_main_record_dma_blocks(tile, row)}
     ^end:
       aie.end
     }}
@@ -939,7 +933,6 @@ def main16_qkv_prefix_tile(group: int, row: int) -> str:
 
 def main16_qkvo_tile(group: int, row: int) -> str:
     tile = _main_symbol(group, row)
-    packet = main_packet(group, row)
     buffer_decls = "\n".join(
         f"    %{tile}_{buffer.name} = aie.buffer(%{tile}) "
         f'{_main_buffer_attr(f"{tile}_{buffer.name}", buffer.address)} : {buffer.memref}'
@@ -950,7 +943,7 @@ def main16_qkvo_tile(group: int, row: int) -> str:
 {_main_lock_decls(tile, 2)}
 
     %{tile}_core = aie.core(%{tile}) {{
-{_main16_qkvo_scheduler_call(tile, group, row)}
+{_main16_layer_scheduler_call(tile, group, row, MAIN16_PHASE_LIMIT_QKVO)}
       aie.end
     }}
 
@@ -982,7 +975,7 @@ def main16_qkvo_tile(group: int, row: int) -> str:
 
     ^record_start:
       %record_dma = aie.dma_start(MM2S, 1, ^record_ping, ^end)
-{_main_record_dma_blocks(tile, row, packet)}
+{_main_record_dma_blocks(tile, row)}
     ^end:
       aie.end
     }}
@@ -991,7 +984,6 @@ def main16_qkvo_tile(group: int, row: int) -> str:
 
 def _main_tile(group: int, row: int) -> str:
     tile = _main_symbol(group, row)
-    packet = main_packet(group, row)
     buffer_decls = "\n".join(
         f"    %{tile}_{buffer.name} = aie.buffer(%{tile}) "
         f'{_main_buffer_attr(f"{tile}_{buffer.name}", buffer.address)} : {buffer.memref}'
@@ -1002,7 +994,7 @@ def _main_tile(group: int, row: int) -> str:
 {_main_lock_decls(tile, 2)}
 
     %{tile}_core = aie.core(%{tile}) {{
-{_main16_full_scheduler_call(tile, group, row)}
+{_main16_layer_scheduler_call(tile, group, row, MAIN16_PHASE_LIMIT_FULL)}
       aie.end
     }}
 
@@ -1034,7 +1026,7 @@ def _main_tile(group: int, row: int) -> str:
 
     ^record_start:
       %record_dma = aie.dma_start(MM2S, 1, ^record_ping, ^end)
-{_main_record_dma_blocks(tile, row, packet)}
+{_main_record_dma_blocks(tile, row)}
     ^end:
       aie.end
     }}
@@ -1308,7 +1300,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
     func.func private @qwen3_attention_bf16_init_accum(memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
     func.func private @qwen3_attention_bf16_accum_block(memref<{V_WINDOW_DWORDS}xi32>, memref<{SCALAR_DWORDS + WEIGHT_DWORDS}xi32>, memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, i32, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
     func.func private @qwen3_attention_bf16_finish_accum(memref<{ACCUM_LANES}xi32>, memref<{SCALAR_DWORDS}xi32>, memref<{ATTENTION_OUTPUT_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/edge_attention.o"}}
-    func.func private @q4nx_main16_full_scheduler(memref<{CHUNK_BF16}xbf16>, memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{MAIN_RECORD_PINGPONG_DWORDS}xi32>, memref<{MAIN_RECORD_PINGPONG_DWORDS}xi32>, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
+    func.func private @{MAIN16_LAYER_SCHEDULER}(memref<{CHUNK_BF16}xbf16>, memref<{CHUNK_BF16}xbf16>, memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{MAIN_CHUNK_DWORDS}xi32>, memref<{MAIN_RECORD_PINGPONG_DWORDS}xi32>, memref<{MAIN_RECORD_PINGPONG_DWORDS}xi32>, i32, i32, i32, i32) attributes {{link_with = "{experiment_dir}/{MAIN16_KERNEL_OBJECT}"}}
 
 {chr(10).join(blocks)}
 {_runtime_sequence(schedule)}
@@ -1331,7 +1323,7 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         "full_c1r2_make_input_norm_payload",
         "full_c1r2_add_o_compact_to_residual",
         "full_c1r2_make_post_norm_payload",
-        "q4nx_main16_full_scheduler",
+        MAIN16_LAYER_SCHEDULER,
         "ffn_swiglu_slice_bf16_inputs",
         "full_c1r2_write_down_block",
         MAIN16_KERNEL_OBJECT,
@@ -1400,7 +1392,8 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     expected_packets = 11
     errors.extend(require_count(CASE_NAME, "packet flow", mlir.count("aie.packet_flow("), expected_packets))
     main_tile_count = len(MAIN_COLUMNS) * len(MAIN_ROWS)
-    errors.extend(require_count(CASE_NAME, "q4nx main16 full scheduler calls", mlir.count("func.call @q4nx_main16_full_scheduler"), main_tile_count))
+    errors.extend(require_count(CASE_NAME, "q4nx main16 layer scheduler calls", mlir.count(f"func.call @{MAIN16_LAYER_SCHEDULER}"), main_tile_count))
+    errors.extend(require_count(CASE_NAME, "main16 full phase limit constants", mlir.count(f"%main16_phase_limit_i32 = arith.constant {MAIN16_PHASE_LIMIT_FULL} : i32"), main_tile_count))
     errors.extend(require_count(CASE_NAME, "q4nx old q emit calls in MLIR", mlir.count("func.call @q4nx_emit_q_accum_body_record"), 0))
     errors.extend(require_count(CASE_NAME, "q4nx old k emit calls in MLIR", mlir.count("func.call @q4nx_emit_k_accum_body_record"), 0))
     errors.extend(require_count(CASE_NAME, "q4nx old v emit calls in MLIR", mlir.count("func.call @q4nx_emit_v_accum_body_record"), 0))

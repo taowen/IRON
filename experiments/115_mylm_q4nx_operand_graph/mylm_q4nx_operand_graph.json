@@ -1,0 +1,3946 @@
+{
+  "group_bounds": [
+    "0x260",
+    "0x52a",
+    "0x7de",
+    "0xa92",
+    "0xd46",
+    "0xffa",
+    "0x12ae",
+    "0x1566",
+    "0x1850"
+  ],
+  "boundaries": [
+    {
+      "group": 1,
+      "signature_hash": "104ce8bf871f382b",
+      "data_uses": [
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g0@0x51e.1:vmac.f",
+          "producer_offset": "+0x2be.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g1@0x52a.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g0@0x51e.1:vmac.f",
+          "producer_offset": "+0x2be.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g1@0x52a.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g0@0x51e.1:vmac.f",
+          "producer_offset": "+0x2be.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g1@0x52a.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmll",
+          "producer": "g0@0x51e.1:vmac.f",
+          "producer_offset": "+0x2be.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g1@0x52a.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g0@0x41c.0:vsub.f",
+          "producer_offset": "+0x1bc.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g1@0x570.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g0@0x41c.0:vsub.f",
+          "producer_offset": "+0x1bc.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g1@0x570.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g0@0x41c.0:vsub.f",
+          "producer_offset": "+0x1bc.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g1@0x570.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmll",
+          "producer": "g0@0x478.0:vmov",
+          "producer_offset": "+0x218.0:vmov",
+          "producer_kind": "register_move",
+          "first_use": "g1@0x570.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec0.hi",
+          "producer": "g0@0x51e.0:vldb",
+          "producer_offset": "+0x2be.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g1@0x53a.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec0.lo",
+          "producer": "g0@0x51e.0:vldb",
+          "producer_offset": "+0x2be.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g1@0x53a.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec10.hi",
+          "producer": "g0@0x51a.0:vunpack",
+          "producer_offset": "+0x2ba.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g1@0x52a.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec10.lo",
+          "producer": "g0@0x51a.0:vunpack",
+          "producer_offset": "+0x2ba.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g1@0x52a.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec2.hi",
+          "producer": "g0@0x4b2.1:vextbcst.16",
+          "producer_offset": "+0x252.1:vextbcst.16",
+          "producer_kind": "activation_lane",
+          "first_use": "g1@0x570.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec2.lo",
+          "producer": "g0@0x4dc.0:vldb",
+          "producer_offset": "+0x27c.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g1@0x570.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g0@0x490.0:vconv.bf16.fp32",
+          "producer_offset": "+0x230.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g1@0x54a.0:vmac.f",
+          "first_use_offset": "+0x20.0:vmac.f"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g0@0x4f8.0:vmov",
+          "producer_offset": "+0x298.0:vmov",
+          "producer_kind": "register_move",
+          "first_use": "g1@0x54a.0:vmac.f",
+          "first_use_offset": "+0x20.0:vmac.f"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g0@0x4ba.0:vconv.bf16.fp32",
+          "producer_offset": "+0x25a.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g1@0x53a.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec4.lo",
+          "producer": "g0@0x4ba.0:vconv.bf16.fp32",
+          "producer_offset": "+0x25a.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g1@0x53a.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec6.hi",
+          "producer": "g0@0x4ba.1:vextbcst.16",
+          "producer_offset": "+0x25a.1:vextbcst.16",
+          "producer_kind": "activation_lane",
+          "first_use": "g1@0x580.1:vmac.f",
+          "first_use_offset": "+0x56.1:vmac.f"
+        },
+        {
+          "cell": "vec8.hi",
+          "producer": "g0@0x516.0:vunpack",
+          "producer_offset": "+0x2b6.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g1@0x53a.0:vups.4x",
+          "first_use_offset": "+0x10.0:vups.4x"
+        },
+        {
+          "cell": "vec8.lo",
+          "producer": "g0@0x516.0:vunpack",
+          "producer_offset": "+0x2b6.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g1@0x53a.0:vups.4x",
+          "first_use_offset": "+0x10.0:vups.4x"
+        },
+        {
+          "cell": "vec9.hi",
+          "producer": "g0@0x50e.0:vunpack",
+          "producer_offset": "+0x2ae.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g1@0x52a.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec9.lo",
+          "producer": "g0@0x50e.0:vunpack",
+          "producer_offset": "+0x2ae.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g1@0x52a.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        }
+      ],
+      "pointer_uses": [
+        {
+          "cell": "p3",
+          "producer": "g0@0x4d6.0:lda.s16",
+          "producer_offset": "+0x276.0:lda.s16",
+          "producer_kind": "lda.s16",
+          "first_use": "g1@0x78a.0:lda.s16",
+          "first_use_offset": "+0x260.0:lda.s16"
+        },
+        {
+          "cell": "p4",
+          "producer": "g0@0x284.2:add.nc",
+          "producer_offset": "+0x24.2:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g1@0x7a0.1:vldb",
+          "first_use_offset": "+0x276.1:vldb"
+        },
+        {
+          "cell": "p5",
+          "producer": "g0@0x26c.3:add.nc",
+          "producer_offset": "+0xc.3:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g1@0x790.0:vldb",
+          "first_use_offset": "+0x266.0:vldb"
+        }
+      ]
+    },
+    {
+      "group": 2,
+      "signature_hash": "5121c8604a8461c4",
+      "data_uses": [
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g1@0x7d2.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g2@0x7de.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g1@0x7d2.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g2@0x7de.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g1@0x7d2.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g2@0x7de.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmll",
+          "producer": "g1@0x7d2.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g2@0x7de.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g1@0x6ce.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g2@0x824.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g1@0x6ce.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g2@0x824.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g1@0x6ce.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g2@0x824.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmll",
+          "producer": "g1@0x786.0:vmov",
+          "producer_offset": "+0x25c.0:vmov",
+          "producer_kind": "register_move",
+          "first_use": "g2@0x824.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec0.hi",
+          "producer": "g1@0x7d2.0:vldb",
+          "producer_offset": "+0x2a8.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g2@0x7ee.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec0.lo",
+          "producer": "g1@0x7d2.0:vldb",
+          "producer_offset": "+0x2a8.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g2@0x7ee.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec10.hi",
+          "producer": "g1@0x7ce.0:vunpack",
+          "producer_offset": "+0x2a4.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g2@0x7de.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec10.lo",
+          "producer": "g1@0x7ce.0:vunpack",
+          "producer_offset": "+0x2a4.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g2@0x7de.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec2.hi",
+          "producer": "g1@0x764.1:vextbcst.16",
+          "producer_offset": "+0x23a.1:vextbcst.16",
+          "producer_kind": "activation_lane",
+          "first_use": "g2@0x824.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec2.lo",
+          "producer": "g1@0x790.0:vldb",
+          "producer_offset": "+0x266.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g2@0x824.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g1@0x73c.0:vconv.bf16.fp32",
+          "producer_offset": "+0x212.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g2@0x7fe.0:vmac.f",
+          "first_use_offset": "+0x20.0:vmac.f"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g1@0x7ac.0:vmov",
+          "producer_offset": "+0x282.0:vmov",
+          "producer_kind": "register_move",
+          "first_use": "g2@0x7fe.0:vmac.f",
+          "first_use_offset": "+0x20.0:vmac.f"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g1@0x76c.0:vconv.bf16.fp32",
+          "producer_offset": "+0x242.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g2@0x7ee.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec4.lo",
+          "producer": "g1@0x76c.0:vconv.bf16.fp32",
+          "producer_offset": "+0x242.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g2@0x7ee.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec6.hi",
+          "producer": "g1@0x76c.1:vextbcst.16",
+          "producer_offset": "+0x242.1:vextbcst.16",
+          "producer_kind": "activation_lane",
+          "first_use": "g2@0x834.1:vmac.f",
+          "first_use_offset": "+0x56.1:vmac.f"
+        },
+        {
+          "cell": "vec8.hi",
+          "producer": "g1@0x7ca.0:vunpack",
+          "producer_offset": "+0x2a0.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g2@0x7ee.0:vups.4x",
+          "first_use_offset": "+0x10.0:vups.4x"
+        },
+        {
+          "cell": "vec8.lo",
+          "producer": "g1@0x7ca.0:vunpack",
+          "producer_offset": "+0x2a0.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g2@0x7ee.0:vups.4x",
+          "first_use_offset": "+0x10.0:vups.4x"
+        },
+        {
+          "cell": "vec9.hi",
+          "producer": "g1@0x7c2.0:vunpack",
+          "producer_offset": "+0x298.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g2@0x7de.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec9.lo",
+          "producer": "g1@0x7c2.0:vunpack",
+          "producer_offset": "+0x298.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g2@0x7de.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        }
+      ],
+      "pointer_uses": [
+        {
+          "cell": "p3",
+          "producer": "g1@0x78a.0:lda.s16",
+          "producer_offset": "+0x260.0:lda.s16",
+          "producer_kind": "lda.s16",
+          "first_use": "g2@0xa3e.0:lda.s16",
+          "first_use_offset": "+0x260.0:lda.s16"
+        },
+        {
+          "cell": "p4",
+          "producer": "g0@0x284.2:add.nc",
+          "producer_offset": "+0x24.2:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g2@0xa54.1:vldb",
+          "first_use_offset": "+0x276.1:vldb"
+        },
+        {
+          "cell": "p5",
+          "producer": "g0@0x26c.3:add.nc",
+          "producer_offset": "+0xc.3:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g2@0xa44.0:vldb",
+          "first_use_offset": "+0x266.0:vldb"
+        }
+      ]
+    },
+    {
+      "group": 3,
+      "signature_hash": "5121c8604a8461c4",
+      "data_uses": [
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g2@0xa86.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g3@0xa92.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g2@0xa86.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g3@0xa92.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g2@0xa86.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g3@0xa92.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmll",
+          "producer": "g2@0xa86.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g3@0xa92.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g2@0x982.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g3@0xad8.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g2@0x982.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g3@0xad8.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g2@0x982.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g3@0xad8.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmll",
+          "producer": "g2@0xa3a.0:vmov",
+          "producer_offset": "+0x25c.0:vmov",
+          "producer_kind": "register_move",
+          "first_use": "g3@0xad8.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec0.hi",
+          "producer": "g2@0xa86.0:vldb",
+          "producer_offset": "+0x2a8.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g3@0xaa2.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec0.lo",
+          "producer": "g2@0xa86.0:vldb",
+          "producer_offset": "+0x2a8.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g3@0xaa2.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec10.hi",
+          "producer": "g2@0xa82.0:vunpack",
+          "producer_offset": "+0x2a4.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g3@0xa92.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec10.lo",
+          "producer": "g2@0xa82.0:vunpack",
+          "producer_offset": "+0x2a4.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g3@0xa92.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec2.hi",
+          "producer": "g2@0xa18.1:vextbcst.16",
+          "producer_offset": "+0x23a.1:vextbcst.16",
+          "producer_kind": "activation_lane",
+          "first_use": "g3@0xad8.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec2.lo",
+          "producer": "g2@0xa44.0:vldb",
+          "producer_offset": "+0x266.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g3@0xad8.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g2@0x9f0.0:vconv.bf16.fp32",
+          "producer_offset": "+0x212.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g3@0xab2.0:vmac.f",
+          "first_use_offset": "+0x20.0:vmac.f"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g2@0xa60.0:vmov",
+          "producer_offset": "+0x282.0:vmov",
+          "producer_kind": "register_move",
+          "first_use": "g3@0xab2.0:vmac.f",
+          "first_use_offset": "+0x20.0:vmac.f"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g2@0xa20.0:vconv.bf16.fp32",
+          "producer_offset": "+0x242.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g3@0xaa2.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec4.lo",
+          "producer": "g2@0xa20.0:vconv.bf16.fp32",
+          "producer_offset": "+0x242.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g3@0xaa2.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec6.hi",
+          "producer": "g2@0xa20.1:vextbcst.16",
+          "producer_offset": "+0x242.1:vextbcst.16",
+          "producer_kind": "activation_lane",
+          "first_use": "g3@0xae8.1:vmac.f",
+          "first_use_offset": "+0x56.1:vmac.f"
+        },
+        {
+          "cell": "vec8.hi",
+          "producer": "g2@0xa7e.0:vunpack",
+          "producer_offset": "+0x2a0.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g3@0xaa2.0:vups.4x",
+          "first_use_offset": "+0x10.0:vups.4x"
+        },
+        {
+          "cell": "vec8.lo",
+          "producer": "g2@0xa7e.0:vunpack",
+          "producer_offset": "+0x2a0.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g3@0xaa2.0:vups.4x",
+          "first_use_offset": "+0x10.0:vups.4x"
+        },
+        {
+          "cell": "vec9.hi",
+          "producer": "g2@0xa76.0:vunpack",
+          "producer_offset": "+0x298.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g3@0xa92.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec9.lo",
+          "producer": "g2@0xa76.0:vunpack",
+          "producer_offset": "+0x298.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g3@0xa92.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        }
+      ],
+      "pointer_uses": [
+        {
+          "cell": "p3",
+          "producer": "g2@0xa3e.0:lda.s16",
+          "producer_offset": "+0x260.0:lda.s16",
+          "producer_kind": "lda.s16",
+          "first_use": "g3@0xcf2.0:lda.s16",
+          "first_use_offset": "+0x260.0:lda.s16"
+        },
+        {
+          "cell": "p4",
+          "producer": "g0@0x284.2:add.nc",
+          "producer_offset": "+0x24.2:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g3@0xd08.1:vldb",
+          "first_use_offset": "+0x276.1:vldb"
+        },
+        {
+          "cell": "p5",
+          "producer": "g0@0x26c.3:add.nc",
+          "producer_offset": "+0xc.3:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g3@0xcf8.0:vldb",
+          "first_use_offset": "+0x266.0:vldb"
+        }
+      ]
+    },
+    {
+      "group": 4,
+      "signature_hash": "5121c8604a8461c4",
+      "data_uses": [
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g3@0xd3a.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g4@0xd46.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g3@0xd3a.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g4@0xd46.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g3@0xd3a.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g4@0xd46.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmll",
+          "producer": "g3@0xd3a.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g4@0xd46.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g3@0xc36.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g4@0xd8c.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g3@0xc36.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g4@0xd8c.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g3@0xc36.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g4@0xd8c.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmll",
+          "producer": "g3@0xcee.0:vmov",
+          "producer_offset": "+0x25c.0:vmov",
+          "producer_kind": "register_move",
+          "first_use": "g4@0xd8c.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec0.hi",
+          "producer": "g3@0xd3a.0:vldb",
+          "producer_offset": "+0x2a8.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g4@0xd56.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec0.lo",
+          "producer": "g3@0xd3a.0:vldb",
+          "producer_offset": "+0x2a8.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g4@0xd56.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec10.hi",
+          "producer": "g3@0xd36.0:vunpack",
+          "producer_offset": "+0x2a4.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g4@0xd46.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec10.lo",
+          "producer": "g3@0xd36.0:vunpack",
+          "producer_offset": "+0x2a4.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g4@0xd46.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec2.hi",
+          "producer": "g3@0xccc.1:vextbcst.16",
+          "producer_offset": "+0x23a.1:vextbcst.16",
+          "producer_kind": "activation_lane",
+          "first_use": "g4@0xd8c.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec2.lo",
+          "producer": "g3@0xcf8.0:vldb",
+          "producer_offset": "+0x266.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g4@0xd8c.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g3@0xca4.0:vconv.bf16.fp32",
+          "producer_offset": "+0x212.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g4@0xd66.0:vmac.f",
+          "first_use_offset": "+0x20.0:vmac.f"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g3@0xd14.0:vmov",
+          "producer_offset": "+0x282.0:vmov",
+          "producer_kind": "register_move",
+          "first_use": "g4@0xd66.0:vmac.f",
+          "first_use_offset": "+0x20.0:vmac.f"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g3@0xcd4.0:vconv.bf16.fp32",
+          "producer_offset": "+0x242.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g4@0xd56.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec4.lo",
+          "producer": "g3@0xcd4.0:vconv.bf16.fp32",
+          "producer_offset": "+0x242.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g4@0xd56.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec6.hi",
+          "producer": "g3@0xcd4.1:vextbcst.16",
+          "producer_offset": "+0x242.1:vextbcst.16",
+          "producer_kind": "activation_lane",
+          "first_use": "g4@0xd9c.1:vmac.f",
+          "first_use_offset": "+0x56.1:vmac.f"
+        },
+        {
+          "cell": "vec8.hi",
+          "producer": "g3@0xd32.0:vunpack",
+          "producer_offset": "+0x2a0.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g4@0xd56.0:vups.4x",
+          "first_use_offset": "+0x10.0:vups.4x"
+        },
+        {
+          "cell": "vec8.lo",
+          "producer": "g3@0xd32.0:vunpack",
+          "producer_offset": "+0x2a0.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g4@0xd56.0:vups.4x",
+          "first_use_offset": "+0x10.0:vups.4x"
+        },
+        {
+          "cell": "vec9.hi",
+          "producer": "g3@0xd2a.0:vunpack",
+          "producer_offset": "+0x298.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g4@0xd46.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec9.lo",
+          "producer": "g3@0xd2a.0:vunpack",
+          "producer_offset": "+0x298.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g4@0xd46.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        }
+      ],
+      "pointer_uses": [
+        {
+          "cell": "p3",
+          "producer": "g3@0xcf2.0:lda.s16",
+          "producer_offset": "+0x260.0:lda.s16",
+          "producer_kind": "lda.s16",
+          "first_use": "g4@0xfa6.0:lda.s16",
+          "first_use_offset": "+0x260.0:lda.s16"
+        },
+        {
+          "cell": "p4",
+          "producer": "g0@0x284.2:add.nc",
+          "producer_offset": "+0x24.2:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g4@0xfbc.1:vldb",
+          "first_use_offset": "+0x276.1:vldb"
+        },
+        {
+          "cell": "p5",
+          "producer": "g0@0x26c.3:add.nc",
+          "producer_offset": "+0xc.3:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g4@0xfac.0:vldb",
+          "first_use_offset": "+0x266.0:vldb"
+        }
+      ]
+    },
+    {
+      "group": 5,
+      "signature_hash": "5121c8604a8461c4",
+      "data_uses": [
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g4@0xfee.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g5@0xffa.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g4@0xfee.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g5@0xffa.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g4@0xfee.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g5@0xffa.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmll",
+          "producer": "g4@0xfee.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g5@0xffa.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g4@0xeea.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g5@0x1040.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g4@0xeea.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g5@0x1040.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g4@0xeea.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g5@0x1040.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmll",
+          "producer": "g4@0xfa2.0:vmov",
+          "producer_offset": "+0x25c.0:vmov",
+          "producer_kind": "register_move",
+          "first_use": "g5@0x1040.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec0.hi",
+          "producer": "g4@0xfee.0:vldb",
+          "producer_offset": "+0x2a8.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g5@0x100a.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec0.lo",
+          "producer": "g4@0xfee.0:vldb",
+          "producer_offset": "+0x2a8.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g5@0x100a.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec10.hi",
+          "producer": "g4@0xfea.0:vunpack",
+          "producer_offset": "+0x2a4.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g5@0xffa.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec10.lo",
+          "producer": "g4@0xfea.0:vunpack",
+          "producer_offset": "+0x2a4.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g5@0xffa.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec2.hi",
+          "producer": "g4@0xf80.1:vextbcst.16",
+          "producer_offset": "+0x23a.1:vextbcst.16",
+          "producer_kind": "activation_lane",
+          "first_use": "g5@0x1040.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec2.lo",
+          "producer": "g4@0xfac.0:vldb",
+          "producer_offset": "+0x266.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g5@0x1040.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g4@0xf58.0:vconv.bf16.fp32",
+          "producer_offset": "+0x212.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g5@0x101a.0:vmac.f",
+          "first_use_offset": "+0x20.0:vmac.f"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g4@0xfc8.0:vmov",
+          "producer_offset": "+0x282.0:vmov",
+          "producer_kind": "register_move",
+          "first_use": "g5@0x101a.0:vmac.f",
+          "first_use_offset": "+0x20.0:vmac.f"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g4@0xf88.0:vconv.bf16.fp32",
+          "producer_offset": "+0x242.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g5@0x100a.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec4.lo",
+          "producer": "g4@0xf88.0:vconv.bf16.fp32",
+          "producer_offset": "+0x242.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g5@0x100a.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec6.hi",
+          "producer": "g4@0xf88.1:vextbcst.16",
+          "producer_offset": "+0x242.1:vextbcst.16",
+          "producer_kind": "activation_lane",
+          "first_use": "g5@0x1050.1:vmac.f",
+          "first_use_offset": "+0x56.1:vmac.f"
+        },
+        {
+          "cell": "vec8.hi",
+          "producer": "g4@0xfe6.0:vunpack",
+          "producer_offset": "+0x2a0.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g5@0x100a.0:vups.4x",
+          "first_use_offset": "+0x10.0:vups.4x"
+        },
+        {
+          "cell": "vec8.lo",
+          "producer": "g4@0xfe6.0:vunpack",
+          "producer_offset": "+0x2a0.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g5@0x100a.0:vups.4x",
+          "first_use_offset": "+0x10.0:vups.4x"
+        },
+        {
+          "cell": "vec9.hi",
+          "producer": "g4@0xfde.0:vunpack",
+          "producer_offset": "+0x298.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g5@0xffa.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec9.lo",
+          "producer": "g4@0xfde.0:vunpack",
+          "producer_offset": "+0x298.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g5@0xffa.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        }
+      ],
+      "pointer_uses": [
+        {
+          "cell": "p3",
+          "producer": "g4@0xfa6.0:lda.s16",
+          "producer_offset": "+0x260.0:lda.s16",
+          "producer_kind": "lda.s16",
+          "first_use": "g5@0x125a.0:lda.s16",
+          "first_use_offset": "+0x260.0:lda.s16"
+        },
+        {
+          "cell": "p4",
+          "producer": "g0@0x284.2:add.nc",
+          "producer_offset": "+0x24.2:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g5@0x1270.1:vldb",
+          "first_use_offset": "+0x276.1:vldb"
+        },
+        {
+          "cell": "p5",
+          "producer": "g0@0x26c.3:add.nc",
+          "producer_offset": "+0xc.3:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g5@0x1260.0:vldb",
+          "first_use_offset": "+0x266.0:vldb"
+        }
+      ]
+    },
+    {
+      "group": 6,
+      "signature_hash": "5121c8604a8461c4",
+      "data_uses": [
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g5@0x12a2.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g6@0x12ae.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g5@0x12a2.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g6@0x12ae.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g5@0x12a2.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g6@0x12ae.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmll",
+          "producer": "g5@0x12a2.1:vmac.f",
+          "producer_offset": "+0x2a8.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g6@0x12ae.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g5@0x119e.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g6@0x12f4.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g5@0x119e.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g6@0x12f4.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g5@0x119e.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g6@0x12f4.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmll",
+          "producer": "g5@0x1256.0:vmov",
+          "producer_offset": "+0x25c.0:vmov",
+          "producer_kind": "register_move",
+          "first_use": "g6@0x12f4.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec0.hi",
+          "producer": "g5@0x12a2.0:vldb",
+          "producer_offset": "+0x2a8.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g6@0x12be.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec0.lo",
+          "producer": "g5@0x12a2.0:vldb",
+          "producer_offset": "+0x2a8.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g6@0x12be.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec10.hi",
+          "producer": "g5@0x129e.0:vunpack",
+          "producer_offset": "+0x2a4.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g6@0x12ae.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec10.lo",
+          "producer": "g5@0x129e.0:vunpack",
+          "producer_offset": "+0x2a4.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g6@0x12ae.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec2.hi",
+          "producer": "g5@0x1234.1:vextbcst.16",
+          "producer_offset": "+0x23a.1:vextbcst.16",
+          "producer_kind": "activation_lane",
+          "first_use": "g6@0x12f4.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec2.lo",
+          "producer": "g5@0x1260.0:vldb",
+          "producer_offset": "+0x266.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g6@0x12f4.2:vmac.f",
+          "first_use_offset": "+0x46.2:vmac.f"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g5@0x120c.0:vconv.bf16.fp32",
+          "producer_offset": "+0x212.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g6@0x12ce.0:vmac.f",
+          "first_use_offset": "+0x20.0:vmac.f"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g5@0x127c.0:vmov",
+          "producer_offset": "+0x282.0:vmov",
+          "producer_kind": "register_move",
+          "first_use": "g6@0x12ce.0:vmac.f",
+          "first_use_offset": "+0x20.0:vmac.f"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g5@0x123c.0:vconv.bf16.fp32",
+          "producer_offset": "+0x242.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g6@0x12be.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec4.lo",
+          "producer": "g5@0x123c.0:vconv.bf16.fp32",
+          "producer_offset": "+0x242.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g6@0x12be.1:vmac.f",
+          "first_use_offset": "+0x10.1:vmac.f"
+        },
+        {
+          "cell": "vec6.hi",
+          "producer": "g5@0x123c.1:vextbcst.16",
+          "producer_offset": "+0x242.1:vextbcst.16",
+          "producer_kind": "activation_lane",
+          "first_use": "g6@0x1304.1:vmac.f",
+          "first_use_offset": "+0x56.1:vmac.f"
+        },
+        {
+          "cell": "vec8.hi",
+          "producer": "g5@0x129a.0:vunpack",
+          "producer_offset": "+0x2a0.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g6@0x12be.0:vups.4x",
+          "first_use_offset": "+0x10.0:vups.4x"
+        },
+        {
+          "cell": "vec8.lo",
+          "producer": "g5@0x129a.0:vunpack",
+          "producer_offset": "+0x2a0.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g6@0x12be.0:vups.4x",
+          "first_use_offset": "+0x10.0:vups.4x"
+        },
+        {
+          "cell": "vec9.hi",
+          "producer": "g5@0x1292.0:vunpack",
+          "producer_offset": "+0x298.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g6@0x12ae.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec9.lo",
+          "producer": "g5@0x1292.0:vunpack",
+          "producer_offset": "+0x298.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g6@0x12ae.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        }
+      ],
+      "pointer_uses": [
+        {
+          "cell": "p3",
+          "producer": "g5@0x125a.0:lda.s16",
+          "producer_offset": "+0x260.0:lda.s16",
+          "producer_kind": "lda.s16",
+          "first_use": "g6@0x150e.0:lda.s16",
+          "first_use_offset": "+0x260.0:lda.s16"
+        },
+        {
+          "cell": "p4",
+          "producer": "g0@0x284.2:add.nc",
+          "producer_offset": "+0x24.2:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g6@0x1526.1:vldb",
+          "first_use_offset": "+0x278.1:vldb"
+        },
+        {
+          "cell": "p5",
+          "producer": "g0@0x26c.3:add.nc",
+          "producer_offset": "+0xc.3:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g6@0x1514.0:vldb",
+          "first_use_offset": "+0x266.0:vldb"
+        }
+      ]
+    },
+    {
+      "group": 7,
+      "signature_hash": "512c8be2d110c5ab",
+      "data_uses": [
+        {
+          "cell": "acc1.bmhh",
+          "producer": "g6@0x155a.1:vmac.f",
+          "producer_offset": "+0x2ac.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g7@0x1566.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmhl",
+          "producer": "g6@0x155a.1:vmac.f",
+          "producer_offset": "+0x2ac.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g7@0x1566.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmlh",
+          "producer": "g6@0x155a.1:vmac.f",
+          "producer_offset": "+0x2ac.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g7@0x1566.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc1.bmll",
+          "producer": "g6@0x155a.1:vmac.f",
+          "producer_offset": "+0x2ac.1:vmac.f",
+          "producer_kind": "accumulator_carry",
+          "first_use": "g7@0x1566.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "acc4.bmhh",
+          "producer": "g6@0x1452.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g7@0x15ae.2:vmac.f",
+          "first_use_offset": "+0x48.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmhl",
+          "producer": "g6@0x1452.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g7@0x15ae.2:vmac.f",
+          "first_use_offset": "+0x48.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmlh",
+          "producer": "g6@0x1452.0:vsub.f",
+          "producer_offset": "+0x1a4.0:vsub.f",
+          "producer_kind": "vector_arith",
+          "first_use": "g7@0x15ae.2:vmac.f",
+          "first_use_offset": "+0x48.2:vmac.f"
+        },
+        {
+          "cell": "acc4.bmll",
+          "producer": "g6@0x150a.0:vmov",
+          "producer_offset": "+0x25c.0:vmov",
+          "producer_kind": "register_move",
+          "first_use": "g7@0x15ae.2:vmac.f",
+          "first_use_offset": "+0x48.2:vmac.f"
+        },
+        {
+          "cell": "vec0.hi",
+          "producer": "g6@0x155a.0:vldb",
+          "producer_offset": "+0x2ac.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g7@0x1578.1:vmac.f",
+          "first_use_offset": "+0x12.1:vmac.f"
+        },
+        {
+          "cell": "vec0.lo",
+          "producer": "g6@0x155a.0:vldb",
+          "producer_offset": "+0x2ac.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g7@0x1578.1:vmac.f",
+          "first_use_offset": "+0x12.1:vmac.f"
+        },
+        {
+          "cell": "vec10.hi",
+          "producer": "g6@0x1556.0:vunpack",
+          "producer_offset": "+0x2a8.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g7@0x1566.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec10.lo",
+          "producer": "g6@0x1556.0:vunpack",
+          "producer_offset": "+0x2a8.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g7@0x1566.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec2.hi",
+          "producer": "g6@0x14e8.1:vextbcst.16",
+          "producer_offset": "+0x23a.1:vextbcst.16",
+          "producer_kind": "activation_lane",
+          "first_use": "g7@0x15ae.2:vmac.f",
+          "first_use_offset": "+0x48.2:vmac.f"
+        },
+        {
+          "cell": "vec2.lo",
+          "producer": "g6@0x1514.0:vldb",
+          "producer_offset": "+0x266.0:vldb",
+          "producer_kind": "vector_load",
+          "first_use": "g7@0x15ae.2:vmac.f",
+          "first_use_offset": "+0x48.2:vmac.f"
+        },
+        {
+          "cell": "vec3.hi",
+          "producer": "g6@0x14c0.0:vconv.bf16.fp32",
+          "producer_offset": "+0x212.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g7@0x1588.0:vmac.f",
+          "first_use_offset": "+0x22.0:vmac.f"
+        },
+        {
+          "cell": "vec3.lo",
+          "producer": "g6@0x1532.0:vmov",
+          "producer_offset": "+0x284.0:vmov",
+          "producer_kind": "register_move",
+          "first_use": "g7@0x1588.0:vmac.f",
+          "first_use_offset": "+0x22.0:vmac.f"
+        },
+        {
+          "cell": "vec4.hi",
+          "producer": "g6@0x14f0.0:vconv.bf16.fp32",
+          "producer_offset": "+0x242.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g7@0x1578.1:vmac.f",
+          "first_use_offset": "+0x12.1:vmac.f"
+        },
+        {
+          "cell": "vec4.lo",
+          "producer": "g6@0x14f0.0:vconv.bf16.fp32",
+          "producer_offset": "+0x242.0:vconv.bf16.fp32",
+          "producer_kind": "bf16_coeff",
+          "first_use": "g7@0x1578.1:vmac.f",
+          "first_use_offset": "+0x12.1:vmac.f"
+        },
+        {
+          "cell": "vec6.hi",
+          "producer": "g6@0x14f0.1:vextbcst.16",
+          "producer_offset": "+0x242.1:vextbcst.16",
+          "producer_kind": "activation_lane",
+          "first_use": "g7@0x15be.1:vmac.f",
+          "first_use_offset": "+0x58.1:vmac.f"
+        },
+        {
+          "cell": "vec8.hi",
+          "producer": "g6@0x1552.0:vunpack",
+          "producer_offset": "+0x2a4.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g7@0x1578.0:vups.4x",
+          "first_use_offset": "+0x12.0:vups.4x"
+        },
+        {
+          "cell": "vec8.lo",
+          "producer": "g6@0x1552.0:vunpack",
+          "producer_offset": "+0x2a4.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g7@0x1578.0:vups.4x",
+          "first_use_offset": "+0x12.0:vups.4x"
+        },
+        {
+          "cell": "vec9.hi",
+          "producer": "g6@0x154a.0:vunpack",
+          "producer_offset": "+0x29c.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g7@0x1566.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        },
+        {
+          "cell": "vec9.lo",
+          "producer": "g6@0x154a.0:vunpack",
+          "producer_offset": "+0x29c.0:vunpack",
+          "producer_kind": "unpacked_q4",
+          "first_use": "g7@0x1566.1:vmac.f",
+          "first_use_offset": "+0x0.1:vmac.f"
+        }
+      ],
+      "pointer_uses": [
+        {
+          "cell": "p4",
+          "producer": "g0@0x284.2:add.nc",
+          "producer_offset": "+0x24.2:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g7@0x17de.0:vldb",
+          "first_use_offset": "+0x278.0:vldb"
+        },
+        {
+          "cell": "p5",
+          "producer": "g0@0x26c.3:add.nc",
+          "producer_offset": "+0xc.3:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g7@0x17ca.0:vldb",
+          "first_use_offset": "+0x264.0:vldb"
+        },
+        {
+          "cell": "r16",
+          "producer": "g0@0x260.3:add.nc",
+          "producer_offset": "+0x0.3:add.nc",
+          "producer_kind": "add.nc",
+          "first_use": "g7@0x17d4.0:mov",
+          "first_use_offset": "+0x26e.0:mov"
+        },
+        {
+          "cell": "r7",
+          "producer": "g6@0x150e.0:lda.s16",
+          "producer_offset": "+0x260.0:lda.s16",
+          "producer_kind": "lda.s16",
+          "first_use": "g7@0x17ec.0:vbcst.16",
+          "first_use_offset": "+0x286.0:vbcst.16"
+        }
+      ]
+    }
+  ],
+  "steady_group_macs": [
+    {
+      "slot": "g1@0x52a.1:vmac.f",
+      "offset": "+0x0.1:vmac.f",
+      "accumulator": {
+        "register": "dm1",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "producer": "g0@0x51e.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmlh",
+            "producer": "g0@0x51e.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhl",
+            "producer": "g0@0x51e.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhh",
+            "producer": "g0@0x51e.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x9",
+        "kind": "unpacked_q4",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec9.lo",
+            "producer": "g0@0x50e.0:vunpack",
+            "kind": "unpacked_q4",
+            "lane": null
+          },
+          {
+            "cell": "vec9.hi",
+            "producer": "g0@0x50e.0:vunpack",
+            "kind": "unpacked_q4",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x10",
+        "kind": "unpacked_q4",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec10.lo",
+            "producer": "g0@0x51a.0:vunpack",
+            "kind": "unpacked_q4",
+            "lane": null
+          },
+          {
+            "cell": "vec10.hi",
+            "producer": "g0@0x51a.0:vunpack",
+            "kind": "unpacked_q4",
+            "lane": null
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x53a.1:vmac.f",
+      "offset": "+0x10.1:vmac.f",
+      "accumulator": {
+        "register": "dm1",
+        "kind": "vector_arith",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "producer": "g1@0x536.0:vadd",
+            "kind": "vector_arith",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmlh",
+            "producer": "g1@0x536.0:vadd",
+            "kind": "vector_arith",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhl",
+            "producer": "g1@0x536.0:vadd",
+            "kind": "vector_arith",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhh",
+            "producer": "g1@0x536.0:vadd",
+            "kind": "vector_arith",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x4",
+        "kind": "bf16_coeff",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec4.lo",
+            "producer": "g0@0x4ba.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          },
+          {
+            "cell": "vec4.hi",
+            "producer": "g0@0x4ba.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x0",
+        "kind": "vector_load",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec0.lo",
+            "producer": "g0@0x51e.0:vldb",
+            "kind": "vector_load",
+            "lane": null
+          },
+          {
+            "cell": "vec0.hi",
+            "producer": "g0@0x51e.0:vldb",
+            "kind": "vector_load",
+            "lane": null
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x54a.0:vmac.f",
+      "offset": "+0x20.0:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x53a.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x53a.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x53a.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x53a.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x3",
+        "kind": "register_move+bf16_coeff",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "producer": "g0@0x4f8.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec3.hi",
+            "producer": "g0@0x490.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x11",
+        "kind": "vector_load",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec11.lo",
+            "producer": "g1@0x52a.0:vldb",
+            "kind": "vector_load",
+            "lane": null
+          },
+          {
+            "cell": "vec11.hi",
+            "producer": "g1@0x52a.0:vldb",
+            "kind": "vector_load",
+            "lane": null
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x570.2:vmac.f",
+      "offset": "+0x46.2:vmac.f",
+      "accumulator": {
+        "register": "dm4",
+        "kind": "register_move+vector_arith",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "acc4.bmll",
+            "producer": "g0@0x478.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmlh",
+            "producer": "g0@0x41c.0:vsub.f",
+            "kind": "vector_arith",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmhl",
+            "producer": "g0@0x41c.0:vsub.f",
+            "kind": "vector_arith",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmhh",
+            "producer": "g0@0x41c.0:vsub.f",
+            "kind": "vector_arith",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x4",
+        "kind": "bf16_coeff",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec4.lo",
+            "producer": "g1@0x564.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          },
+          {
+            "cell": "vec4.hi",
+            "producer": "g0@0x4ba.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x2",
+        "kind": "vector_load+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec2.lo",
+            "producer": "g0@0x4dc.0:vldb",
+            "kind": "vector_load",
+            "lane": null
+          },
+          {
+            "cell": "vec2.hi",
+            "producer": "g0@0x4b2.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x1a"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x580.1:vmac.f",
+      "offset": "+0x56.1:vmac.f",
+      "accumulator": {
+        "register": "dm4",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc4.bmll",
+            "producer": "g1@0x570.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmlh",
+            "producer": "g1@0x570.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmhl",
+            "producer": "g1@0x570.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmhh",
+            "producer": "g1@0x570.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x6",
+        "kind": "register_move+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec6.lo",
+            "producer": "g1@0x580.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec6.hi",
+            "producer": "g0@0x4ba.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x1b"
+          }
+        ]
+      },
+      "right": {
+        "register": "x1",
+        "kind": "unpacked_q4",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec1.lo",
+            "producer": "g1@0x55e.0:vunpack",
+            "kind": "unpacked_q4",
+            "lane": null
+          },
+          {
+            "cell": "vec1.hi",
+            "producer": "g1@0x55e.0:vunpack",
+            "kind": "unpacked_q4",
+            "lane": null
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x5d0.2:vmac.f",
+      "offset": "+0xa6.2:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "vector_arith",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x5bc.1:vmul.f",
+            "kind": "vector_arith",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x5bc.1:vmul.f",
+            "kind": "vector_arith",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x5bc.1:vmul.f",
+            "kind": "vector_arith",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x5bc.1:vmul.f",
+            "kind": "vector_arith",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x6",
+        "kind": "vector_load",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec6.lo",
+            "producer": "g1@0x5a8.0:vldb",
+            "kind": "vector_load",
+            "lane": null
+          },
+          {
+            "cell": "vec6.hi",
+            "producer": "g1@0x5a8.0:vldb",
+            "kind": "vector_load",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x9",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec9.lo",
+            "producer": "g1@0x556.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x1"
+          },
+          {
+            "cell": "vec9.hi",
+            "producer": "g1@0x556.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x1"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x5e2.1:vmac.f",
+      "offset": "+0xb8.1:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x5d0.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x5d0.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x5d0.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x5d0.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x3",
+        "kind": "bf16_coeff",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "producer": "g1@0x588.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          },
+          {
+            "cell": "vec3.hi",
+            "producer": "g1@0x588.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x10",
+        "kind": "register_move+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec10.lo",
+            "producer": "g1@0x5de.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec10.hi",
+            "producer": "g1@0x5bc.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x2"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x5f4.1:vmac.f",
+      "offset": "+0xca.1:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x5e2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x5e2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x5e2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x5e2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x2",
+        "kind": "register_move+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec2.lo",
+            "producer": "g1@0x58e.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec2.hi",
+            "producer": "g0@0x4b2.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x1a"
+          }
+        ]
+      },
+      "right": {
+        "register": "x7",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec7.lo",
+            "producer": "g1@0x5ee.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x4"
+          },
+          {
+            "cell": "vec7.hi",
+            "producer": "g1@0x5ee.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x4"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x608.1:vmac.f",
+      "offset": "+0xde.1:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x5f4.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x5f4.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x5f4.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x5f4.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x4",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec4.lo",
+            "producer": "g1@0x600.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x5"
+          },
+          {
+            "cell": "vec4.hi",
+            "producer": "g1@0x600.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x5"
+          }
+        ]
+      },
+      "right": {
+        "register": "x7",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec7.lo",
+            "producer": "g1@0x5ee.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x4"
+          },
+          {
+            "cell": "vec7.hi",
+            "producer": "g1@0x5ee.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x4"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x62a.1:vmac.f",
+      "offset": "+0x100.1:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x608.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x608.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x608.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x608.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x10",
+        "kind": "register_move+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec10.lo",
+            "producer": "g1@0x5de.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec10.hi",
+            "producer": "g1@0x5bc.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x2"
+          }
+        ]
+      },
+      "right": {
+        "register": "x4",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec4.lo",
+            "producer": "g1@0x600.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x5"
+          },
+          {
+            "cell": "vec4.hi",
+            "producer": "g1@0x600.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x5"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x640.1:vmac.f",
+      "offset": "+0x116.1:vmac.f",
+      "accumulator": {
+        "register": "dm4",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc4.bmll",
+            "producer": "g1@0x62a.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmlh",
+            "producer": "g1@0x62a.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmhl",
+            "producer": "g1@0x62a.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmhh",
+            "producer": "g1@0x62a.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x8",
+        "kind": "bf16_coeff",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec8.lo",
+            "producer": "g1@0x636.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          },
+          {
+            "cell": "vec8.hi",
+            "producer": "g1@0x636.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x3",
+        "kind": "register_move+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "producer": "g1@0x636.1:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec3.hi",
+            "producer": "g1@0x61e.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x6"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x654.0:vmac.f",
+      "offset": "+0x12a.0:vmac.f",
+      "accumulator": {
+        "register": "dm4",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc4.bmll",
+            "producer": "g1@0x640.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmlh",
+            "producer": "g1@0x640.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmhl",
+            "producer": "g1@0x640.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmhh",
+            "producer": "g1@0x640.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x3",
+        "kind": "register_move+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "producer": "g1@0x650.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec3.hi",
+            "producer": "g1@0x61e.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x6"
+          }
+        ]
+      },
+      "right": {
+        "register": "x0",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec0.lo",
+            "producer": "g1@0x62a.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x7"
+          },
+          {
+            "cell": "vec0.hi",
+            "producer": "g1@0x62a.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x7"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x65e.1:vmac.f",
+      "offset": "+0x134.1:vmac.f",
+      "accumulator": {
+        "register": "dm4",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc4.bmll",
+            "producer": "g1@0x654.0:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmlh",
+            "producer": "g1@0x654.0:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmhl",
+            "producer": "g1@0x654.0:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmhh",
+            "producer": "g1@0x654.0:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x5",
+        "kind": "register_move+bf16_coeff",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec5.lo",
+            "producer": "g1@0x65a.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec5.hi",
+            "producer": "g1@0x600.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x9",
+        "kind": "register_move+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec9.lo",
+            "producer": "g1@0x65e.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec9.hi",
+            "producer": "g1@0x5da.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x8"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x66e.2:vmac.f",
+      "offset": "+0x144.2:vmac.f",
+      "accumulator": {
+        "register": "dm4",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc4.bmll",
+            "producer": "g1@0x65e.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmlh",
+            "producer": "g1@0x65e.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmhl",
+            "producer": "g1@0x65e.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmhh",
+            "producer": "g1@0x65e.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x5",
+        "kind": "register_move+bf16_coeff",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec5.lo",
+            "producer": "g1@0x65a.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec5.hi",
+            "producer": "g1@0x600.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x4",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec4.lo",
+            "producer": "g1@0x632.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x9"
+          },
+          {
+            "cell": "vec4.hi",
+            "producer": "g1@0x632.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x9"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x686.2:vmac.f",
+      "offset": "+0x15c.2:vmac.f",
+      "accumulator": {
+        "register": "dm4",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc4.bmll",
+            "producer": "g1@0x66e.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmlh",
+            "producer": "g1@0x66e.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmhl",
+            "producer": "g1@0x66e.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc4.bmhh",
+            "producer": "g1@0x66e.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x2",
+        "kind": "bf16_coeff",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec2.lo",
+            "producer": "g1@0x614.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          },
+          {
+            "cell": "vec2.hi",
+            "producer": "g1@0x614.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x7",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec7.lo",
+            "producer": "g1@0x640.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0xa"
+          },
+          {
+            "cell": "vec7.hi",
+            "producer": "g1@0x640.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0xa"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x6a2.1:vmac.f",
+      "offset": "+0x178.1:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x686.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x686.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x686.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x686.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x3",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "producer": "g1@0x6a2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0xf"
+          },
+          {
+            "cell": "vec3.hi",
+            "producer": "g1@0x6a2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0xf"
+          }
+        ]
+      },
+      "right": {
+        "register": "x10",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec10.lo",
+            "producer": "g1@0x69a.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0xe"
+          },
+          {
+            "cell": "vec10.hi",
+            "producer": "g1@0x69a.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0xe"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x6b2.1:vmac.f",
+      "offset": "+0x188.1:vmac.f",
+      "accumulator": {
+        "register": "dm1",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "producer": "g1@0x6a2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmlh",
+            "producer": "g1@0x6a2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhl",
+            "producer": "g1@0x6a2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhh",
+            "producer": "g1@0x6a2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x8",
+        "kind": "register_move+bf16_coeff",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec8.lo",
+            "producer": "g1@0x6ae.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec8.hi",
+            "producer": "g1@0x636.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x4",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec4.lo",
+            "producer": "g1@0x6b2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x15"
+          },
+          {
+            "cell": "vec4.hi",
+            "producer": "g1@0x6b2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x15"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x6c6.1:vmac.f",
+      "offset": "+0x19c.1:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x6b2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x6b2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x6b2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x6b2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x9",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec9.lo",
+            "producer": "g1@0x6c6.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x11"
+          },
+          {
+            "cell": "vec9.hi",
+            "producer": "g1@0x6c6.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x11"
+          }
+        ]
+      },
+      "right": {
+        "register": "x5",
+        "kind": "register_move+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec5.lo",
+            "producer": "g1@0x6c2.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec5.hi",
+            "producer": "g1@0x690.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0xd"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x6d6.1:vmac.f",
+      "offset": "+0x1ac.1:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x6c6.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x6c6.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x6c6.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x6c6.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x1",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec1.lo",
+            "producer": "g1@0x6d2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x12"
+          },
+          {
+            "cell": "vec1.hi",
+            "producer": "g1@0x6d2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x12"
+          }
+        ]
+      },
+      "right": {
+        "register": "x10",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec10.lo",
+            "producer": "g1@0x69a.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0xe"
+          },
+          {
+            "cell": "vec10.hi",
+            "producer": "g1@0x69a.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0xe"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x6e6.1:vmac.f",
+      "offset": "+0x1bc.1:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x6d6.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x6d6.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x6d6.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x6d6.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x8",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec8.lo",
+            "producer": "g1@0x6e6.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x13"
+          },
+          {
+            "cell": "vec8.hi",
+            "producer": "g1@0x6e6.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x13"
+          }
+        ]
+      },
+      "right": {
+        "register": "x3",
+        "kind": "register_move+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "producer": "g1@0x6e2.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec3.hi",
+            "producer": "g1@0x6a2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0xf"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x6f6.2:vmac.f",
+      "offset": "+0x1cc.2:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x6e6.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x6e6.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x6e6.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x6e6.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x2",
+        "kind": "bf16_coeff",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec2.lo",
+            "producer": "g1@0x6f6.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          },
+          {
+            "cell": "vec2.hi",
+            "producer": "g1@0x6f6.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x7",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec7.lo",
+            "producer": "g1@0x6f2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x14"
+          },
+          {
+            "cell": "vec7.hi",
+            "producer": "g1@0x6f2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x14"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x70c.2:vmac.f",
+      "offset": "+0x1e2.2:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x6f6.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x6f6.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x6f6.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x6f6.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x5",
+        "kind": "bf16_coeff",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec5.lo",
+            "producer": "g1@0x70c.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          },
+          {
+            "cell": "vec5.hi",
+            "producer": "g1@0x70c.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x9",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec9.lo",
+            "producer": "g1@0x6c6.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x11"
+          },
+          {
+            "cell": "vec9.hi",
+            "producer": "g1@0x6c6.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x11"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x722.1:vmac.f",
+      "offset": "+0x1f8.1:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x70c.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x70c.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x70c.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x70c.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x0",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec0.lo",
+            "producer": "g1@0x71e.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x19"
+          },
+          {
+            "cell": "vec0.hi",
+            "producer": "g1@0x71e.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x19"
+          }
+        ]
+      },
+      "right": {
+        "register": "x1",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec1.lo",
+            "producer": "g1@0x6d2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x12"
+          },
+          {
+            "cell": "vec1.hi",
+            "producer": "g1@0x6d2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x12"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x730.1:vmac.f",
+      "offset": "+0x206.1:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x722.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x722.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x722.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x722.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x3",
+        "kind": "register_move+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "producer": "g1@0x6e2.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec3.hi",
+            "producer": "g1@0x6a2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0xf"
+          }
+        ]
+      },
+      "right": {
+        "register": "x8",
+        "kind": "register_move+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec8.lo",
+            "producer": "g1@0x72c.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec8.hi",
+            "producer": "g1@0x6e6.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x13"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x744.1:vmac.f",
+      "offset": "+0x21a.1:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x730.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x730.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x730.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x730.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x2",
+        "kind": "register_move+bf16_coeff",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec2.lo",
+            "producer": "g1@0x73c.1:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec2.hi",
+            "producer": "g1@0x6f6.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x7",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec7.lo",
+            "producer": "g1@0x6f2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x14"
+          },
+          {
+            "cell": "vec7.hi",
+            "producer": "g1@0x6f2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x14"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x758.1:vmac.f",
+      "offset": "+0x22e.1:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x744.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x744.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x744.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x744.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x2",
+        "kind": "register_move+bf16_coeff",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec2.lo",
+            "producer": "g1@0x73c.1:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec2.hi",
+            "producer": "g1@0x6f6.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x4",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec4.lo",
+            "producer": "g1@0x6b2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x15"
+          },
+          {
+            "cell": "vec4.hi",
+            "producer": "g1@0x6b2.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x15"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x76c.2:vmac.f",
+      "offset": "+0x242.2:vmac.f",
+      "accumulator": {
+        "register": "dm3",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "producer": "g1@0x758.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmlh",
+            "producer": "g1@0x758.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhl",
+            "producer": "g1@0x758.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc3.bmhh",
+            "producer": "g1@0x758.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x5",
+        "kind": "bf16_coeff",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec5.lo",
+            "producer": "g1@0x764.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          },
+          {
+            "cell": "vec5.hi",
+            "producer": "g1@0x764.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x6",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec6.lo",
+            "producer": "g1@0x76c.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x1b"
+          },
+          {
+            "cell": "vec6.hi",
+            "producer": "g1@0x76c.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x1b"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x77e.1:vmac.f",
+      "offset": "+0x254.1:vmac.f",
+      "accumulator": {
+        "register": "dm2",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc2.bmll",
+            "producer": "g1@0x76c.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc2.bmlh",
+            "producer": "g1@0x76c.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc2.bmhl",
+            "producer": "g1@0x76c.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc2.bmhh",
+            "producer": "g1@0x76c.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x8",
+        "kind": "register_move+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec8.lo",
+            "producer": "g1@0x77a.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec8.hi",
+            "producer": "g1@0x6e6.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x13"
+          }
+        ]
+      },
+      "right": {
+        "register": "x9",
+        "kind": "register_move+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec9.lo",
+            "producer": "g1@0x77e.0:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec9.hi",
+            "producer": "g1@0x716.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x17"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x790.2:vmac.f",
+      "offset": "+0x266.2:vmac.f",
+      "accumulator": {
+        "register": "dm1",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "producer": "g1@0x77e.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmlh",
+            "producer": "g1@0x77e.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhl",
+            "producer": "g1@0x77e.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhh",
+            "producer": "g1@0x77e.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x3",
+        "kind": "register_move+bf16_coeff",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "producer": "g1@0x78a.1:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec3.hi",
+            "producer": "g1@0x73c.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x10",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec10.lo",
+            "producer": "g1@0x790.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x1d"
+          },
+          {
+            "cell": "vec10.hi",
+            "producer": "g1@0x790.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x1d"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x7a0.3:vmac.f",
+      "offset": "+0x276.3:vmac.f",
+      "accumulator": {
+        "register": "dm1",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "producer": "g1@0x790.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmlh",
+            "producer": "g1@0x790.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhl",
+            "producer": "g1@0x790.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhh",
+            "producer": "g1@0x790.2:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x3",
+        "kind": "register_move+bf16_coeff",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "producer": "g1@0x78a.1:vmov",
+            "kind": "register_move",
+            "lane": null
+          },
+          {
+            "cell": "vec3.hi",
+            "producer": "g1@0x73c.0:vconv.bf16.fp32",
+            "kind": "bf16_coeff",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x0",
+        "kind": "activation_lane",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec0.lo",
+            "producer": "g1@0x79c.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x1e"
+          },
+          {
+            "cell": "vec0.hi",
+            "producer": "g1@0x79c.0:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x1e"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x7b4.1:vmac.f",
+      "offset": "+0x28a.1:vmac.f",
+      "accumulator": {
+        "register": "dm1",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "producer": "g1@0x7a0.3:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmlh",
+            "producer": "g1@0x7a0.3:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhl",
+            "producer": "g1@0x7a0.3:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhh",
+            "producer": "g1@0x7a0.3:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x1",
+        "kind": "scalar_broadcast",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec1.lo",
+            "producer": "g1@0x7b0.0:vbcst.16",
+            "kind": "scalar_broadcast",
+            "lane": null
+          },
+          {
+            "cell": "vec1.hi",
+            "producer": "g1@0x7b0.0:vbcst.16",
+            "kind": "scalar_broadcast",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x2",
+        "kind": "vector_load+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec2.lo",
+            "producer": "g1@0x790.0:vldb",
+            "kind": "vector_load",
+            "lane": null
+          },
+          {
+            "cell": "vec2.hi",
+            "producer": "g1@0x764.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x1a"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x7c2.1:vmac.f",
+      "offset": "+0x298.1:vmac.f",
+      "accumulator": {
+        "register": "dm1",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "producer": "g1@0x7b4.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmlh",
+            "producer": "g1@0x7b4.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhl",
+            "producer": "g1@0x7b4.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhh",
+            "producer": "g1@0x7b4.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x8",
+        "kind": "vector_load",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec8.lo",
+            "producer": "g1@0x7a0.0:vlda",
+            "kind": "vector_load",
+            "lane": null
+          },
+          {
+            "cell": "vec8.hi",
+            "producer": "g1@0x7a0.0:vlda",
+            "kind": "vector_load",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x6",
+        "kind": "vector_load+activation_lane",
+        "mixed": true,
+        "cells": [
+          {
+            "cell": "vec6.lo",
+            "producer": "g1@0x7a0.1:vldb",
+            "kind": "vector_load",
+            "lane": null
+          },
+          {
+            "cell": "vec6.hi",
+            "producer": "g1@0x76c.1:vextbcst.16",
+            "kind": "activation_lane",
+            "lane": "#0x1b"
+          }
+        ]
+      }
+    },
+    {
+      "slot": "g1@0x7d2.1:vmac.f",
+      "offset": "+0x2a8.1:vmac.f",
+      "accumulator": {
+        "register": "dm1",
+        "kind": "accumulator_carry",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "producer": "g1@0x7c2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmlh",
+            "producer": "g1@0x7c2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhl",
+            "producer": "g1@0x7c2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          },
+          {
+            "cell": "acc1.bmhh",
+            "producer": "g1@0x7c2.1:vmac.f",
+            "kind": "accumulator_carry",
+            "lane": null
+          }
+        ]
+      },
+      "left": {
+        "register": "x5",
+        "kind": "unpacked_q4",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec5.lo",
+            "producer": "g1@0x7bc.0:vunpack",
+            "kind": "unpacked_q4",
+            "lane": null
+          },
+          {
+            "cell": "vec5.hi",
+            "producer": "g1@0x7bc.0:vunpack",
+            "kind": "unpacked_q4",
+            "lane": null
+          }
+        ]
+      },
+      "right": {
+        "register": "x7",
+        "kind": "vector_load",
+        "mixed": false,
+        "cells": [
+          {
+            "cell": "vec7.lo",
+            "producer": "g1@0x7b4.0:vldb",
+            "kind": "vector_load",
+            "lane": null
+          },
+          {
+            "cell": "vec7.hi",
+            "producer": "g1@0x7b4.0:vldb",
+            "kind": "vector_load",
+            "lane": null
+          }
+        ]
+      }
+    }
+  ]
+}

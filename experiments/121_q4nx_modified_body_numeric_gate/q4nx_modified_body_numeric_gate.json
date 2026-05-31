@@ -1,0 +1,97 @@
+{
+  "contract": {
+    "sections": 5,
+    "original_slots": 1532,
+    "total_group_macs": 264,
+    "exact_instruction_match": true,
+    "stable_boundary_pressure": true
+  },
+  "candidates": [
+    {
+      "name": "mylm_group_correction",
+      "static_macs": 264,
+      "dynamic_macs": 528,
+      "preserves_exp120_mac_shape": true,
+      "exact_reference_contract": false,
+      "note": "Preserves the MyLM 32+1 MAC/group shape; requires token-quality acceptance."
+    },
+    {
+      "name": "exact_recompose_coeff",
+      "static_macs": 256,
+      "dynamic_macs": 512,
+      "preserves_exp120_mac_shape": false,
+      "exact_reference_contract": true,
+      "note": "Exact parity route; zero must be recomposed into the coefficient before MAC."
+    },
+    {
+      "name": "split_zero_per_dim",
+      "static_macs": 512,
+      "dynamic_macs": 1024,
+      "preserves_exp120_mac_shape": false,
+      "exact_reference_contract": false,
+      "note": "Diagnostic only: per-dim split zero changes fp32 accumulation order."
+    }
+  ],
+  "stats": [
+    {
+      "scenario": "nominal",
+      "name": "mylm_group_correction",
+      "max_abs": 5.7220458984375e-06,
+      "mean_abs": 3.44825821230188e-07,
+      "p99_abs": 1.9073486328125e-06,
+      "mismatches_1e_3": 0,
+      "mismatches_1e_2": 0,
+      "mismatches_5e_2": 0
+    },
+    {
+      "scenario": "nominal",
+      "name": "exact_recompose_coeff",
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "p99_abs": 0.0,
+      "mismatches_1e_3": 0,
+      "mismatches_1e_2": 0,
+      "mismatches_5e_2": 0
+    },
+    {
+      "scenario": "nominal",
+      "name": "split_zero_per_dim",
+      "max_abs": 5.7220458984375e-06,
+      "mean_abs": 3.422519512241706e-07,
+      "p99_abs": 1.9073486328125e-06,
+      "mismatches_1e_3": 0,
+      "mismatches_1e_2": 0,
+      "mismatches_5e_2": 0
+    },
+    {
+      "scenario": "stress",
+      "name": "mylm_group_correction",
+      "max_abs": 0.015625,
+      "mean_abs": 0.0015182048082351685,
+      "p99_abs": 0.0078125,
+      "mismatches_1e_3": 3431,
+      "mismatches_1e_2": 16,
+      "mismatches_5e_2": 0
+    },
+    {
+      "scenario": "stress",
+      "name": "exact_recompose_coeff",
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "p99_abs": 0.0,
+      "mismatches_1e_3": 0,
+      "mismatches_1e_2": 0,
+      "mismatches_5e_2": 0
+    },
+    {
+      "scenario": "stress",
+      "name": "split_zero_per_dim",
+      "max_abs": 0.015625,
+      "mean_abs": 0.0016304440796375275,
+      "p99_abs": 0.0078125,
+      "mismatches_1e_3": 3611,
+      "mismatches_1e_2": 26,
+      "mismatches_5e_2": 0
+    }
+  ]
+}

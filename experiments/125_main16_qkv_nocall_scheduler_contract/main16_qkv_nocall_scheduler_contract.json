@@ -1,0 +1,127 @@
+{
+  "source_check": {
+    "cpp_helper_call_sites": 4,
+    "cpp_qkv_scheduler_symbols": 2,
+    "asm_helper_symbols": 1,
+    "asm_save_macros": 1,
+    "asm_restore_macros": 1,
+    "asm_q4_lane_macros": 1,
+    "asm_required_markers_present": true
+  },
+  "disasm_check": {
+    "qkv_static_helper_calls": 3,
+    "qkv_static_record_emit_calls": 3,
+    "activation_full_acq": 3,
+    "weight_full_acq": 3,
+    "activation_empty_rel": 3,
+    "weight_empty_rel": 3,
+    "record_empty_acq": 3,
+    "record_full_rel": 3,
+    "lock_shape_valid": true
+  },
+  "helper_overhead": {
+    "save_slots": 13,
+    "restore_slots": 13,
+    "helper_wrapper_slots": 28,
+    "helper_lane_invocations": 2,
+    "accum_loads_per_call": 2,
+    "accum_stores_per_call": 2,
+    "q4_exact32_groups_per_call": 2
+  },
+  "dynamic_cost": {
+    "qkv_calls_per_tile": 192,
+    "full_calls_per_tile": 1472,
+    "qkv_calls_all_main16": 3072,
+    "full_calls_all_main16": 23552,
+    "qkv_accum_loads_per_tile": 384,
+    "qkv_accum_stores_per_tile": 384,
+    "full_accum_loads_per_tile": 2944,
+    "full_accum_stores_per_tile": 2944,
+    "qkv_save_restore_slots_per_tile": 4992,
+    "full_save_restore_slots_per_tile": 38272
+  },
+  "qkv_phases": [
+    {
+      "name": "Q",
+      "records": 8,
+      "chunks_per_record": 16,
+      "chunks": 128,
+      "weight_base": 0,
+      "phase": 0
+    },
+    {
+      "name": "K",
+      "records": 2,
+      "chunks_per_record": 16,
+      "chunks": 32,
+      "weight_base": 128,
+      "phase": 1
+    },
+    {
+      "name": "V",
+      "records": 2,
+      "chunks_per_record": 16,
+      "chunks": 32,
+      "weight_base": 160,
+      "phase": 2
+    }
+  ],
+  "full_phases": [
+    {
+      "name": "Q",
+      "records": 8,
+      "chunks_per_record": 16,
+      "chunks": 128,
+      "weight_base": 0,
+      "phase": 0
+    },
+    {
+      "name": "K",
+      "records": 2,
+      "chunks_per_record": 16,
+      "chunks": 32,
+      "weight_base": 128,
+      "phase": 1
+    },
+    {
+      "name": "V",
+      "records": 2,
+      "chunks_per_record": 16,
+      "chunks": 32,
+      "weight_base": 160,
+      "phase": 2
+    },
+    {
+      "name": "O",
+      "records": 8,
+      "chunks_per_record": 16,
+      "chunks": 128,
+      "weight_base": 192,
+      "phase": 3
+    },
+    {
+      "name": "up/gate",
+      "records": 48,
+      "chunks_per_record": 16,
+      "chunks": 768,
+      "weight_base": 320,
+      "phase": 4
+    },
+    {
+      "name": "down",
+      "records": 8,
+      "chunks_per_record": 48,
+      "chunks": 384,
+      "weight_base": 1088,
+      "phase": 6
+    }
+  ],
+  "target_symbol": "q4nx_main16_qkv_scheduler_nocall",
+  "target_invariants": [
+    "no jl/call to q4nx_chunk_accum_asm_zol inside qkv scheduler",
+    "no SAVE_Q4_CALL_STATE/RESTORE_Q4_CALL_STATE per chunk",
+    "no per-chunk target accumulator load/store roundtrip",
+    "same DMA0/DMA1/record lock ABI as q4nx_main16_qkv_scheduler",
+    "same record headers and compact packet ids as current qkv prefix"
+  ]
+}

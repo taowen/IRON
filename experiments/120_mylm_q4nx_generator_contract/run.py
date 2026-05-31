@@ -1,0 +1,363 @@
+#!/usr/bin/env python3
+"""Build the section contract for the next MyLM-style Q4NX generator."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import importlib.util
+import json
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from types import ModuleType
+
+EXPERIMENT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = EXPERIMENT_DIR.parents[1]
+EXP115_RUN = REPO_ROOT / "experiments/115_mylm_q4nx_operand_graph/run.py"
+LIVENESS_JSON = REPO_ROOT / "experiments/118_mylm_q4nx_cell_liveness/mylm_q4nx_cell_liveness.json"
+GRAPH_JSON = REPO_ROOT / "experiments/119_mylm_q4nx_full_operand_graph/mylm_q4nx_full_operand_graph.json"
+DEFAULT_REPORT = EXPERIMENT_DIR / "mylm_q4nx_generator_contract.md"
+DEFAULT_JSON = EXPERIMENT_DIR / "mylm_q4nx_generator_contract.json"
+DEFAULT_ASM_INC = EXPERIMENT_DIR / "generated_mylm_q4nx_contract_sections.s.inc"
+
+
+@dataclass(frozen=True)
+class SectionContract:
+    name: str
+    macro: str
+    groups: tuple[int, ...]
+    template_group: int
+    macs_per_group: int
+    live_in_boundary: int | None
+    live_out_boundary: int | None
+    signature_hash: str | None
+
+
+@dataclass(frozen=True)
+class BoundaryContract:
+    boundary: int
+    data_count: int
+    control_count: int
+    data_cells: tuple[str, ...]
+    control_cells: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ContractCheck:
+    original_slots: int
+    generated_slots: int
+    original_hash: str
+    generated_hash: str
+    exact_instruction_match: bool
+    section_count: int
+    total_group_macs: int
+    stable_steady_signature: bool
+    stable_boundary_pressure: bool
+
+
+def load_exp115() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("exp115_operand_graph", EXP115_RUN)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"cannot load {EXP115_RUN}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_json(path: Path):
+    return json.loads(path.read_text())
+
+
+def digest(lines: list[str]) -> str:
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+
+def boundary_contracts(liveness) -> dict[int, BoundaryContract]:
+    contracts: dict[int, BoundaryContract] = {}
+    for item in liveness["boundaries"]:
+        boundary = int(item["boundary"])
+        contracts[boundary] = BoundaryContract(
+            boundary=boundary,
+            data_count=int(item["data_count"]),
+            control_count=int(item["control_count"]),
+            data_cells=tuple(cell["cell"] for cell in item["data_cells"]),
+            control_cells=tuple(cell["cell"] for cell in item["control_cells"]),
+        )
+    return contracts
+
+
+def section_contracts(graph) -> tuple[SectionContract, ...]:
+    signatures = graph["steady_signature_hashes"]
+    return (
+        SectionContract("fill", "MYLM_Q4NX_FILL", (0,), 0, 28, None, 1, None),
+        SectionContract(
+            "fill_to_steady",
+            "MYLM_Q4NX_FILL_TO_STEADY",
+            (1,),
+            1,
+            33,
+            1,
+            2,
+            str(signatures["1"]),
+        ),
+        SectionContract(
+            "steady_to_steady",
+            "MYLM_Q4NX_STEADY_TO_STEADY",
+            (2, 3, 4, 5),
+            2,
+            33,
+            2,
+            6,
+            str(signatures["2"]),
+        ),
+        SectionContract("pre_drain", "MYLM_Q4NX_PRE_DRAIN", (6,), 6, 33, 6, 7, None),
+        SectionContract("drain", "MYLM_Q4NX_DRAIN", (7,), 7, 38, 7, None, None),
+    )
+
+
+def slots_by_group(slots) -> dict[int, list]:
+    return {group: [slot for slot in slots if slot.group == group] for group in range(8)}
+
+
+def boundary_comment(boundaries: dict[int, BoundaryContract], boundary: int | None, direction: str) -> str:
+    if boundary is None:
+        return f"// {direction}: entry"
+    item = boundaries[boundary]
+    return (
+        f"// {direction}: boundary{boundary} "
+        f"data={item.data_count} control={item.control_count}"
+    )
+
+
+def render_macro(section: SectionContract, group_slots: dict[int, list], boundaries: dict[int, BoundaryContract]) -> list[str]:
+    lines = [
+        f".macro {section.macro}",
+        f"\t// section {section.name}",
+        f"\t{boundary_comment(boundaries, section.live_in_boundary, 'live_in')}",
+        f"\t{boundary_comment(boundaries, section.live_out_boundary, 'live_out')}",
+        f"\t// groups={','.join(str(group) for group in section.groups)} template_group={section.template_group} macs={section.macs_per_group}",
+    ]
+    if section.signature_hash is not None:
+        lines.append(f"\t// operand_signature={section.signature_hash}")
+    for slot in group_slots[section.template_group]:
+        lines.append(f"\t{slot.text}")
+    lines.append(".endm")
+    lines.append("")
+    return lines
+
+
+def render_asm_inc(sections: tuple[SectionContract, ...], group_slots: dict[int, list], boundaries: dict[int, BoundaryContract]) -> str:
+    lines = [
+        "// Generated by exp120 from exp118 liveness and exp119 full operand graph.",
+        "// Expanding MYLM_Q4NX_HOT_LOOP_CONTRACT must recover MyLM 0x260..0x1850.",
+        "",
+    ]
+    for section in sections:
+        lines.extend(render_macro(section, group_slots, boundaries))
+    lines.append(".macro MYLM_Q4NX_HOT_LOOP_CONTRACT")
+    for section in sections:
+        if section.name == "steady_to_steady":
+            for group in section.groups:
+                lines.append(f"\t// steady_to_steady group{group}")
+                lines.append(f"\t{section.macro}")
+        else:
+            lines.append(f"\t{section.macro}")
+    lines.append(".endm")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def strip_instructions(text: str) -> list[str]:
+    instructions: list[str] = []
+    in_full_macro = False
+    macro_lines: dict[str, list[str]] = {}
+    current_macro = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("//"):
+            continue
+        if line.startswith(".macro "):
+            current_macro = line.split()[1]
+            in_full_macro = current_macro == "MYLM_Q4NX_HOT_LOOP_CONTRACT"
+            macro_lines.setdefault(current_macro, [])
+            continue
+        if line == ".endm":
+            current_macro = ""
+            in_full_macro = False
+            continue
+        if in_full_macro:
+            if line.startswith("//"):
+                continue
+            instructions.extend(macro_lines[line])
+        elif current_macro:
+            if not line.startswith("//"):
+                macro_lines[current_macro].append(line)
+    return instructions
+
+
+def validate(sections: tuple[SectionContract, ...], group_slots: dict[int, list], boundaries: dict[int, BoundaryContract], graph, asm_text: str) -> ContractCheck:
+    original = [slot.text for group in range(8) for slot in group_slots[group]]
+    generated = strip_instructions(asm_text)
+    group_macs = graph["group_macs"]
+    boundary_counts = {(item.data_count, item.control_count) for item in boundaries.values()}
+    return ContractCheck(
+        original_slots=len(original),
+        generated_slots=len(generated),
+        original_hash=digest(original),
+        generated_hash=digest(generated),
+        exact_instruction_match=original == generated,
+        section_count=len(sections),
+        total_group_macs=sum(int(group_macs[str(group)]) for group in range(8)),
+        stable_steady_signature=bool(graph["steady_to_steady_signature_stable"]),
+        stable_boundary_pressure=len(boundary_counts) == 1,
+    )
+
+
+def boundary_to_json(item: BoundaryContract):
+    return {
+        "boundary": item.boundary,
+        "data_count": item.data_count,
+        "control_count": item.control_count,
+        "data_cells": list(item.data_cells),
+        "control_cells": list(item.control_cells),
+    }
+
+
+def section_to_json(section: SectionContract):
+    return {
+        "name": section.name,
+        "macro": section.macro,
+        "groups": list(section.groups),
+        "template_group": section.template_group,
+        "macs_per_group": section.macs_per_group,
+        "live_in_boundary": section.live_in_boundary,
+        "live_out_boundary": section.live_out_boundary,
+        "signature_hash": section.signature_hash,
+    }
+
+
+def render_contract_json(sections: tuple[SectionContract, ...], boundaries: dict[int, BoundaryContract], check: ContractCheck):
+    return {
+        "source": "MyLM c2r2 0x260..0x1850",
+        "sections": [section_to_json(section) for section in sections],
+        "boundaries": [boundary_to_json(boundaries[index]) for index in sorted(boundaries)],
+        "checks": {
+            "original_slots": check.original_slots,
+            "generated_slots": check.generated_slots,
+            "original_hash": check.original_hash,
+            "generated_hash": check.generated_hash,
+            "exact_instruction_match": check.exact_instruction_match,
+            "section_count": check.section_count,
+            "total_group_macs": check.total_group_macs,
+            "stable_steady_signature": check.stable_steady_signature,
+            "stable_boundary_pressure": check.stable_boundary_pressure,
+        },
+    }
+
+
+def render_report(sections: tuple[SectionContract, ...], boundaries: dict[int, BoundaryContract], check: ContractCheck) -> str:
+    lines = [
+        "# MyLM Q4NX Generator Contract",
+        "",
+        "This experiment combines exp118 boundary liveness with exp119 full MAC",
+        "operand graph records. The generated assembly include is still MyLM's",
+        "instruction text, but it is now split by the generator sections that a",
+        "modified numerical body must preserve.",
+        "",
+        "## Checks",
+        "",
+        f"- Original slots: `{check.original_slots}`",
+        f"- Generated slots: `{check.generated_slots}`",
+        f"- Original hash: `{check.original_hash}`",
+        f"- Generated hash: `{check.generated_hash}`",
+        f"- Instruction text match: `{check.exact_instruction_match}`",
+        f"- Sections: `{check.section_count}`",
+        f"- Total group MACs: `{check.total_group_macs}`",
+        f"- Stable steady-to-steady signature: `{check.stable_steady_signature}`",
+        f"- Stable boundary pressure: `{check.stable_boundary_pressure}`",
+        "",
+        "## Sections",
+        "",
+        "| Section | Macro | Groups | Template | MACs | Live In | Live Out | Signature |",
+        "| --- | --- | --- | ---: | ---: | --- | --- | --- |",
+    ]
+    for section in sections:
+        groups = ",".join(str(group) for group in section.groups)
+        live_in = "entry" if section.live_in_boundary is None else f"boundary{section.live_in_boundary}"
+        live_out = "exit" if section.live_out_boundary is None else f"boundary{section.live_out_boundary}"
+        signature = "" if section.signature_hash is None else section.signature_hash
+        lines.append(
+            f"| `{section.name}` | `{section.macro}` | `{groups}` | "
+            f"{section.template_group} | {section.macs_per_group} | `{live_in}` | `{live_out}` | `{signature}` |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Boundary Pressure",
+            "",
+            "| Boundary | Data Cells | Control Cells |",
+            "| ---: | ---: | ---: |",
+        ]
+    )
+    for index in sorted(boundaries):
+        item = boundaries[index]
+        lines.append(f"| {item.boundary} | {item.data_count} | {item.control_count} |")
+
+    lines.extend(
+        [
+            "",
+            "## Generated Include",
+            "",
+            f"- `{DEFAULT_ASM_INC}`",
+            "",
+            "## Next Step",
+            "",
+            "Use this contract as the single input to a modified Q4NX body generator.",
+            "The first candidate should preserve the section boundaries and live-state",
+            "contract, then replace only the coefficient construction path and run a",
+            "synthetic numerical gate before production `qwen3-layer` changes.",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
+    parser.add_argument("--json-output", type=Path, default=DEFAULT_JSON)
+    parser.add_argument("--asm-inc", type=Path, default=DEFAULT_ASM_INC)
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    exp115 = load_exp115()
+    slots = exp115.parse_slots(exp115.DEFAULT_DISASM)
+    if not slots:
+        raise ValueError(f"no slots parsed from {exp115.DEFAULT_DISASM}")
+    liveness = load_json(LIVENESS_JSON)
+    graph = load_json(GRAPH_JSON)
+    boundaries = boundary_contracts(liveness)
+    sections = section_contracts(graph)
+    groups = slots_by_group(slots)
+    asm_text = render_asm_inc(sections, groups, boundaries)
+    check = validate(sections, groups, boundaries, graph, asm_text)
+    args.asm_inc.write_text(asm_text)
+    args.json_output.write_text(json.dumps(render_contract_json(sections, boundaries, check), indent=2) + "\n")
+    args.report.write_text(render_report(sections, boundaries, check))
+    print(f"wrote {args.report}")
+    print(f"wrote {args.json_output}")
+    print(f"wrote {args.asm_inc}")
+    print(f"original_slots={check.original_slots}")
+    print(f"generated_slots={check.generated_slots}")
+    print(f"exact_instruction_match={check.exact_instruction_match}")
+    print(f"total_group_macs={check.total_group_macs}")
+    print(f"stable_boundary_pressure={check.stable_boundary_pressure}")
+    return 0 if check.exact_instruction_match and check.total_group_macs == 264 else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

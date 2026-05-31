@@ -167,8 +167,9 @@ The runnable registry is deliberately small. The public cases are:
 - `row1-weight-stream-perf`: full-layer weight stream through row1 S2MM4/5 and
   row1 MM2S0..3 into main16 DMA1 sinks, with compute disabled and main16 done
   gathered through the same packetized row1 -> c1r1 bridge shape as full-layer.
-- `main16-q4nx-compute-perf`: full-layer Q4NX chunk count on all main16 cores
-  with activation/weight DMA disabled, using a row1 done gather for completion.
+- `main16-q4nx-compute-perf`: callable Q4NX hot-body microbench on all main16
+  cores with activation/weight DMA disabled. This is useful for the inner body
+  cost, but it is not evidence for the generated layer scheduler path.
 
 Historical migration cases for the old 608-patch weight-stream oracle,
 deterministic full-layer tail, patched descriptor runner, and standalone
@@ -199,11 +200,11 @@ The two perf slices are diagnostic boundaries, not alternate backends. The row1
 slice answers whether host/shim -> row1 -> main16 DMA1 can stream the full
 115MiB layer weight payload continuously; it now waits for all 16 main sinks to
 return the 1472-chunk done count through row1 -> c1r1 -> shim_out, so the timing
-is not just a host input-queue drain. The main16 slice answers whether the
-current Q4NX kernel throughput alone is already a layer-time bottleneck. They
-share the same role objects and ABI constants as the full-layer generator, so a
-performance regression in these cases is actionable instead of a separate debug
-dataflow artifact.
+is not just a host input-queue drain. The main16 hot-body slice answers whether
+the callable Q4NX body alone is already a layer-time bottleneck, but it bypasses
+the generated main16 dispatcher, phase bodies, DMA locks, and compact record
+emit path. Use `full-layer-qkv-prefix` and `qwen3-8b-decode-layer` as the
+production scheduler gates.
 
 Recent token31 measurements with the single active `main_projection_q4nx_fast.cc`
 role:

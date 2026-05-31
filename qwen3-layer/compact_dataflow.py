@@ -37,7 +37,6 @@ from qkv_compact_reference import (
     V_GLOBAL_PACKET_ID,
     WINDOW_DWORDS,
     body_record_header,
-    main_packet,
 )
 
 FULL_LAYER_RECORD_STAGES = ("q", "k", "v", "o", "up", "gate", "down")

@@ -13,7 +13,7 @@ from pathlib import Path
 DEFAULT_DISASM = Path("/tmp/mylm_qwen3_layer_L31_deep/disasm/c2r2.s")
 ADDRESS_RE = re.compile(r"^\s*([0-9a-fA-F]+):\s+(.*)$")
 LC_RE = re.compile(r"\bmova\s+lc,\s*#0x([0-9a-fA-F]+)\b")
-OP_RE = re.compile(r"\b[a-z][a-z0-9]*(?:\.[a-z0-9]+)?\b")
+OP_RE = re.compile(r"\b[a-z][a-z0-9]*(?:\.[a-z0-9]+)*\b")
 ACTIVATION_LOAD_RE = re.compile(r"\bvldb\s+x11,\s*\[p1\],\s*#0x40\b")
 ACTIVATION_REWIND_RE = re.compile(r"\bpaddb\s+\[p1\],\s*#-0x200\b")
 SCRATCH_LOAD_RE = re.compile(r"\blda\.s16\s+r7,\s*\[p3\],\s*#0x2\b")

@@ -84,6 +84,7 @@ struct Args {
     int layers = 36;
     int cache_layer = 0;
     std::string dump_prefix;
+    bool dump_all_caches = false;
     bool preemption = false;
 };
 
@@ -113,6 +114,8 @@ Args parse_args(int argc, char** argv) {
             args.cache_layer = std::stoi(next());
         } else if (arg == "--dump-prefix") {
             args.dump_prefix = next();
+        } else if (arg == "--dump-all-caches") {
+            args.dump_all_caches = true;
         } else if (arg == "--preemption") {
             args.preemption = true;
         } else {
@@ -218,6 +221,16 @@ int main(int argc, char** argv) {
             write_bf16_dump(args.dump_prefix + ".logits.bf16", logits);
             write_bf16_dump(args.dump_prefix + ".cache_k0.bf16", current_k);
             write_bf16_dump(args.dump_prefix + ".cache_v0.bf16", current_v);
+            if (args.dump_all_caches) {
+                for (int layer = 0; layer < args.layers; ++layer) {
+                    buffer<bf16> layer_k = engine.get_k_cache(layer, 0);
+                    buffer<bf16> layer_v = engine.get_v_cache(layer, 0);
+                    std::string layer_prefix =
+                        args.dump_prefix + ".layer" + (layer < 10 ? "0" : "") + std::to_string(layer);
+                    write_bf16_dump(layer_prefix + ".cache_k0.bf16", layer_k);
+                    write_bf16_dump(layer_prefix + ".cache_v0.bf16", layer_v);
+                }
+            }
         }
         return 0;
     } catch (const std::exception& error) {

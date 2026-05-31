@@ -132,6 +132,21 @@ def _compact_errors(got: np.ndarray, expected: np.ndarray) -> tuple[list[str], s
     return errors, summary
 
 
+def _compact_failure_summary(got: np.ndarray, expected: np.ndarray) -> list[str]:
+    got_packets = got.reshape(generate.QKV_COMPACT_OUT_RECORDS, generate.COMPACT_PACKET_DWORDS)
+    expected_packets = expected.reshape(generate.QKV_COMPACT_OUT_RECORDS, generate.COMPACT_PACKET_DWORDS)
+    lines = ["header_trace:"]
+    for packet in range(generate.QKV_COMPACT_OUT_RECORDS):
+        lines.append(
+            f"record[{packet}] "
+            f"expected=0x{int(expected_packets[packet, 0]) & 0xffffffff:08x} "
+            f"got=0x{int(got_packets[packet, 0]) & 0xffffffff:08x} "
+            f"payload0_expected=0x{int(expected_packets[packet, 1]) & 0xffffffff:08x} "
+            f"payload0_got=0x{int(got_packets[packet, 1]) & 0xffffffff:08x}"
+        )
+    return lines
+
+
 def run(
     current_token: int | None = None,
     model_path: Path | None = None,
@@ -189,6 +204,8 @@ def run(
         print(f"  {stats}")
         if errors:
             print(f"  FAIL: {len(errors)} Q compact-output mismatches")
+            for line in _compact_failure_summary(got, expected):
+                print(f"    {line}")
             for error in errors:
                 print(f"    {error}")
             return False
