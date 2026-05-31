@@ -9,9 +9,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from generate_main16_q4nx_asm import generate_assembly
+
 
 DEFAULT_ROLE_OBJECT = Path("qwen3-layer/main_projection_q4nx_fast.o")
 DEFAULT_CORE_ELF = Path("design.mlir.prj/main_core_2_2.elf")
+DEFAULT_ASM_SOURCE = Path("qwen3-layer/main_projection_q4nx_asm.s")
 DEFAULT_LLVM_NM = Path(".venv/lib/python3.12/site-packages/llvm-aie/bin/llvm-nm")
 DEFAULT_LLVM_OBJDUMP = Path(".venv/lib/python3.12/site-packages/llvm-aie/bin/llvm-objdump")
 ASM_GROUP_SYMBOL = "q4nx_accum_lane_asm_group_shape"
@@ -54,6 +57,8 @@ PRODUCTION_REPORT_COUNTS = (
 class AsmIntegrationReport:
     role_object: Path
     core_elf: Path
+    asm_source: Path
+    source_matches_generator: bool
     role_has_asm_group: bool
     role_has_rejected_lane: bool
     core_has_asm_group: bool
@@ -120,6 +125,7 @@ def function_body(disasm_text: str, function_name: str) -> str:
 def check_asm_integration(
     role_object: Path,
     core_elf: Path,
+    asm_source: Path,
     llvm_nm: Path,
     llvm_objdump: Path,
 ) -> AsmIntegrationReport:
@@ -127,7 +133,10 @@ def check_asm_integration(
         raise FileNotFoundError(role_object)
     if not core_elf.exists():
         raise FileNotFoundError(core_elf)
+    if not asm_source.exists():
+        raise FileNotFoundError(asm_source)
 
+    source_matches_generator = asm_source.read_text() == generate_assembly()
     role_symbols = symbol_table(llvm_nm, role_object)
     core_symbols = symbol_table(llvm_nm, core_elf)
     role_names = symbol_names(role_symbols)
@@ -156,6 +165,8 @@ def check_asm_integration(
     errors: list[str] = []
     if not role_has_asm_group:
         errors.append(f"role object missing {ASM_GROUP_SYMBOL}")
+    if not source_matches_generator:
+        errors.append(f"main16 source assembly drifted from generator: {asm_source}")
     if role_has_rejected_lane:
         errors.append(f"rejected approximate lane body is still present: {REJECTED_LANE_SYMBOL}")
     if core_has_asm_group:
@@ -178,6 +189,8 @@ def check_asm_integration(
     return AsmIntegrationReport(
         role_object=role_object,
         core_elf=core_elf,
+        asm_source=asm_source,
+        source_matches_generator=source_matches_generator,
         role_has_asm_group=role_has_asm_group,
         role_has_rejected_lane=role_has_rejected_lane,
         core_has_asm_group=core_has_asm_group,
@@ -195,6 +208,8 @@ def render_report(report: AsmIntegrationReport) -> str:
         "main16_asm_integration_check:",
         f"  role_object={report.role_object}",
         f"  core_elf={report.core_elf}",
+        f"  asm_source={report.asm_source}",
+        f"  source_matches_generator={str(report.source_matches_generator).lower()}",
         f"  role_has_asm_group={str(report.role_has_asm_group).lower()}",
         f"  role_has_rejected_lane={str(report.role_has_rejected_lane).lower()}",
         f"  core_has_asm_group={str(report.core_has_asm_group).lower()}",
@@ -225,6 +240,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--role-object", type=Path, default=DEFAULT_ROLE_OBJECT)
     parser.add_argument("--core-elf", type=Path, default=DEFAULT_CORE_ELF)
+    parser.add_argument("--asm-source", type=Path, default=DEFAULT_ASM_SOURCE)
     parser.add_argument("--llvm-nm", type=Path, default=DEFAULT_LLVM_NM)
     parser.add_argument("--llvm-objdump", type=Path, default=DEFAULT_LLVM_OBJDUMP)
     parser.add_argument("--strict", action="store_true")
@@ -236,6 +252,7 @@ def main() -> int:
     report = check_asm_integration(
         role_object=args.role_object,
         core_elf=args.core_elf,
+        asm_source=args.asm_source,
         llvm_nm=args.llvm_nm,
         llvm_objdump=args.llvm_objdump,
     )

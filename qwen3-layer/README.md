@@ -103,9 +103,10 @@ The current implementation is the active qwen3 full-layer NPU integration path:
   hidden_out, row1 weight fanout, and main16 Q4NX compute.
 - `main_projection_q4nx_fast.cc`: main16 Q/K/V/O/up/gate/down Q4NX projection,
   flush, and record emit kernels.
-- `main_projection_q4nx_asm.s`: source-assembly main16 Q4NX probe object linked
-  into the single main16 role object; unreferenced sections are garbage
-  collected until a production exact lane body is wired in.
+- `main_projection_q4nx_asm.s`: generated source-assembly main16 Q4NX probe
+  object linked into the single main16 role object; unreferenced sections are
+  garbage collected until a production exact lane body is wired in. Regenerate
+  or check it with `tools/generate_main16_q4nx_asm.py`.
 - `edge_attention.cc`: Shape-A/B edge attention kernels for KV scan, online
   softmax, weighted V, and accumulator merge.
 - `postprocess_qkv.cc`: c1r3 Q/K norm, RoPE/layout pack, and current K/V

@@ -309,10 +309,12 @@ main_projection_q4nx_fast.cc
 main_projection_q4nx_asm.s
 ```
 
-using `ld.lld -r`. The assembly companion currently contains only a
-MyLM-style group-shape probe. `main16-q4nx-compute-perf --build-only` passed
-with this multi-source object, and the final linked core ELF confirmed the
-unreferenced probe was garbage-collected:
+using `ld.lld -r`. The assembly companion currently contains only a generated
+MyLM-style group-shape probe; `tools/generate_main16_q4nx_asm.py --check`
+guards the source shape before we extend it into a full exact hot body.
+`main16-q4nx-compute-perf --build-only` passed with this multi-source object,
+and the final linked core ELF confirmed the unreferenced probe was
+garbage-collected:
 
 ```text
 q4nx_accum_lane_asm_group_shape symbol = absent
