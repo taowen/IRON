@@ -103,6 +103,9 @@ The current implementation is the active qwen3 full-layer NPU integration path:
   hidden_out, row1 weight fanout, and main16 Q4NX compute.
 - `main_projection_q4nx_fast.cc`: main16 Q/K/V/O/up/gate/down Q4NX projection,
   flush, and record emit kernels.
+- `main_projection_q4nx_asm.s`: source-assembly main16 Q4NX probe object linked
+  into the single main16 role object; unreferenced sections are garbage
+  collected until a production exact lane body is wired in.
 - `edge_attention.cc`: Shape-A/B edge attention kernels for KV scan, online
   softmax, weighted V, and accumulator merge.
 - `postprocess_qkv.cc`: c1r3 Q/K norm, RoPE/layout pack, and current K/V
@@ -202,10 +205,22 @@ dataflow artifact.
 Recent token31 measurements with the single active `main_projection_q4nx_fast.cc`
 role:
 
-- `main16-q4nx-compute-perf`: `14.249 ms`
-- `full-layer-attention-o-bf16`: `12.194 ms`
-- `qwen3-8b-decode-layer`: `25.067 ms` after record-granular compact and
+- `row1-weight-stream-perf`: `8.717 ms`, `12.883 GiB/s`
+- `main16-q4nx-compute-perf`: `13.649 ms`, repeated after the stage run
+- `qwen3-8b-c1r2-input-norm-replay`: `1.876 ms`
+- `qwen3-8b-qkv-cache-write-bridge`: `7.963 ms`
+- `full-layer-attention-o-bf16`: `12.346 ms`
+- `qwen3-8b-decode-layer`: `24.802 ms` after record-granular compact and
   source-side down replay, `final_hidden_out max_abs=0.0078125`
+
+These numbers do not support row1 weight fanout as the primary reason main16 is
+slow: the isolated full-layer weight stream is faster than the isolated main16
+Q4NX compute loop. They do show two large remaining costs: the main16 Q4NX
+microkernel itself and the attention/O integrated slice. If a future regression
+looks like main16 starvation, the next diagnostic should be a generated
+progress-counter slice that records activation-acquired, weight-acquired,
+compute-done, and record-released counts per main tile, rather than adding debug
+taps to the production full-layer path.
 
 Older C++ unroll probes were removed from the code path. They improved narrow
 slices but either did not fit full-layer program memory or regressed full decode

@@ -1,4 +1,5 @@
 #include <aie_api/aie.hpp>
+#include <aie2pintrin.h>
 #include <stdint.h>
 
 #include "record_format.h"
@@ -9,10 +10,6 @@ constexpr int32_t kGroupsPerRow = qwen3::kQ4KChunk / qwen3::kQ4GroupSize;
 constexpr int32_t kRowsPerLane = qwen3::kMainRowsPerTile / 2;
 constexpr int32_t kRowPairBytes = kRowsPerLane / 2;
 constexpr int32_t kBytesPerLane = qwen3::kQ4KChunk * kRowPairBytes;
-#ifndef QWEN3_MAIN16_UNROLLED_GROUP_DIMS
-#define QWEN3_MAIN16_UNROLLED_GROUP_DIMS 18
-#endif
-constexpr int32_t kUnrolledGroupDims = QWEN3_MAIN16_UNROLLED_GROUP_DIMS;
 
 static float accum[qwen3::kMainRowsPerTile];
 
@@ -98,13 +95,33 @@ __attribute__((noinline)) static void emit_accum_body_record(
     write_accum_record_payload(qwen3::record_payload_bf16(records), target, num_rows);
 }
 
+template <int32_t Dim>
+__attribute__((always_inline)) static inline void q4nx_mac_signed_activation(
+    aie::accum<accfloat, kRowsPerLane> &row_acc,
+    aie::vector<bfloat16, kRowsPerLane> dequant,
+    v32int16 activation_bits
+) {
+    v16accfloat native_acc = row_acc;
+    native_acc = mac_elem_16_conf(
+        set_v32bfloat16(0, static_cast<v16bfloat16>(dequant)),
+        __SIGN_SIGNED,
+        (v32bfloat16)broadcast_elem(activation_bits, Dim),
+        __SIGN_SIGNED,
+        native_acc,
+        0,
+        0,
+        0
+    );
+    row_acc = aie::accum<accfloat, kRowsPerLane>(native_acc);
+}
+
 template <int32_t Lane, int32_t Dim>
 __attribute__((always_inline)) static inline void q4nx_accum_pair(
     aie::accum<accfloat, kRowsPerLane> &row_acc,
     aie::vector<bfloat16, kRowsPerLane> scale_vec,
     aie::vector<bfloat16, kRowsPerLane> offset_vec,
     uint8_t *data,
-    bfloat16 *activation_slice,
+    v32int16 activation_bits,
     int32_t group
 ) {
     const int32_t col = group * qwen3::kQ4GroupSize + Dim;
@@ -122,17 +139,13 @@ __attribute__((always_inline)) static inline void q4nx_accum_pair(
     aie::accum<accfloat, kRowsPerLane> dequant0_acc = aie::mul(q0, scale_vec);
     aie::vector<bfloat16, kRowsPerLane> dequant0 =
         aie::add(dequant0_acc.to_vector<bfloat16>(), offset_vec);
-    aie::vector<bfloat16, kRowsPerLane> activation0 =
-        aie::broadcast<bfloat16, kRowsPerLane>(activation_slice[col]);
-    row_acc = aie::mac(row_acc, dequant0, activation0);
+    q4nx_mac_signed_activation<Dim>(row_acc, dequant0, activation_bits);
 
     aie::vector<bfloat16, kRowsPerLane> q1 = q_values.extract<kRowsPerLane>(1);
     aie::accum<accfloat, kRowsPerLane> dequant1_acc = aie::mul(q1, scale_vec);
     aie::vector<bfloat16, kRowsPerLane> dequant1 =
         aie::add(dequant1_acc.to_vector<bfloat16>(), offset_vec);
-    aie::vector<bfloat16, kRowsPerLane> activation1 =
-        aie::broadcast<bfloat16, kRowsPerLane>(activation_slice[col + 1]);
-    row_acc = aie::mac(row_acc, dequant1, activation1);
+    q4nx_mac_signed_activation<Dim + 1>(row_acc, dequant1, activation_bits);
 }
 
 template <int32_t Lane, int32_t Dim>
@@ -141,16 +154,16 @@ __attribute__((always_inline)) static inline void q4nx_accum_group_dims(
     aie::vector<bfloat16, kRowsPerLane> scale_vec,
     aie::vector<bfloat16, kRowsPerLane> offset_vec,
     uint8_t *data,
-    bfloat16 *activation_slice,
+    v32int16 activation_bits,
     int32_t group
 ) {
-    if constexpr (Dim < kUnrolledGroupDims) {
+    if constexpr (Dim < qwen3::kQ4GroupSize) {
         q4nx_accum_pair<Lane, Dim>(
             row_acc,
             scale_vec,
             offset_vec,
             data,
-            activation_slice,
+            activation_bits,
             group
         );
         q4nx_accum_group_dims<Lane, Dim + 2>(
@@ -158,49 +171,9 @@ __attribute__((always_inline)) static inline void q4nx_accum_group_dims(
             scale_vec,
             offset_vec,
             data,
-            activation_slice,
+            activation_bits,
             group
         );
-    }
-}
-
-template <int32_t Lane>
-__attribute__((always_inline)) static inline void q4nx_accum_group_tail(
-    aie::accum<accfloat, kRowsPerLane> &row_acc,
-    aie::vector<bfloat16, kRowsPerLane> scale_vec,
-    aie::vector<bfloat16, kRowsPerLane> offset_vec,
-    uint8_t *data,
-    bfloat16 *activation_slice,
-    int32_t group
-) {
-#pragma clang loop unroll(disable)
-    for (int32_t dim = kUnrolledGroupDims; dim < qwen3::kQ4GroupSize; dim += 2) {
-        const int32_t col = group * qwen3::kQ4GroupSize + dim;
-        uint4 *column_nibbles = reinterpret_cast<uint4 *>(
-            data + Lane * kBytesPerLane + col * kRowPairBytes
-        );
-        aie::vector<uint4, qwen3::kMainRowsPerTile> packed =
-            aie::load_v<qwen3::kMainRowsPerTile>(column_nibbles);
-        aie::vector<uint8, qwen3::kMainRowsPerTile> as_u8 = aie::unpack(packed);
-        aie::vector<uint16, qwen3::kMainRowsPerTile> as_u16 = aie::unpack(as_u8);
-        aie::vector<bfloat16, qwen3::kMainRowsPerTile> q_values =
-            aie::to_float<bfloat16>(as_u16, 0);
-
-        aie::vector<bfloat16, kRowsPerLane> q0 = q_values.extract<kRowsPerLane>(0);
-        aie::accum<accfloat, kRowsPerLane> dequant0_acc = aie::mul(q0, scale_vec);
-        aie::vector<bfloat16, kRowsPerLane> dequant0 =
-            aie::add(dequant0_acc.to_vector<bfloat16>(), offset_vec);
-        aie::vector<bfloat16, kRowsPerLane> activation0 =
-            aie::broadcast<bfloat16, kRowsPerLane>(activation_slice[col]);
-        row_acc = aie::mac(row_acc, dequant0, activation0);
-
-        aie::vector<bfloat16, kRowsPerLane> q1 = q_values.extract<kRowsPerLane>(1);
-        aie::accum<accfloat, kRowsPerLane> dequant1_acc = aie::mul(q1, scale_vec);
-        aie::vector<bfloat16, kRowsPerLane> dequant1 =
-            aie::add(dequant1_acc.to_vector<bfloat16>(), offset_vec);
-        aie::vector<bfloat16, kRowsPerLane> activation1 =
-            aie::broadcast<bfloat16, kRowsPerLane>(activation_slice[col + 1]);
-        row_acc = aie::mac(row_acc, dequant1, activation1);
     }
 }
 
@@ -223,20 +196,15 @@ __attribute__((always_inline)) static inline void q4nx_accum_lane(
             aie::load_v<kRowsPerLane>(
                 offsets + group * qwen3::kMainRowsPerTile + row_base
             );
+        v32bfloat16 activation_group =
+            *reinterpret_cast<v32bfloat16 *>(activation_slice + group * qwen3::kQ4GroupSize);
+        v32int16 activation_bits = (v32int16)activation_group;
         q4nx_accum_group_dims<Lane, 0>(
             row_acc,
             scale_vec,
             offset_vec,
             data,
-            activation_slice,
-            group
-        );
-        q4nx_accum_group_tail<Lane>(
-            row_acc,
-            scale_vec,
-            offset_vec,
-            data,
-            activation_slice,
+            activation_bits,
             group
         );
     }

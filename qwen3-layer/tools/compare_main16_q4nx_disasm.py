@@ -180,11 +180,11 @@ MYLM_PHASE_BODIES = (
 
 IRON_FAST_SECTIONS = (
     SectionSpec(
-        "iron_fast_q4_hot_body",
+        "iron_fast_q4_wrapper",
         ".text._ZN12_GLOBAL__N_121q4nx_chunk_accum_fastEPfP8bfloat16S2_",
     ),
+    SectionSpec("iron_fast_q4_asm_group_shape", ".text.q4nx_accum_lane_asm_group_shape"),
     SectionSpec("iron_fast_q4_function", ".text.q4nx_chunk_accum_slice_i32_fast"),
-    SectionSpec("iron_fast_q4_block_function", ".text.q4nx_chunk_accum_block_slice_i32_fast"),
     SectionSpec("iron_fast_perf_fill", ".text.q4nx_fill_perf_inputs"),
 )
 

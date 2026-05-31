@@ -17,11 +17,14 @@ from aie.utils.npukernel import NPUKernel
 
 EXPERIMENT_DIR = Path(__file__).parent
 ROLE_KERNEL_SOURCES = {
-    "edge_attention.o": "edge_attention.cc",
-    "full_vector_station.o": "full_vector_station.cc",
-    "main_projection_q4nx_fast.o": "main_projection_q4nx_fast.cc",
-    "postprocess_qkv.o": "postprocess_qkv.cc",
-    "swiglu.o": "swiglu.cc",
+    "edge_attention.o": ("edge_attention.cc",),
+    "full_vector_station.o": ("full_vector_station.cc",),
+    "main_projection_q4nx_fast.o": (
+        "main_projection_q4nx_fast.cc",
+        "main_projection_q4nx_asm.s",
+    ),
+    "postprocess_qkv.o": ("postprocess_qkv.cc",),
+    "swiglu.o": ("swiglu.cc",),
 }
 ROLE_KERNEL_HEADERS = ("qwen3_constants.h", "record_format.h")
 LINK_WITH_RE = re.compile(r'link_with = "[^"]*/([^/"]+\.o)"')
@@ -36,35 +39,56 @@ def run_command(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
-def _compile_aie_object(source_name: str, object_name: str) -> None:
+def _compile_aie_source(source_name: str, output_object: Path) -> None:
     peano_dir = Path(peano_install_dir())
     mlir_aie_dir = Path(root_path())
-    clang = peano_dir / "bin" / "clang++"
+    clang = peano_dir / "bin" / ("clang++" if source_name.endswith((".cc", ".cpp")) else "clang")
     include_path = mlir_aie_dir / "include"
     runtime_lib_include = mlir_aie_dir / "aie_runtime_lib" / "AIE2P"
     src = EXPERIMENT_DIR / source_name
-    obj = EXPERIMENT_DIR / object_name
     cmd = [
         str(clang),
-        "-O2",
-        "-std=c++20",
         "--target=aie2p-none-unknown-elf",
-        "-ffunction-sections",
-        "-fdata-sections",
-        "-Wno-parentheses",
-        "-Wno-attributes",
-        "-Wno-macro-redefined",
-        "-Wno-empty-body",
-        "-Wno-missing-template-arg-list-after-template-kw",
-        f"-I{include_path}",
-        f"-I{runtime_lib_include}",
         "-c",
         str(src),
         "-o",
-        str(obj),
+        str(output_object),
     ]
+    if source_name.endswith((".cc", ".cpp")):
+        cmd[1:1] = [
+            "-O2",
+            "-std=c++20",
+            "-ffunction-sections",
+            "-fdata-sections",
+            "-Wno-parentheses",
+            "-Wno-attributes",
+            "-Wno-macro-redefined",
+            "-Wno-empty-body",
+            "-Wno-missing-template-arg-list-after-template-kw",
+            f"-I{include_path}",
+            f"-I{runtime_lib_include}",
+        ]
     print(f"  Compiling {source_name}...")
     run_command(cmd)
+
+
+def _compile_aie_object(source_names: tuple[str, ...], object_name: str) -> None:
+    obj = EXPERIMENT_DIR / object_name
+    if len(source_names) == 1:
+        _compile_aie_source(source_names[0], obj)
+        return
+
+    peano_dir = Path(peano_install_dir())
+    linker = peano_dir / "bin" / "ld.lld"
+    object_dir = EXPERIMENT_DIR / "build" / "role_objects" / object_name
+    object_dir.mkdir(parents=True, exist_ok=True)
+    partial_objects: list[Path] = []
+    for source_name in source_names:
+        partial = object_dir / f"{Path(source_name).name}.o"
+        _compile_aie_source(source_name, partial)
+        partial_objects.append(partial)
+    print(f"  Linking {object_name}...")
+    run_command([str(linker), "-r", *[str(partial) for partial in partial_objects], "-o", str(obj)])
 
 
 def _linked_role_objects(mlir_text: str) -> tuple[str, ...]:
@@ -101,7 +125,8 @@ def _build_key(mlir_text: str, object_names: tuple[str, ...], command: list[str]
     for header_name in ROLE_KERNEL_HEADERS:
         _update_build_key_file(hasher, EXPERIMENT_DIR / header_name)
     for object_name in object_names:
-        _update_build_key_file(hasher, EXPERIMENT_DIR / ROLE_KERNEL_SOURCES[object_name])
+        for source_name in ROLE_KERNEL_SOURCES[object_name]:
+            _update_build_key_file(hasher, EXPERIMENT_DIR / source_name)
     return hasher.hexdigest()
 
 
