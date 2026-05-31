@@ -107,7 +107,8 @@ The current implementation is the active qwen3 full-layer NPU integration path:
   object linked into the single main16 role object; unreferenced sections are
   garbage collected until a production exact lane body is wired in. It contains
   both the canonical MyLM-style group probe and a callable exact-lane body
-  candidate. Regenerate or check it with `tools/generate_main16_q4nx_asm.py`.
+  candidate that writes FP32 partial sums. Regenerate or check it with
+  `tools/generate_main16_q4nx_asm.py`.
 - `edge_attention.cc`: Shape-A/B edge attention kernels for KV scan, online
   softmax, weighted V, and accumulator merge.
 - `postprocess_qkv.cc`: c1r3 Q/K norm, RoPE/layout pack, and current K/V

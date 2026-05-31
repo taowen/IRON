@@ -311,9 +311,9 @@ main_projection_q4nx_asm.s
 
 using `ld.lld -r`. The assembly companion now contains a generated
 MyLM-style group-shape probe and a generated callable exact-lane candidate
-(`q4nx_accum_lane_exact_body_shape`). `tools/generate_main16_q4nx_asm.py
---check` guards both source shapes before we wire the exact body into the C++
-scheduler.
+(`q4nx_accum_lane_exact_body_shape`) that writes FP32 partial sums for the
+production `float accum` path. `tools/generate_main16_q4nx_asm.py --check`
+guards both source shapes before we wire the exact body into the C++ scheduler.
 `main16-q4nx-compute-perf --build-only` passed with this multi-source object,
 and the final linked core ELF confirmed the unreferenced probe was
 garbage-collected:

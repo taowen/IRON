@@ -148,7 +148,7 @@ EXACT_LANE_HEADER = (
     "q4nx_accum_lane_exact_body_shape:",
     "\t// Callable exact Q4NX lane candidate for the production role object.",
     "\t// ABI: p0=packed lane data, p1=scale lane, p2=offset lane,",
-    "\t//      p3=activation bf16[256], p4=dst bf16[16].",
+    "\t//      p3=activation bf16[256], p4=dst float[16].",
     "\t// It returns through the normal C ABI and does not release any lock.",
     "\tmova\tr1, #0",
     "\tmov\tcrrnd, #0xc",
@@ -185,7 +185,7 @@ EXACT_LANE_FOOTER = (
     "\tnop",
     "\tnop",
     "\tnop",
-    "\tvst.conv.bf16.fp32\tbmll1, [p4, #0]",
+    "\tvst\tbmll1, [p4, #0]",
     "\tret\tlr",
     "\t.size\tq4nx_accum_lane_exact_body_shape, .-q4nx_accum_lane_exact_body_shape",
 )

@@ -40,7 +40,7 @@ EXPECTED_EXACT_LANE_COUNTS = {
     "vextbcst.32": 0,
     "vbcst.16": 8,
     "vbcst.32": 1,
-    "vst.conv.bf16.fp32": 1,
+    "vst.conv.bf16.fp32": 0,
     "rel\t": 0,
     "jnz": 1,
     "vunpack": 32,

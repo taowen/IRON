@@ -189,7 +189,7 @@ q4nx_accum_lane_asm_group_shape:
 q4nx_accum_lane_exact_body_shape:
 	// Callable exact Q4NX lane candidate for the production role object.
 	// ABI: p0=packed lane data, p1=scale lane, p2=offset lane,
-	//      p3=activation bf16[256], p4=dst bf16[16].
+	//      p3=activation bf16[256], p4=dst float[16].
 	// It returns through the normal C ABI and does not release any lock.
 	mova	r1, #0
 	mov	crrnd, #0xc
@@ -264,6 +264,6 @@ q4nx_accum_lane_exact_body_shape:
 	nop
 	nop
 	nop
-	vst.conv.bf16.fp32	bmll1, [p4, #0]
+	vst	bmll1, [p4, #0]
 	ret	lr
 	.size	q4nx_accum_lane_exact_body_shape, .-q4nx_accum_lane_exact_body_shape
