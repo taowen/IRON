@@ -1,0 +1,114 @@
+{
+  "status": "passed",
+  "bundle_count": 963,
+  "observed_signature_count": 50,
+  "exact_candidate": {
+    "name": "exact_replay",
+    "expected_status": "encoded_byte_exact",
+    "status": "encoded",
+    "manifest_violations": [],
+    "object": "main16-exps/048_q4nx_schedule_dsl_resource_manifest/build/exact_replay/exact_replay_padded.o",
+    "text_bytes": 5616,
+    "matches_original": true,
+    "diff_count": 0,
+    "first_diffs": [],
+    "error_tail": ""
+  },
+  "candidates": [
+    {
+      "name": "highhalf_swap_045",
+      "expected_status": "encoded",
+      "status": "encoded",
+      "manifest_violations": [],
+      "object": "main16-exps/048_q4nx_schedule_dsl_resource_manifest/build/highhalf_swap_045/highhalf_swap_045_padded.o",
+      "text_bytes": 5616,
+      "matches_original": false,
+      "diff_count": 2,
+      "first_diffs": [
+        {
+          "address": "0x6fc",
+          "original": "8a",
+          "generated": "cb"
+        },
+        {
+          "address": "0x702",
+          "original": "cb",
+          "generated": "8a"
+        }
+      ],
+      "error_tail": ""
+    },
+    {
+      "name": "vups_advance_046",
+      "expected_status": "rejected_by_manifest",
+      "status": "rejected_by_manifest",
+      "manifest_violations": [
+        {
+          "address": "0x704",
+          "signature": [
+            "vmov_x",
+            "vadd"
+          ],
+          "lines": [
+            "      $bmhh1 = VMOV_alu_mv_mv_x $bmhh2",
+            "      $dm2 = VADD_vmac_cm2_add_reg $dm1, $dm0, $r0"
+          ]
+        }
+      ],
+      "object": null,
+      "text_bytes": null,
+      "matches_original": null,
+      "diff_count": null,
+      "first_diffs": [],
+      "error_tail": ""
+    },
+    {
+      "name": "copy_and_vups_at_700_047",
+      "expected_status": "rejected_by_manifest",
+      "status": "rejected_by_manifest",
+      "manifest_violations": [
+        {
+          "address": "0x700",
+          "signature": [
+            "vmov_x",
+            "vups4x"
+          ],
+          "lines": [
+            "      $bmhh1 = VMOV_alu_mv_mv_x $bmhh2",
+            "      $dm1 = VUPS_4x_mv_ups_x2d_upsSign0 $x6, $s0, implicit-def $srups_of, implicit $crsat, implicit $crupsmode, implicit $upssign0"
+          ]
+        }
+      ],
+      "object": null,
+      "text_bytes": null,
+      "matches_original": null,
+      "diff_count": null,
+      "first_diffs": [],
+      "error_tail": ""
+    },
+    {
+      "name": "vext_and_vups_at_6f2_047",
+      "expected_status": "rejected_by_manifest",
+      "status": "rejected_by_manifest",
+      "manifest_violations": [
+        {
+          "address": "0x6f2",
+          "signature": [
+            "vextbcst16",
+            "vups4x"
+          ],
+          "lines": [
+            "      $x7 = VEXTBCST_16_vec_extract_broadcast_imm $x11, 20",
+            "      $dm1 = VUPS_4x_mv_ups_x2d_upsSign0 $x6, $s0, implicit-def $srups_of, implicit $crsat, implicit $crupsmode, implicit $upssign0"
+          ]
+        }
+      ],
+      "object": null,
+      "text_bytes": null,
+      "matches_original": null,
+      "diff_count": null,
+      "first_diffs": [],
+      "error_tail": ""
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "experiment": "022_q4nx_mir_schedule_probe",
+  "status": "partial",
+  "llc": "/var/home/taowen/projects/IRON/.venv/lib/python3.12/site-packages/llvm-aie/bin/llc",
+  "llvm_objdump": "/var/home/taowen/projects/IRON/.venv/lib/python3.12/site-packages/llvm-aie/bin/llvm-objdump",
+  "results": [
+    {
+      "name": "basic_machine_block",
+      "goal": "Prove direct AIE2P machine MIR can assemble the three key Q4NX instructions.",
+      "status": "pass",
+      "llc": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "objdump": {
+        "returncode": 0,
+        "stdout": "\n/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/basic_machine_block.o:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <q4nx_mir_basic_block>:\n       0: 02 a0 81 80 00 60 2b 00      \tnops\t;\t\tvextbcst.16\t x2, x0, #0\n       8: 00 00        \tnop\t\n       a: 62 41 02 00 e6 08 01 00      \tvups.4x\tcml0, wl0, s0, upssign0;\t\tvmac.f\tdm0, dm0, x1, x2, r0\n      12: 18 00 28 10  \tret\tlr\n\t\t...\n      1e: 00 00        \tnop\t\n",
+        "stderr": ""
+      },
+      "counts": {
+        "vups_4x": 1,
+        "vups_2x": 0,
+        "vextbcst_16": 1,
+        "vextbcst_32": 0,
+        "vmac_f": 1,
+        "vst": 0,
+        "vlda": 0,
+        "schedule_found": 0,
+        "schedule_missed": 0,
+        "bundle_count": 0,
+        "ret": 1
+      },
+      "files": {
+        "mir": "/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/basic_machine_block.mir",
+        "object": "/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/basic_machine_block.o",
+        "asm": "/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/basic_machine_block.s",
+        "objdump": "/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/basic_machine_block.objdump"
+      },
+      "reasons": []
+    },
+    {
+      "name": "loop_postpipeline_probe",
+      "goal": "Probe whether the same direct machine-instruction shape can enter the postpipeliner/ZOL route.",
+      "status": "pass",
+      "llc": {
+        "returncode": 0,
+        "stdout": "--- !Missed\nPass:            postpipeliner\nName:            schedule\nFunction:        q4nx_mir_loop_probe\nArgs:\n  - String:          Longest circuit does not fit II.\n  - II:              '2'\n  - BasicBlock:      loop\n...\n--- !Missed\nPass:            postpipeliner\nName:            schedule\nFunction:        q4nx_mir_loop_probe\nArgs:\n  - String:          Longest circuit does not fit II.\n  - II:              '3'\n  - BasicBlock:      loop\n...\n--- !Passed\nPass:            postpipeliner\nName:            schedule\nFunction:        q4nx_mir_loop_probe\nArgs:\n  - String:          Schedule found\n  - NS:              '1'\n  - II:              '4'\n  - BasicBlock:      loop\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        q4nx_mir_loop_probe\nArgs:\n  - BasicBlock:      entry\n  - BundleCount:     '6'\n  - ByteCount:       '80'\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        q4nx_mir_loop_probe\nArgs:\n  - BasicBlock:      loop\n  - BundleCount:     '4'\n  - ByteCount:       '64'\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        q4nx_mir_loop_probe\nArgs:\n  - BasicBlock:      exit\n  - BundleCount:     '6'\n  - ByteCount:       '16'\n...\n",
+        "stderr": ""
+      },
+      "objdump": {
+        "returncode": 0,
+        "stdout": "\n/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/loop_postpipeline_probe.o:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <q4nx_mir_loop_probe>:\n       0: ba 08 00 b8 02 00 00 f0 2c 00\tnopa\t;\t\tnopx\t;\t\tadd.nc\tlc, r0, #0\n       a: 44 00 e0 01 00 00    \tmovxm\tls, #0\n\t\t\t0000000a:  R_AIE_42\t.LBB0_1\n      10: e1 00 00 10 00 b8 01 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tmovxm\tle, #0;\t\tnopv\t\n\t\t\t00000010:  R_AIE_41\t.L_LEnd0\n      20: e1 00 00 00 00 00 00 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopxm\t;\t\tnopv\t\n      30: e1 00 00 00 00 00 00 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopxm\t;\t\tnopv\t\n      40: e1 00 00 00 00 00 00 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopxm\t;\t\tnopv\t\n\n00000050 <.LBB0_1>:\n      50: e1 00 00 a8 81 80 00 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopx\t;\t\tvextbcst.16\t x2, x0, #0;\t\tnopv\t\n      60: e1 00 00 00 00 00 00 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopxm\t;\t\tnopv\t\n      70: 0b 12 00 78 84 00 00 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopx\t;\t\tvups.4x\tcml0, wl0, s0, upssign0;\t\tvmac.f\tdm0, dm0, x1, x2, r0\n\n00000080 <.L_LEnd0>:\n      80: e1 00 00 00 00 00 00 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopxm\t;\t\tnopv\t\n      90: 2c 00 50 f0 2c 00    \tnopa\t;\t\tret\tlr\n\t\t...\n      9e: 00 00        \tnop\t\n",
+        "stderr": ""
+      },
+      "counts": {
+        "vups_4x": 1,
+        "vups_2x": 0,
+        "vextbcst_16": 1,
+        "vextbcst_32": 0,
+        "vmac_f": 1,
+        "vst": 0,
+        "vlda": 0,
+        "schedule_found": 1,
+        "schedule_missed": 0,
+        "bundle_count": 3,
+        "ret": 1
+      },
+      "files": {
+        "mir": "/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/loop_postpipeline_probe.mir",
+        "object": "/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/loop_postpipeline_probe.o",
+        "asm": "/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/loop_postpipeline_probe.s",
+        "objdump": "/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/loop_postpipeline_probe.objdump"
+      },
+      "reasons": []
+    },
+    {
+      "name": "one_group_shape_probe",
+      "goal": "Probe the MyLM-style one-group macro shape: 8 vups.4x, 32 vextbcst.16, and 33 vmac.f.",
+      "status": "partial",
+      "llc": {
+        "returncode": 0,
+        "stdout": "--- !Missed\nPass:            postpipeliner\nName:            schedule\nFunction:        q4nx_mir_one_group_shape\nArgs:\n  - String:          No schedule found.\n...\n--- !Missed\nPass:            postpipeliner\nName:            schedule\nFunction:        q4nx_mir_one_group_shape\nArgs:\n  - String:          No schedule found.\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        q4nx_mir_one_group_shape\nArgs:\n  - BasicBlock:      entry\n  - BundleCount:     '3'\n  - ByteCount:       '16'\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        q4nx_mir_one_group_shape\nArgs:\n  - BasicBlock:      loop\n  - BundleCount:     '70'\n  - ByteCount:       '304'\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        q4nx_mir_one_group_shape\nArgs:\n  - BasicBlock:      exit\n  - BundleCount:     '6'\n  - ByteCount:       '16'\n...\n",
+        "stderr": ""
+      },
+      "objdump": {
+        "returncode": 0,
+        "stdout": "\n/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/one_group_shape_probe.o:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <q4nx_mir_one_group_shape>:\n       0: 18 00 70 1d  \tadd.nc\tlc, r0, #0\n       4: 44 00 e0 01 00 00    \tmovxm\tls, #0\n\t\t\t00000004:  R_AIE_42\t.LBB0_1\n       a: 44 00 e0 06 00 00    \tmovxm\tle, #0\n\t\t\t0000000a:  R_AIE_42\t.L_LEnd0\n\n00000010 <.LBB0_1>:\n      10: f8 88 05 19  \tvups.4x\tcml1, wl2, s2, upssign0\n      14: 58 03 01 19  \tvextbcst.16\t x2, x0, #0\n      18: f8 c8 87 19  \tvups.4x\tcmh1, wl3, s3, upssign0\n      1c: 58 07 89 19  \tvextbcst.16\t x3, x1, #1\n      20: f8 08 09 1a  \tvups.4x\tcml2, wl4, s0, upssign0\n      24: 58 0b 01 1a  \tvextbcst.16\t x4, x0, #2\n      28: f8 48 8b 1a  \tvups.4x\tcmh2, wl5, s1, upssign0\n      2c: 58 0f 89 1a  \tvextbcst.16\t x5, x1, #3\n      30: f8 88 0d 1b  \tvups.4x\tcml3, wl6, s2, upssign0\n      34: 58 13 01 1b  \tvextbcst.16\t x6, x0, #4\n      38: f8 c8 8f 1b  \tvups.4x\tcmh3, wl7, s3, upssign0\n      3c: 58 17 89 1b  \tvextbcst.16\t x7, x1, #5\n      40: 58 1b 01 1c  \tvextbcst.16\t x8, x0, #6\n      44: 58 1f 89 1c  \tvextbcst.16\t x9, x1, #7\n      48: f8 08 01 18  \tvups.4x\tcml0, wl0, s0, upssign0\n      4c: f8 48 83 18  \tvups.4x\tcmh0, wl1, s1, upssign0\n      50: 58 23 01 19  \tvextbcst.16\t x2, x0, #8\n      54: 58 27 89 19  \tvextbcst.16\t x3, x1, #9\n      58: 58 2b 01 1a  \tvextbcst.16\t x4, x0, #10\n      5c: 58 2f 89 1a  \tvextbcst.16\t x5, x1, #11\n      60: 58 33 01 1b  \tvextbcst.16\t x6, x0, #12\n      64: 58 37 89 1b  \tvextbcst.16\t x7, x1, #13\n      68: 58 3b 01 1c  \tvextbcst.16\t x8, x0, #14\n      6c: 58 3f 89 1c  \tvextbcst.16\t x9, x1, #15\n      70: 58 43 01 19  \tvextbcst.16\t x2, x0, #16\n      74: 58 47 89 19  \tvextbcst.16\t x3, x1, #17\n      78: 58 4b 01 1a  \tvextbcst.16\t x4, x0, #18\n      7c: 58 4f 89 1a  \tvextbcst.16\t x5, x1, #19\n      80: 58 53 01 1b  \tvextbcst.16\t x6, x0, #20\n      84: 58 57 89 1b  \tvextbcst.16\t x7, x1, #21\n      88: 58 5b 01 1c  \tvextbcst.16\t x8, x0, #22\n      8c: 58 5f 89 1c  \tvextbcst.16\t x9, x1, #23\n      90: 58 63 01 19  \tvextbcst.16\t x2, x0, #24\n      94: 58 67 89 19  \tvextbcst.16\t x3, x1, #25\n      98: 58 6b 01 1a  \tvextbcst.16\t x4, x0, #26\n      9c: 58 6f 89 1a  \tvextbcst.16\t x5, x1, #27\n      a0: 58 73 01 1b  \tvextbcst.16\t x6, x0, #28\n      a4: 62 a1 24 00 46 77 89 03      \tvextbcst.16\t x7, x1, #29;\t\tvmac.f\tdm0, dm1, x2, x5, r0\n      ac: 62 c1 46 09 46 7b 01 04      \tvextbcst.16\t x8, x0, #30;\t\tvmac.f\tdm1, dm2, x3, x6, r1\n      b4: 62 e1 68 12 46 7f 89 04      \tvextbcst.16\t x9, x1, #31;\t\tvmac.f\tdm2, dm3, x4, x7, r2\n      bc: 48 01 8b 1b  \tvmac.f\tdm3, dm4, x5, x8, r3\n      c0: 48 21 0d 04  \tvmac.f\tdm4, dm0, x6, x9, r0\n      c4: 48 41 2e 08  \tvmac.f\tdm0, dm1, x7, x2, r1\n      c8: 48 61 50 11  \tvmac.f\tdm1, dm2, x8, x3, r2\n      cc: 48 81 72 1a  \tvmac.f\tdm2, dm3, x9, x4, r3\n      d0: 48 a1 84 03  \tvmac.f\tdm3, dm4, x2, x5, r0\n      d4: 48 c1 06 0c  \tvmac.f\tdm4, dm0, x3, x6, r1\n      d8: 48 e1 28 10  \tvmac.f\tdm0, dm1, x4, x7, r2\n      dc: 48 01 4b 19  \tvmac.f\tdm1, dm2, x5, x8, r3\n      e0: 48 21 6d 02  \tvmac.f\tdm2, dm3, x6, x9, r0\n      e4: 48 41 8e 0b  \tvmac.f\tdm3, dm4, x7, x2, r1\n      e8: 48 61 10 14  \tvmac.f\tdm4, dm0, x8, x3, r2\n      ec: 48 81 32 18  \tvmac.f\tdm0, dm1, x9, x4, r3\n      f0: 48 a1 44 01  \tvmac.f\tdm1, dm2, x2, x5, r0\n      f4: 48 c1 66 0a  \tvmac.f\tdm2, dm3, x3, x6, r1\n      f8: 48 e1 88 13  \tvmac.f\tdm3, dm4, x4, x7, r2\n      fc: 48 01 0b 1c  \tvmac.f\tdm4, dm0, x5, x8, r3\n     100: 48 21 2d 00  \tvmac.f\tdm0, dm1, x6, x9, r0\n     104: 48 41 4e 09  \tvmac.f\tdm1, dm2, x7, x2, r1\n     108: 48 61 70 12  \tvmac.f\tdm2, dm3, x8, x3, r2\n     10c: 48 81 92 1b  \tvmac.f\tdm3, dm4, x9, x4, r3\n     110: 48 a1 04 04  \tvmac.f\tdm4, dm0, x2, x5, r0\n     114: 48 c1 26 08  \tvmac.f\tdm0, dm1, x3, x6, r1\n     118: 48 01 6b 1a  \tvmac.f\tdm2, dm3, x5, x8, r3\n     11c: 48 e1 48 11  \tvmac.f\tdm1, dm2, x4, x7, r2\n     120: 48 21 8d 03  \tvmac.f\tdm3, dm4, x6, x9, r0\n     124: 48 81 52 19  \tvmac.f\tdm1, dm2, x9, x4, r3\n     128: 48 41 0e 0c  \tvmac.f\tdm4, dm0, x7, x2, r1\n     12c: 48 61 30 10  \tvmac.f\tdm0, dm1, x8, x3, r2\n\n00000130 <.L_LEnd0>:\n     130: 0b 25 13 00 00 00 00 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopxm\t;\t\tvmac.f\tdm2, dm3, x2, x5, r0\n     140: 2c 00 50 f0 2c 00    \tnopa\t;\t\tret\tlr\n\t\t...\n     14e: 00 00        \tnop\t\n",
+        "stderr": ""
+      },
+      "counts": {
+        "vups_4x": 8,
+        "vups_2x": 0,
+        "vextbcst_16": 32,
+        "vextbcst_32": 0,
+        "vmac_f": 33,
+        "vst": 0,
+        "vlda": 0,
+        "schedule_found": 0,
+        "schedule_missed": 2,
+        "bundle_count": 3,
+        "ret": 1
+      },
+      "files": {
+        "mir": "/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/one_group_shape_probe.mir",
+        "object": "/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/one_group_shape_probe.o",
+        "asm": "/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/one_group_shape_probe.s",
+        "objdump": "/var/home/taowen/projects/IRON/main16-exps/022_q4nx_mir_schedule_probe/build/one_group_shape_probe.objdump"
+      },
+      "reasons": [
+        "postpipeliner did not report Schedule found"
+      ]
+    }
+  ]
+}

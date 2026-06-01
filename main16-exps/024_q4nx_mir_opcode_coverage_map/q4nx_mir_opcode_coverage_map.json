@@ -1,0 +1,165 @@
+{
+  "experiment": "024_q4nx_mir_opcode_coverage_map",
+  "status": "passed",
+  "source": "experiments/130_mylm_main16_record_observable_harness/mylm_c2r2_main16_record_exec.elf",
+  "group1_op_counts": {
+    "vldb": 6,
+    "vmac.f": 33,
+    "vups.4x": 8,
+    "vadd": 8,
+    "vsub.f": 8,
+    "vextbcst.16": 32,
+    "nop": 13,
+    "vunpack": 8,
+    "vmov": 50,
+    "vconv.bf16.fp32": 17,
+    "vmul.f": 1,
+    "vmov.d": 2,
+    "lda.s16": 1,
+    "vlda": 1,
+    "vbcst.16": 1
+  },
+  "translated_group1_events": 176,
+  "results": [
+    {
+      "name": "opcode_coverage_block",
+      "goal": "Compile one representative MIR instruction for every MyLM group1 opcode/register-class form.",
+      "status": "pass",
+      "llc": {
+        "returncode": 0,
+        "stdout": "--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        opcode_coverage_block\nArgs:\n  - BasicBlock:      entry\n  - BundleCount:     '16'\n  - ByteCount:       '80'\n...\n",
+        "stderr": ""
+      },
+      "asm": {
+        "returncode": 0,
+        "stdout": "--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        opcode_coverage_block\nArgs:\n  - BasicBlock:      entry\n  - BundleCount:     '16'\n  - ByteCount:       '80'\n...\n",
+        "stderr": ""
+      },
+      "objdump": {
+        "returncode": 0,
+        "stdout": "\n/var/home/taowen/projects/IRON/main16-exps/024_q4nx_mir_opcode_coverage_map/build/opcode_coverage_block.o:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <opcode_coverage_block>:\n       0: b6 00 00 00 00 00 00 e8 3d f2 2c 00  \tnopa\t;\t\tvldb\t x11, [p1], #64;\t\tnopxm\t\n\t\t...\n      14: 48 41 33 21  \tvmac.f\tdm1, dm1, x9, x10, r4\n      18: 0a 3d 40 01 e2 04 12 52 9e 63\tlda.s16\t r7, [p3], #2;\t\tvups.4x\tdm2, x9, s0, upssign0;\t\tvadd\tdm1, dm2, dm0, r0\n      22: b4 06 b2 07 0a 09    \tvunpack\tx1, wl0, unpacksign0;\t\tvextbcst.16\t x7, x11, #0\n      28: 48 3f 20 29  \tvsub.f\tdm1, dm1, dm0, r5\n      2c: 62 e1 ea 23 04 70 c3 03      \tvlda\t x8, [p0], #64;\t\tvmul.f\tdm3, x5, x7, r4\n      34: 22 1d 80 01 01 40 01 00      \tret\tlr;\t\tvmov.d\tdm1, dm4\n      3c: 00 00        \tnop\t\n      3e: f8 22 4a 1b  \tvmov\twl6, wh5\n      42: 02 70 b9 4e 00 c0 32 48      \tvconv.bf16.fp32\t wl4, bmll3;\t\tvbcst.16\t x1, r7\n      4a: f8 12 04 1a  \tvmov\tbmll2, bmll1\n      4e: 00 00        \tnop\t\n",
+        "stderr": ""
+      },
+      "counts": {
+        "lshl": 0,
+        "add_nc": 0,
+        "movx": 0,
+        "mov_scl": 0,
+        "paddb": 0,
+        "lda_s16": 1,
+        "vlda": 1,
+        "vldb": 1,
+        "vunpack": 1,
+        "vups_4x": 1,
+        "vadd": 1,
+        "vsub_f": 1,
+        "vconv_bf16_fp32": 1,
+        "vextbcst_16": 1,
+        "vextbcst_32": 0,
+        "vbcst_16": 1,
+        "vmul_f": 1,
+        "vmac_f": 1,
+        "vmov": 2,
+        "vmov_d": 1,
+        "vst": 0,
+        "schedule_found": 0,
+        "schedule_missed": 0,
+        "bundle_count_entries": 1,
+        "loop_bundle_count": -1
+      },
+      "expected_counts": {
+        "lda_s16": 1,
+        "vlda": 1,
+        "vldb": 1,
+        "vunpack": 1,
+        "vups_4x": 1,
+        "vadd": 1,
+        "vsub_f": 1,
+        "vconv_bf16_fp32": 1,
+        "vextbcst_16": 1,
+        "vbcst_16": 1,
+        "vmul_f": 1,
+        "vmac_f": 1,
+        "vmov": 2,
+        "vmov_d": 1
+      },
+      "files": {
+        "mir": "/var/home/taowen/projects/IRON/main16-exps/024_q4nx_mir_opcode_coverage_map/build/opcode_coverage_block.mir",
+        "object": "/var/home/taowen/projects/IRON/main16-exps/024_q4nx_mir_opcode_coverage_map/build/opcode_coverage_block.o",
+        "asm": "/var/home/taowen/projects/IRON/main16-exps/024_q4nx_mir_opcode_coverage_map/build/opcode_coverage_block.s",
+        "objdump": "/var/home/taowen/projects/IRON/main16-exps/024_q4nx_mir_opcode_coverage_map/build/opcode_coverage_block.objdump"
+      },
+      "reasons": []
+    },
+    {
+      "name": "mylm_group1_full_projection",
+      "goal": "Compile the full MyLM group1 event order, excluding only explicit nops.",
+      "status": "pass",
+      "llc": {
+        "returncode": 0,
+        "stdout": "--- !Missed\nPass:            postpipeliner\nName:            schedule\nFunction:        mylm_group1_full_projection\nArgs:\n  - String:          Longest circuit does not fit II.\n  - II:              '91'\n  - BasicBlock:      loop\n...\n--- !Missed\nPass:            postpipeliner\nName:            schedule\nFunction:        mylm_group1_full_projection\nArgs:\n  - String:          No schedule found.\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        mylm_group1_full_projection\nArgs:\n  - BasicBlock:      entry\n  - BundleCount:     '3'\n  - ByteCount:       '16'\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        mylm_group1_full_projection\nArgs:\n  - BasicBlock:      loop\n  - BundleCount:     '120'\n  - ByteCount:       '704'\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        mylm_group1_full_projection\nArgs:\n  - BasicBlock:      exit\n  - BundleCount:     '6'\n  - ByteCount:       '16'\n...\n",
+        "stderr": ""
+      },
+      "asm": {
+        "returncode": 0,
+        "stdout": "--- !Missed\nPass:            postpipeliner\nName:            schedule\nFunction:        mylm_group1_full_projection\nArgs:\n  - String:          Longest circuit does not fit II.\n  - II:              '91'\n  - BasicBlock:      loop\n...\n--- !Missed\nPass:            postpipeliner\nName:            schedule\nFunction:        mylm_group1_full_projection\nArgs:\n  - String:          No schedule found.\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        mylm_group1_full_projection\nArgs:\n  - BasicBlock:      entry\n  - BundleCount:     '3'\n  - ByteCount:       '16'\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        mylm_group1_full_projection\nArgs:\n  - BasicBlock:      loop\n  - BundleCount:     '120'\n  - ByteCount:       '704'\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        mylm_group1_full_projection\nArgs:\n  - BasicBlock:      exit\n  - BundleCount:     '6'\n  - ByteCount:       '16'\n...\n",
+        "stderr": ""
+      },
+      "objdump": {
+        "returncode": 0,
+        "stdout": "\n/var/home/taowen/projects/IRON/main16-exps/024_q4nx_mir_opcode_coverage_map/build/mylm_group1_full_projection.o:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <mylm_group1_full_projection>:\n       0: 18 00 72 1d  \tadd.nc\tlc, r4, #0\n       4: 44 00 e0 01 00 00    \tmovxm\tls, #0\n\t\t\t00000004:  R_AIE_42\t.LBB0_1\n       a: 44 00 e0 06 00 00    \tmovxm\tle, #0\n\t\t\t0000000a:  R_AIE_42\t.L_LEnd0\n\n00000010 <.LBB0_1>:\n      10: b6 00 00 00 00 00 00 e8 3d f2 2c 00  \tnopa\t;\t\tvldb\t x11, [p1], #64;\t\tnopxm\t\n      1c: 48 41 33 21  \tvmac.f\tdm1, dm1, x9, x10, r4\n      20: 22 3d 40 01 e6 04 12 02      \tvups.4x\tdm2, x9, s0, upssign0;\t\tvadd\tdm1, dm2, dm0, r0\n      28: 00 00        \tnop\t\n      2a: 48 01 28 23  \tvmac.f\tdm3, dm1, x4, x0, r4\n      2e: 22 3d 40 02 e6 04 10 02      \tvups.4x\tdm2, x8, s0, upssign0;\t\tvadd\tdm2, dm2, dm0, r0\n      36: 48 3f 20 29  \tvsub.f\tdm1, dm1, dm0, r5\n      3a: 48 61 67 23  \tvmac.f\tdm3, dm3, x3, x11, r4\n      3e: 48 3f 40 2b  \tvsub.f\tdm3, dm2, dm0, r5\n      42: 00 00        \tnop\t\n      44: 00 00        \tnop\t\n      46: 00 00        \tnop\t\n      48: f4 25 08 04 0a 09    \tvunpack\tx1, wl0, unpacksign0;\t\tvmov\tbmll2, bmll1\n      4e: f8 12 45 1a  \tvmov\tbmlh2, bmlh1\n      52: 18 96 41 0a  \tvconv.bf16.fp32\t wl4, bmll3\n      56: 18 16 91 0a  \tvconv.bf16.fp32\t x5, cml2\n      5a: 48 41 88 24  \tvmac.f\tdm4, dm4, x4, x2, r4\n      5e: f8 22 4a 1b  \tvmov\twl6, wh5\n      62: 00 00        \tnop\t\n      64: 62 21 8c 24 e6 04 0a 01      \tvups.4x\tdm1, x5, s0, upssign0;\t\tvmac.f\tdm4, dm4, x6, x1, r4\n      6c: 08 3d 20 04  \tvadd\tdm4, dm1, dm0, r0\n      70: f8 12 86 1a  \tvmov\tbmhl2, bmhl1\n      74: f8 12 c7 1a  \tvmov\tbmhh2, bmhh1\n      78: 58 03 d9 1b  \tvextbcst.16\t x7, x11, #0\n      7c: f8 12 8e 19  \tvmov\tbmhl1, bmhl3\n      80: f8 12 cf 19  \tvmov\tbmhh1, bmhh3\n      84: 22 3d 60 03 e6 04 14 03      \tvups.4x\tdm3, x10, s0, upssign0;\t\tvadd\tdm3, dm3, dm0, r0\n      8c: 48 e1 ea 23  \tvmul.f\tdm3, x5, x7, r4\n      90: 02 70 09 86 00 c0 2a 32      \tvconv.bf16.fp32\t x3, cmh2;\t\tvmov\tbmll1, bmll3\n      98: 4a 3f 80 2a 46 07 d9 6c 3b 00\tvldb\t x6, [p0], #64;\t\tvextbcst.16\t x9, x11, #1;\t\tvsub.f\tdm2, dm4, dm0, r5\n      a2: f8 22 46 19  \tvmov\twl2, wh3\n      a6: 58 0b 59 1d  \tvextbcst.16\t x10, x11, #2\n      aa: 58 0f d9 1b  \tvextbcst.16\t x7, x11, #3\n      ae: f8 12 4d 19  \tvmov\tbmlh1, bmlh3\n      b2: 62 3f 60 2c 46 13 d9 03      \tvextbcst.16\t x7, x11, #4;\t\tvsub.f\tdm4, dm3, dm0, r5\n      ba: 02 70 09 38 00 c0 12 42      \tvconv.bf16.fp32\t x4, cml1;\t\tvmov\tlfh0, bmll4\n      c2: 62 21 6d 23 e6 12 cb 01      \tvmov\tbmhh1, bmhh2;\t\tvmac.f\tdm3, dm3, x6, x9, r4\n      ca: ba 76 11 a4 02 50 08 c0 1a 82\tvconv.bf16.fp32\t x8, cmh1;\t\tvunpack\tx1, wh0, unpacksign0;\t\tvmov\twl10, wh4\n      d4: f8 12 8a 19  \tvmov\tbmhl1, bmhl2\n      d8: 62 41 67 23 e6 12 08 01      \tvmov\tbmll1, bmll2;\t\tvmac.f\tdm3, dm3, x3, x10, r4\n      e0: f8 12 49 19  \tvmov\tbmlh1, bmlh2\n      e4: f8 12 10 1a  \tvmov\tbmll2, bmll4\n      e8: 62 e1 64 23 e6 12 51 02      \tvmov\tbmlh2, bmlh4;\t\tvmac.f\tdm3, dm3, x2, x7, r4\n      f0: 58 17 59 1a  \tvextbcst.16\t x4, x11, #5\n      f4: 22 3d 80 01 e6 04 02 04      \tvups.4x\tdm4, x1, s0, upssign0;\t\tvadd\tdm1, dm4, dm0, r0\n      fc: 48 e1 68 23  \tvmac.f\tdm3, dm3, x4, x7, r4\n     100: f8 12 92 1a  \tvmov\tbmhl2, bmhl4\n     104: 4a 3f 20 2c 44 1f 59 c0 12 52\tvconv.bf16.fp32\t x5, cml1;\t\tvextbcst.16\t x0, x11, #7;\t\tvsub.f\tdm4, dm1, dm0, r5\n     10e: 4a 81 74 24 44 23 d9 c4 22 82\tvconv.bf16.fp32\t x8, cml2;\t\tvextbcst.16\t x9, x11, #8;\t\tvmac.f\tdm4, dm3, x10, x4, r4\n     118: 02 a0 8d ec 00 c0 1a 22      \tvconv.bf16.fp32\t x2, cmh1;\t\tvextbcst.16\t x3, x11, #6\n     120: f8 22 d0 19  \tvmov\twl3, wh8\n     124: 22 1d 80 01 e6 22 ca 02      \tvmov\twl5, wh5;\t\tvmov.d\tdm1, dm4\n     12c: 62 61 90 24 e6 12 d3 02      \tvmov\tbmhh2, bmhh4;\t\tvmac.f\tdm4, dm4, x8, x3, r4\n     134: f8 22 c4 19  \tvmov\twl3, wh2\n     138: 22 1d 20 03 e6 22 d0 04      \tvmov\twl9, wh8;\t\tvmov.d\tdm3, dm1\n     140: 62 01 86 24 46 2b d9 03      \tvextbcst.16\t x7, x11, #10;\t\tvmac.f\tdm4, dm4, x3, x0, r4\n     148: 58 27 59 1a  \tvextbcst.16\t x4, x11, #9\n     14c: 02 a0 97 ac 02 c0 2a 12      \tvconv.bf16.fp32\t x1, cmh2;\t\tvextbcst.16\t x10, x11, #11\n     154: 62 21 8b 24 46 3b 59 05      \tvextbcst.16\t x10, x11, #14;\t\tvmac.f\tdm4, dm4, x5, x9, r4\n     15c: f8 22 42 1c  \tvmov\twl8, wh1\n     160: 58 3f d9 19  \tvextbcst.16\t x3, x11, #15\n     164: 62 81 8a 24 e6 12 8e 01      \tvmov\tbmhl1, bmhl3;\t\tvmac.f\tdm4, dm4, x5, x4, r4\n     16c: f4 25 9e 03 22 69    \tvunpack\tx4, wl6, unpacksign0;\t\tvmov\tbmhh1, bmhh3\n     172: f8 12 0c 19  \tvmov\tbmll1, bmll3\n     176: 62 e1 84 23 e6 04 02 03      \tvups.4x\tdm3, x1, s0, upssign0;\t\tvmac.f\tdm3, dm4, x2, x7, r4\n     17e: 58 47 d9 1c  \tvextbcst.16\t x9, x11, #17\n     182: 22 3d 60 02 46 33 59 02      \tvextbcst.16\t x4, x11, #12;\t\tvadd\tdm2, dm3, dm0, r0\n     18a: 62 41 67 21 e6 12 4d 01      \tvmov\tbmlh1, bmlh3;\t\tvmac.f\tdm1, dm3, x3, x10, r4\n     192: 58 57 59 1a  \tvextbcst.16\t x4, x11, #21\n     196: 4a 3f 40 2a 44 4b d9 c0 12 22\tvconv.bf16.fp32\t x2, cml1;\t\tvextbcst.16\t x1, x11, #18;\t\tvsub.f\tdm2, dm2, dm0, r5\n     1a0: 62 81 30 23 46 37 d9 02      \tvextbcst.16\t x5, x11, #13;\t\tvmac.f\tdm3, dm1, x8, x4, r4\n     1a8: f8 22 c4 1a  \tvmov\twl5, wh2\n     1ac: 02 a0 a1 ec 01 c0 1a 02      \tvconv.bf16.fp32\t x0, cmh1;\t\tvextbcst.16\t x7, x11, #16\n     1b4: 4a a1 72 23 46 53 d9 23 13 06\tvunpack\tx6, wh6, unpacksign0;\t\tvextbcst.16\t x7, x11, #20;\t\tvmac.f\tdm3, dm3, x9, x5, r4\n     1be: f8 22 c0 19  \tvmov\twl3, wh0\n     1c2: 58 4f 59 1c  \tvextbcst.16\t x8, x11, #19\n     1c6: 62 41 63 23 e6 12 08 01      \tvmov\tbmll1, bmll2;\t\tvmac.f\tdm3, dm3, x1, x10, r4\n     1ce: f8 12 49 19  \tvmov\tbmlh1, bmlh2\n     1d2: f8 12 8a 19  \tvmov\tbmhl1, bmhl2\n     1d6: 62 61 70 23 e6 12 cb 01      \tvmov\tbmhh1, bmhh2;\t\tvmac.f\tdm3, dm3, x8, x3, r4\n     1de: 02 70 02 86 00 c0 12 22      \tvconv.bf16.fp32\t x2, cml1;\t\tvups.4x\tdm1, x6, s0, upssign0\n     1e6: 22 3d 80 04 e6 04 08 04      \tvups.4x\tdm4, x4, s0, upssign0;\t\tvadd\tdm4, dm4, dm0, r0\n     1ee: 48 e1 64 23  \tvmac.f\tdm3, dm3, x2, x7, r4\n     1f2: 18 d6 90 0a  \tvconv.bf16.fp32\t x5, cmh1\n     1f6: 48 3f 80 2c  \tvsub.f\tdm4, dm4, dm0, r5\n     1fa: 48 21 6b 23  \tvmac.f\tdm3, dm3, x5, x9, r4\n     1fe: 22 3d 20 02 46 67 59 00      \tvextbcst.16\t x0, x11, #25;\t\tvadd\tdm2, dm1, dm0, r0\n     206: 00 00        \tnop\t\n     208: 62 21 60 23 46 5b 59 03      \tvextbcst.16\t x6, x11, #22;\t\tvmac.f\tdm3, dm3, x0, x1, r4\n     210: 62 3f 40 2a e6 22 4a 04      \tvmov\twl8, wh5;\t\tvsub.f\tdm2, dm2, dm0, r5\n     218: f8 12 10 19  \tvmov\tbmll1, bmll4\n     21c: 62 01 67 23 e6 12 51 01      \tvmov\tbmlh1, bmlh4;\t\tvmac.f\tdm3, dm3, x3, x8, r4\n     224: f8 22 44 19  \tvmov\twl2, wh2\n     228: f8 12 d3 19  \tvmov\tbmhh1, bmhh4\n     22c: 62 e1 64 23 e6 12 92 01      \tvmov\tbmhl1, bmhl4;\t\tvmac.f\tdm3, dm3, x2, x7, r4\n     234: f8 12 08 19  \tvmov\tbmll1, bmll2\n     238: 02 70 89 a4 00 c0 12 32      \tvconv.bf16.fp32\t x3, cml1;\t\tvmov\tbmlh1, bmlh2\n     240: 4a 81 64 23 44 6f 59 c3 1a 12\tvconv.bf16.fp32\t x1, cmh1;\t\tvextbcst.16\t x6, x11, #27;\t\tvmac.f\tdm3, dm3, x2, x4, r4\n     24a: 02 a0 b1 ac 02 c0 12 52      \tvconv.bf16.fp32\t x5, cml1;\t\tvextbcst.16\t x10, x11, #24\n     252: 58 5f d9 1c  \tvextbcst.16\t x9, x11, #23\n     256: 62 c1 6a 22 e6 22 42 04      \tvmov\twl8, wh1;\t\tvmac.f\tdm2, dm3, x5, x6, r4\n     25e: f8 22 ca 1c  \tvmov\twl9, wh5\n     262: 58 77 59 1d  \tvextbcst.16\t x10, x11, #29\n     266: 4a 21 51 21 e2 12 8a 51 9e 63\tlda.s16\t r7, [p3], #2;\t\tvmov\tbmhl1, bmhl2;\t\tvmac.f\tdm1, dm2, x8, x9, r4\n     270: f8 22 c6 19  \tvmov\twl3, wh3\n     274: f4 25 96 83 94 a5    \tvldb\t wl2, [p5], #64;\t\tvmov\tbmhh1, bmhh2\n     27a: 48 41 27 21  \tvmac.f\tdm1, dm1, x3, x10, r4\n     27e: 94 f6 b2 70 c3 03    \tvlda\t x8, [p0], #64;\t\tvextbcst.16\t x0, x11, #30\n     284: 4c ac 21 84 b4 85    \tvldb\t wl6, [p4], #64;\t\tvconv.bf16.fp32\t x4, cmh1\n     28a: 62 01 26 21 46 6b 59 01      \tvextbcst.16\t x2, x11, #26;\t\tvmac.f\tdm1, dm1, x3, x0, r4\n     292: f4 e5 3a 81 be 03    \tvldb\t x7, [p0], #64;\t\tvbcst.16\t x1, r7\n     298: 18 50 c9 3b  \tvunpack\tx5, wl7, unpacksign0\n     29c: 48 41 22 21  \tvmac.f\tdm1, dm1, x1, x2, r4\n     2a0: 18 50 4a 3c  \tvunpack\tx9, wl8, unpacksign0\n     2a4: b4 e6 b2 07 52 71    \tvunpack\tx10, wh7, unpacksign0;\t\tvextbcst.16\t x7, x11, #28\n     2aa: 48 c1 30 21  \tvmac.f\tdm1, dm1, x8, x6, r4\n     2ae: 00 00        \tnop\t\n     2b0: f4 25 03 88 86 03    \tvldb\t x0, [p0], #64;\t\tvmov\tbmll4, lfh0\n     2b6: 4a e1 2a 21 46 7f d9 25 14 08\tvunpack\tx8, wh8, unpacksign0;\t\tvextbcst.16\t x11, x11, #31;\t\tvmac.f\tdm1, dm1, x5, x7, r4\n\n000002c0 <.L_LEnd0>:\n     2c0: e1 00 00 78 11 e4 00 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopx\t;\t\tvmov\twl3, wh4;\t\tnopv\t\n     2d0: 2c 00 50 f0 2c 00    \tnopa\t;\t\tret\tlr\n\t\t...\n     2de: 00 00        \tnop\t\n",
+        "stderr": ""
+      },
+      "counts": {
+        "lshl": 0,
+        "add_nc": 1,
+        "movx": 0,
+        "mov_scl": 0,
+        "paddb": 0,
+        "lda_s16": 1,
+        "vlda": 1,
+        "vldb": 6,
+        "vunpack": 8,
+        "vups_4x": 8,
+        "vadd": 8,
+        "vsub_f": 8,
+        "vconv_bf16_fp32": 17,
+        "vextbcst_16": 32,
+        "vextbcst_32": 0,
+        "vbcst_16": 1,
+        "vmul_f": 1,
+        "vmac_f": 33,
+        "vmov": 50,
+        "vmov_d": 2,
+        "vst": 0,
+        "schedule_found": 0,
+        "schedule_missed": 2,
+        "bundle_count_entries": 3,
+        "loop_bundle_count": 120
+      },
+      "expected_counts": {
+        "lda_s16": 1,
+        "vlda": 1,
+        "vldb": 6,
+        "vunpack": 8,
+        "vups_4x": 8,
+        "vadd": 8,
+        "vsub_f": 8,
+        "vconv_bf16_fp32": 17,
+        "vextbcst_16": 32,
+        "vbcst_16": 1,
+        "vmul_f": 1,
+        "vmac_f": 33,
+        "vmov": 50,
+        "vmov_d": 2
+      },
+      "files": {
+        "mir": "/var/home/taowen/projects/IRON/main16-exps/024_q4nx_mir_opcode_coverage_map/build/mylm_group1_full_projection.mir",
+        "object": "/var/home/taowen/projects/IRON/main16-exps/024_q4nx_mir_opcode_coverage_map/build/mylm_group1_full_projection.o",
+        "asm": "/var/home/taowen/projects/IRON/main16-exps/024_q4nx_mir_opcode_coverage_map/build/mylm_group1_full_projection.s",
+        "objdump": "/var/home/taowen/projects/IRON/main16-exps/024_q4nx_mir_opcode_coverage_map/build/mylm_group1_full_projection.objdump"
+      },
+      "reasons": []
+    }
+  ]
+}

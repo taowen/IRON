@@ -90,6 +90,10 @@ The current implementation is the active qwen3 full-layer NPU integration path:
   optionally replaces all 16 main16 ELFs, runs the all-core ELF-backed
   `aiecc --no-compile` package step, and checks the resulting transaction
   payloads.
+- `tools/try_replace_main16_from_project.py`: externalizes an existing
+  `design.mlir.prj`, wraps a raw main16 program as ET_EXEC ELFs, replaces the
+  16 main16 core ELFs, and packages a replacement xclbin/transaction without
+  recompiling core programs.
 - `tools/wrap_raw_aie_program.py`: wraps raw AIE2P program bytes as an
   ET_EXEC ELF with a loadable `.text` `PT_LOAD` segment for replacement-core
   package probes.
@@ -397,6 +401,26 @@ a toolchain proof only, not a runnable replacement: the MyLM raw core assumes
 the same outer main16 ABI that IRON now matches, but it also assumes MyLM's raw
 whole-core phase program, row1 compact timing, and hand-written Q4NX microkernel
 body.
+
+The current repeatable qwen3-layer replacement packaging check is:
+
+```bash
+.venv/bin/python qwen3-layer/tools/try_replace_main16_from_project.py --force
+```
+
+With the current donor `design.mlir.prj`, this produces:
+
+- `qwen3-layer/build/main16-raw-replacement-try/design.externalized.mlir`
+- `qwen3-layer/build/main16-raw-replacement-try/design.txn.mlir`
+- `qwen3-layer/build/main16-raw-replacement-try/design.bin`
+- `qwen3-layer/build/main16-raw-replacement-try/design.xclbin`
+- `qwen3-layer/build/main16-raw-replacement-try/core_program_inspection.txt`
+
+The inspection reports `role=main_projection_q4nx_fast.o cores=16
+text_bytes=14868 matching_config_blocks=16`. This confirms the qwen3-layer
+topology/package path can carry raw main16 replacement programs. It does not
+prove runtime correctness: the replacement MyLM raw program still has its own
+phase/control/header assumptions.
 
 Check the raw-core ABI gap explicitly with:
 

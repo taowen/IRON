@@ -1,0 +1,145 @@
+{
+  "artifacts": {
+    "disasm": "/var/home/taowen/projects/IRON/main16-exps/020_peano_q4nx_compiler_route/build/peano_q4nx_compiler_route.s",
+    "llvm_ir": "/var/home/taowen/projects/IRON/main16-exps/020_peano_q4nx_compiler_route/build/peano_q4nx_compiler_route.ll",
+    "object": "/var/home/taowen/projects/IRON/main16-exps/020_peano_q4nx_compiler_route/build/peano_q4nx_compiler_route.o",
+    "source": "/var/home/taowen/projects/IRON/main16-exps/020_peano_q4nx_compiler_route/build/peano_q4nx_compiler_route.cc"
+  },
+  "conclusion": "Peano can generate the signed vextbcst.16/vmac.f primitive and the 264/256 group-sum macro shape, but the current C++ intrinsic form still has too much scale multiplication/conversion and does not match MyLM's register-resident vups.4x schedule.",
+  "experiment": "020_peano_q4nx_compiler_route",
+  "functions": {
+    "peano_mac_signed_probe": {
+      "counts": {
+        "control_03c": 0,
+        "control_33c": 1,
+        "hardware_loop_regs": 0,
+        "instruction_lines": 11,
+        "vadd": 0,
+        "vbcst_16": 0,
+        "vconv_bf16_fp32": 0,
+        "vconv_fp32_bf16": 0,
+        "vextbcst_16": 1,
+        "vextbcst_32": 0,
+        "vlda": 0,
+        "vldb": 0,
+        "vmac_f": 1,
+        "vmul_f": 0,
+        "vst": 1,
+        "vsub_f": 0,
+        "vunpack": 0,
+        "vups": 0,
+        "vups_2x": 0,
+        "vups_4x": 0
+      },
+      "reasons": [],
+      "status": "pass"
+    },
+    "peano_q4_exact_chunk_lane_unrolled": {
+      "counts": {
+        "control_03c": 1,
+        "control_33c": 1,
+        "hardware_loop_regs": 0,
+        "instruction_lines": 2698,
+        "vadd": 384,
+        "vbcst_16": 1,
+        "vconv_bf16_fp32": 640,
+        "vconv_fp32_bf16": 257,
+        "vextbcst_16": 256,
+        "vextbcst_32": 0,
+        "vlda": 1015,
+        "vldb": 144,
+        "vmac_f": 256,
+        "vmul_f": 256,
+        "vst": 1043,
+        "vsub_f": 128,
+        "vunpack": 256,
+        "vups": 128,
+        "vups_2x": 128,
+        "vups_4x": 0
+      },
+      "reasons": [
+        "exact rounding form is not viable as compiler route: vst=1043 > 128"
+      ],
+      "status": "fail"
+    },
+    "peano_q4_group_sum_chunk_lane_loop": {
+      "counts": {
+        "control_03c": 1,
+        "control_33c": 1,
+        "hardware_loop_regs": 3,
+        "instruction_lines": 1095,
+        "vadd": 128,
+        "vbcst_16": 9,
+        "vconv_bf16_fp32": 384,
+        "vconv_fp32_bf16": 1,
+        "vextbcst_16": 256,
+        "vextbcst_32": 0,
+        "vlda": 153,
+        "vldb": 0,
+        "vmac_f": 264,
+        "vmul_f": 256,
+        "vst": 2,
+        "vsub_f": 128,
+        "vunpack": 256,
+        "vups": 128,
+        "vups_2x": 128,
+        "vups_4x": 0
+      },
+      "reasons": [
+        "still scale-multiplies per dim: vmul.f=256 > 32",
+        "conversion pressure too high: vconv.bf16.fp32=384 > 160",
+        "loop schedule uses too many vector local loads: vlda=153 > 64"
+      ],
+      "status": "fail"
+    },
+    "peano_q4_group_sum_chunk_lane_unrolled": {
+      "counts": {
+        "control_03c": 1,
+        "control_33c": 1,
+        "hardware_loop_regs": 0,
+        "instruction_lines": 1155,
+        "vadd": 128,
+        "vbcst_16": 9,
+        "vconv_bf16_fp32": 384,
+        "vconv_fp32_bf16": 1,
+        "vextbcst_16": 256,
+        "vextbcst_32": 0,
+        "vlda": 11,
+        "vldb": 145,
+        "vmac_f": 264,
+        "vmul_f": 256,
+        "vst": 5,
+        "vsub_f": 128,
+        "vunpack": 256,
+        "vups": 128,
+        "vups_2x": 128,
+        "vups_4x": 0
+      },
+      "reasons": [
+        "still scale-multiplies per dim: vmul.f=256 > 32",
+        "conversion pressure too high: vconv.bf16.fp32=384 > 160"
+      ],
+      "status": "fail"
+    }
+  },
+  "mylm_static_target": {
+    "vconv_bf16_fp32": 136,
+    "vextbcst_16": 256,
+    "vextbcst_32": 0,
+    "vmac_f": 264,
+    "vmul_f": 8,
+    "vst_hot_loop": 0,
+    "vunpack": 64,
+    "vups_4x": 64
+  },
+  "next_step": "Keep Peano as backend, but generate a narrower DSL/MIR-level Q4NX body that exposes MyLM's vups.4x dequant pipeline instead of emitting per-dim C++ scale/dequant operations.",
+  "postpipeliner_missed": true,
+  "remarks_stderr": [
+    "/var/home/taowen/projects/IRON/main16-exps/020_peano_q4nx_compiler_route/build/peano_q4nx_compiler_route.cc:293:32: remark: 0for.bodytrue [-Rpass-analysis=aie-hardware-loops]",
+    "  293 | __attribute__((noinline)) void peano_q4_group_sum_chunk_lane_loop(",
+    "      |                                ^",
+    "warning: No memory bank assigned to load in function 'peano_q4_group_sum_chunk_lane_loop', block 'for.body' at 0x1a97ae30: renamable $wh4, renamable $p6 = VLD_128_pstm_nrm_imm_pseudo killed renamable $p6(tied-def 1), 32 :: (load (<4 x s32>) from %ir.add.ptr, !tbaa !23, !alias.scope !8507, !noalias !8512)/var/home/taowen/projects/IRON/main16-exps/020_peano_q4nx_compiler_route/build/peano_q4nx_compiler_route.cc:293:32: remark: Longest circuit does not fit II.776for.body [-Rpass-missed=postpipeliner]",
+    "/var/home/taowen/projects/IRON/main16-exps/020_peano_q4nx_compiler_route/build/peano_q4nx_compiler_route.cc:293:32: remark: No schedule found. [-Rpass-missed=postpipeliner]"
+  ],
+  "status": "partial"
+}

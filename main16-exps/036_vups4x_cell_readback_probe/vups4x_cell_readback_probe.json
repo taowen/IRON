@@ -1,0 +1,329 @@
+{
+  "artifacts": {
+    "w2c_upssign0_bmhh0": {
+      "asm": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmhh0/w2c_upssign0_bmhh0.s",
+      "build_dir": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmhh0",
+      "disasm": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmhh0/w2c_upssign0_bmhh0.disasm.s",
+      "elf": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmhh0/w2c_upssign0_bmhh0.elf",
+      "insts": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmhh0/design.bin",
+      "xclbin": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmhh0/design.xclbin"
+    },
+    "w2c_upssign0_bmhl0": {
+      "asm": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmhl0/w2c_upssign0_bmhl0.s",
+      "build_dir": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmhl0",
+      "disasm": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmhl0/w2c_upssign0_bmhl0.disasm.s",
+      "elf": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmhl0/w2c_upssign0_bmhl0.elf",
+      "insts": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmhl0/design.bin",
+      "xclbin": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmhl0/design.xclbin"
+    },
+    "w2c_upssign0_bmlh0": {
+      "asm": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmlh0/w2c_upssign0_bmlh0.s",
+      "build_dir": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmlh0",
+      "disasm": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmlh0/w2c_upssign0_bmlh0.disasm.s",
+      "elf": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmlh0/w2c_upssign0_bmlh0.elf",
+      "insts": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmlh0/design.bin",
+      "xclbin": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmlh0/design.xclbin"
+    },
+    "w2c_upssign0_bmll0": {
+      "asm": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmll0/w2c_upssign0_bmll0.s",
+      "build_dir": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmll0",
+      "disasm": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmll0/w2c_upssign0_bmll0.disasm.s",
+      "elf": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmll0/w2c_upssign0_bmll0.elf",
+      "insts": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmll0/design.bin",
+      "xclbin": "main16-exps/036_vups4x_cell_readback_probe/build/w2c_upssign0_bmll0/design.xclbin"
+    },
+    "x2d_upssign0_bmhh0": {
+      "asm": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmhh0/x2d_upssign0_bmhh0.s",
+      "build_dir": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmhh0",
+      "disasm": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmhh0/x2d_upssign0_bmhh0.disasm.s",
+      "elf": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmhh0/x2d_upssign0_bmhh0.elf",
+      "insts": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmhh0/design.bin",
+      "xclbin": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmhh0/design.xclbin"
+    },
+    "x2d_upssign0_bmhl0": {
+      "asm": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmhl0/x2d_upssign0_bmhl0.s",
+      "build_dir": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmhl0",
+      "disasm": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmhl0/x2d_upssign0_bmhl0.disasm.s",
+      "elf": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmhl0/x2d_upssign0_bmhl0.elf",
+      "insts": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmhl0/design.bin",
+      "xclbin": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmhl0/design.xclbin"
+    },
+    "x2d_upssign0_bmlh0": {
+      "asm": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmlh0/x2d_upssign0_bmlh0.s",
+      "build_dir": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmlh0",
+      "disasm": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmlh0/x2d_upssign0_bmlh0.disasm.s",
+      "elf": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmlh0/x2d_upssign0_bmlh0.elf",
+      "insts": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmlh0/design.bin",
+      "xclbin": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmlh0/design.xclbin"
+    },
+    "x2d_upssign0_bmll0": {
+      "asm": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmll0/x2d_upssign0_bmll0.s",
+      "build_dir": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmll0",
+      "disasm": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmll0/x2d_upssign0_bmll0.disasm.s",
+      "elf": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmll0/x2d_upssign0_bmll0.elf",
+      "insts": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmll0/design.bin",
+      "xclbin": "main16-exps/036_vups4x_cell_readback_probe/build/x2d_upssign0_bmll0/design.xclbin"
+    }
+  },
+  "interpretation": {
+    "different_words": "Mixed record words indicate lane-level behavior and need a follow-up lane-pattern probe.",
+    "same_word_across_record": "For this first probe, a uniform record means the selected quadrant was internally consistent."
+  },
+  "probe_bf16": "0x4000",
+  "results": [
+    {
+      "name": "x2d_upssign0_bmll0",
+      "output_cell": "bmll0",
+      "record": [
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "runtime_output": "run_ok\nelapsed=0.0006129741668701172\nnpu_time=556257\nrecord=0x40,0x0,0x40,0x0,0x40,0x0,0x40,0x0,0x40,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed",
+      "unique_record_words": [
+        "0x40",
+        "0x0"
+      ],
+      "variant": "x2d_upssign0"
+    },
+    {
+      "name": "x2d_upssign0_bmlh0",
+      "output_cell": "bmlh0",
+      "record": [
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "runtime_output": "run_ok\nelapsed=0.0004916191101074219\nnpu_time=440411\nrecord=0x40,0x0,0x40,0x0,0x40,0x0,0x40,0x0,0x40,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed",
+      "unique_record_words": [
+        "0x40",
+        "0x0"
+      ],
+      "variant": "x2d_upssign0"
+    },
+    {
+      "name": "x2d_upssign0_bmhl0",
+      "output_cell": "bmhl0",
+      "record": [
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "runtime_output": "run_ok\nelapsed=0.0004754066467285156\nnpu_time=432757\nrecord=0x40,0x0,0x40,0x0,0x40,0x0,0x40,0x0,0x40,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed",
+      "unique_record_words": [
+        "0x40",
+        "0x0"
+      ],
+      "variant": "x2d_upssign0"
+    },
+    {
+      "name": "x2d_upssign0_bmhh0",
+      "output_cell": "bmhh0",
+      "record": [
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "runtime_output": "run_ok\nelapsed=0.000545501708984375\nnpu_time=501054\nrecord=0x40,0x0,0x40,0x0,0x40,0x0,0x40,0x0,0x40,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed",
+      "unique_record_words": [
+        "0x40",
+        "0x0"
+      ],
+      "variant": "x2d_upssign0"
+    },
+    {
+      "name": "w2c_upssign0_bmll0",
+      "output_cell": "bmll0",
+      "record": [
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "runtime_output": "run_ok\nelapsed=0.0005567073822021484\nnpu_time=510923\nrecord=0x40,0x0,0x40,0x0,0x40,0x0,0x40,0x0,0x40,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed",
+      "unique_record_words": [
+        "0x40",
+        "0x0"
+      ],
+      "variant": "w2c_upssign0"
+    },
+    {
+      "name": "w2c_upssign0_bmlh0",
+      "output_cell": "bmlh0",
+      "record": [
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x40",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "runtime_output": "run_ok\nelapsed=0.0005638599395751953\nnpu_time=516763\nrecord=0x40,0x0,0x40,0x0,0x40,0x0,0x40,0x0,0x40,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed",
+      "unique_record_words": [
+        "0x40",
+        "0x0"
+      ],
+      "variant": "w2c_upssign0"
+    },
+    {
+      "name": "w2c_upssign0_bmhl0",
+      "output_cell": "bmhl0",
+      "record": [
+        "0x3c80",
+        "0x3c80",
+        "0x3c80",
+        "0x3c80",
+        "0x3c80",
+        "0x3c80",
+        "0x3c80",
+        "0x3c80",
+        "0x3c80",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "runtime_output": "run_ok\nelapsed=0.0006804466247558594\nnpu_time=626467\nrecord=0x3c80,0x3c80,0x3c80,0x3c80,0x3c80,0x3c80,0x3c80,0x3c80,0x3c80,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed",
+      "unique_record_words": [
+        "0x3c80",
+        "0x0"
+      ],
+      "variant": "w2c_upssign0"
+    },
+    {
+      "name": "w2c_upssign0_bmhh0",
+      "output_cell": "bmhh0",
+      "record": [
+        "0x3c80",
+        "0x3c80",
+        "0x3c80",
+        "0x3c80",
+        "0x3c80",
+        "0x3c80",
+        "0x3c80",
+        "0x3c80",
+        "0x3c80",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "runtime_output": "run_ok\nelapsed=0.0005393028259277344\nnpu_time=493670\nrecord=0x3c80,0x3c80,0x3c80,0x3c80,0x3c80,0x3c80,0x3c80,0x3c80,0x3c80,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed",
+      "unique_record_words": [
+        "0x3c80",
+        "0x0"
+      ],
+      "variant": "w2c_upssign0"
+    }
+  ],
+  "sentinel_bf16": "0x3c80",
+  "status": "passed",
+  "topology_after": {
+    "status": "ok",
+    "stderr": "",
+    "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+    "topology": "6x8"
+  },
+  "topology_before": {
+    "status": "ok",
+    "stderr": "",
+    "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+    "topology": "6x8"
+  }
+}

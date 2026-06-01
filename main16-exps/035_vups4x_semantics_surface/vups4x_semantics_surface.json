@@ -1,0 +1,256 @@
+{
+  "status": "passed",
+  "instruction_facts": [
+    {
+      "opcode": "VUPS_4x_mv_ups_w2c_upsSign0",
+      "asm_name": "vups.4x",
+      "dst_class": "OP_mCMm",
+      "src_class": "OP_mWm",
+      "implicit_defs": [
+        "srUPS_of"
+      ],
+      "implicit_uses": [
+        "crSat",
+        "crUPSMode",
+        "upsSign0"
+      ],
+      "encoding_id": "me__instr128_or__alu_mv__alumv_or__mv__mv_ups_w2c__ups_mov__w2c__ups_mov__base__mSm__upsSign0"
+    },
+    {
+      "opcode": "VUPS_4x_mv_ups_w2c_upsSign1",
+      "asm_name": "vups.4x",
+      "dst_class": "OP_mCMm",
+      "src_class": "OP_mWm",
+      "implicit_defs": [
+        "srUPS_of"
+      ],
+      "implicit_uses": [
+        "crSat",
+        "crUPSMode",
+        "upsSign1"
+      ],
+      "encoding_id": "me__instr128_or__alu_mv__alumv_or__mv__mv_ups_w2c__ups_mov__w2c__ups_mov__base__mSm__upsSign1"
+    },
+    {
+      "opcode": "VUPS_4x_mv_ups_x2d_upsSign0",
+      "asm_name": "vups.4x",
+      "dst_class": "eDM",
+      "src_class": "OP_mXm",
+      "implicit_defs": [
+        "srUPS_of"
+      ],
+      "implicit_uses": [
+        "crSat",
+        "crUPSMode",
+        "upsSign0"
+      ],
+      "encoding_id": "me__instr128_or__alu_mv__alumv_or__mv__mv_ups_x2d__ups_mov__x2d__mDMm__ups_mov__base__mSm__upsSign0"
+    },
+    {
+      "opcode": "VUPS_4x_mv_ups_x2d_upsSign1",
+      "asm_name": "vups.4x",
+      "dst_class": "eDM",
+      "src_class": "OP_mXm",
+      "implicit_defs": [
+        "srUPS_of"
+      ],
+      "implicit_uses": [
+        "crSat",
+        "crUPSMode",
+        "upsSign1"
+      ],
+      "encoding_id": "me__instr128_or__alu_mv__alumv_or__mv__mv_ups_x2d__ups_mov__x2d__mDMm__ups_mov__base__mSm__upsSign1"
+    }
+  ],
+  "schedule_facts": [
+    {
+      "opcode": "VUPS_4x_mv_ups_w2c_upsSign0",
+      "resources": [
+        "SimpleCycle<CRSAT_RA>",
+        "SimpleCycle<CRUPSMODE_RA>",
+        "PrefixCycle<DM_WM_L0_PORT>",
+        "SimpleCycle<EVENT_UPS_OF>"
+      ],
+      "latencies": [
+        "/*dst*/3",
+        "/*src*/1",
+        "/*su*/1",
+        "/*srUPS_of*/3",
+        "/*crSat*/1",
+        "/*crUPSMode*/2",
+        "/*upsSign0*/1"
+      ]
+    },
+    {
+      "opcode": "VUPS_4x_mv_ups_w2c_upsSign1",
+      "resources": [
+        "SimpleCycle<CRSAT_RA>",
+        "SimpleCycle<CRUPSMODE_RA>",
+        "PrefixCycle<DM_WM_L0_PORT>",
+        "SimpleCycle<EVENT_UPS_OF>"
+      ],
+      "latencies": [
+        "/*dst*/3",
+        "/*src*/1",
+        "/*su*/1",
+        "/*srUPS_of*/3",
+        "/*crSat*/1",
+        "/*crUPSMode*/2",
+        "/*upsSign1*/1"
+      ]
+    },
+    {
+      "opcode": "VUPS_4x_mv_ups_x2d_upsSign0",
+      "resources": [
+        "SimpleCycle<CRSAT_RA>",
+        "PrefixCycle<CRUPSMODE_RA>",
+        "PrefixCycle<UPS__H__A>",
+        "SimpleCycle<UPS__OMUX>",
+        "PrefixCycle<DM_WM_L0_PORT>",
+        "PrefixCycle<EVENT_UPS_OF>",
+        "PrefixCycle<UPS__H__K>",
+        "SimpleCycle<UPS__K>"
+      ],
+      "latencies": [
+        "/*dst*/3",
+        "/*src*/1",
+        "/*su*/1",
+        "/*srUPS_of*/3",
+        "/*crSat*/1",
+        "/*crUPSMode*/2",
+        "/*upsSign0*/1"
+      ]
+    },
+    {
+      "opcode": "VUPS_4x_mv_ups_x2d_upsSign1",
+      "resources": [
+        "SimpleCycle<CRSAT_RA>",
+        "PrefixCycle<CRUPSMODE_RA>",
+        "PrefixCycle<UPS__H__A>",
+        "SimpleCycle<UPS__OMUX>",
+        "PrefixCycle<DM_WM_L0_PORT>",
+        "PrefixCycle<EVENT_UPS_OF>",
+        "PrefixCycle<UPS__H__K>",
+        "SimpleCycle<UPS__K>"
+      ],
+      "latencies": [
+        "/*dst*/3",
+        "/*src*/1",
+        "/*su*/1",
+        "/*srUPS_of*/3",
+        "/*crSat*/1",
+        "/*crUPSMode*/2",
+        "/*upsSign1*/1"
+      ]
+    }
+  ],
+  "intrinsic_facts": [
+    {
+      "source": "aie2p_ups.h",
+      "function": "sups",
+      "return_type": "v16acc32",
+      "argument_type": "v16int16",
+      "builtin": "__builtin_aie2p_acc32_v16_I256_ups"
+    },
+    {
+      "source": "aie2p_ups.h",
+      "function": "sups",
+      "return_type": "v32acc32",
+      "argument_type": "v32int16",
+      "builtin": "__builtin_aie2p_acc32_v32_I512_ups"
+    },
+    {
+      "source": "aie2p_ups.h",
+      "function": "ups",
+      "return_type": "v16accfloat",
+      "argument_type": "v16bfloat16",
+      "builtin": "__builtin_aie2p_v16bf16_to_v16accfloat"
+    },
+    {
+      "source": "aie2p_ups.h",
+      "function": "ups",
+      "return_type": "v32accfloat",
+      "argument_type": "v32bfloat16",
+      "builtin": "__builtin_aie2p_v32bf16_to_v32accfloat"
+    }
+  ],
+  "mir_builds": [
+    {
+      "variant": "VUPS_4x_mv_ups_w2c_upsSign0",
+      "mir": "main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_w2c_upssign0.mir",
+      "object": "main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_w2c_upssign0.o",
+      "objdump": "main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_w2c_upssign0.objdump",
+      "llc": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "objdump_cmd": {
+        "returncode": 0,
+        "stdout": "\n/var/home/taowen/projects/IRON/main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_w2c_upssign0.o:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <vups_4x_mv_ups_w2c_upssign0>:\n       0: f8 08 01 18  \tvups.4x\tcml0, wl0, s0, upssign0\n       4: 18 00 28 10  \tret\tlr\n       8: 22 1c 00 00 04 f0 2c 00      \tnopa\t;\t\tnopv\t\n",
+        "stderr": ""
+      },
+      "disassembly_line": "0: f8 08 01 18  \tvups.4x\tcml0, wl0, s0, upssign0",
+      "status": "passed"
+    },
+    {
+      "variant": "VUPS_4x_mv_ups_w2c_upsSign1",
+      "mir": "main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_w2c_upssign1.mir",
+      "object": "main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_w2c_upssign1.o",
+      "objdump": "main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_w2c_upssign1.objdump",
+      "llc": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "objdump_cmd": {
+        "returncode": 0,
+        "stdout": "\n/var/home/taowen/projects/IRON/main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_w2c_upssign1.o:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <vups_4x_mv_ups_w2c_upssign1>:\n       0: f8 28 01 18  \tvups.4x\tcml0, wl0, s0, upssign1\n       4: 18 00 28 10  \tret\tlr\n       8: 22 1c 00 00 04 f0 2c 00      \tnopa\t;\t\tnopv\t\n",
+        "stderr": ""
+      },
+      "disassembly_line": "0: f8 28 01 18  \tvups.4x\tcml0, wl0, s0, upssign1",
+      "status": "passed"
+    },
+    {
+      "variant": "VUPS_4x_mv_ups_x2d_upsSign0",
+      "mir": "main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_x2d_upssign0.mir",
+      "object": "main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_x2d_upssign0.o",
+      "objdump": "main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_x2d_upssign0.objdump",
+      "llc": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "objdump_cmd": {
+        "returncode": 0,
+        "stdout": "\n/var/home/taowen/projects/IRON/main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_x2d_upssign0.o:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <vups_4x_mv_ups_x2d_upssign0>:\n       0: f8 04 00 18  \tvups.4x\tdm0, x0, s0, upssign0\n       4: 18 00 28 10  \tret\tlr\n       8: 22 1c 00 00 04 f0 2c 00      \tnopa\t;\t\tnopv\t\n",
+        "stderr": ""
+      },
+      "disassembly_line": "0: f8 04 00 18  \tvups.4x\tdm0, x0, s0, upssign0",
+      "status": "passed"
+    },
+    {
+      "variant": "VUPS_4x_mv_ups_x2d_upsSign1",
+      "mir": "main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_x2d_upssign1.mir",
+      "object": "main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_x2d_upssign1.o",
+      "objdump": "main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_x2d_upssign1.objdump",
+      "llc": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "objdump_cmd": {
+        "returncode": 0,
+        "stdout": "\n/var/home/taowen/projects/IRON/main16-exps/035_vups4x_semantics_surface/build/vups_4x_mv_ups_x2d_upssign1.o:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <vups_4x_mv_ups_x2d_upssign1>:\n       0: f8 24 00 18  \tvups.4x\tdm0, x0, s0, upssign1\n       4: 18 00 28 10  \tret\tlr\n       8: 22 1c 00 00 04 f0 2c 00      \tnopa\t;\t\tnopv\t\n",
+        "stderr": ""
+      },
+      "disassembly_line": "0: f8 24 00 18  \tvups.4x\tdm0, x0, s0, upssign1",
+      "status": "passed"
+    }
+  ],
+  "interpretation": {
+    "compiler_visible": "llvm-aie exposes VUPS.4x opcode forms, operand classes, implicit control/status registers, and schedule resources.",
+    "still_unknown": "The compiler metadata does not describe physical accumulator sub-cell preservation/read-modify-write behavior. Experiment 034 already falsified the simple pure-destination-overwrite model.",
+    "next_probe": "Run isolated NPU readback probes for w2c/x2d, upssign0/1, crupsmode, and initialized accumulator quadrants."
+  }
+}

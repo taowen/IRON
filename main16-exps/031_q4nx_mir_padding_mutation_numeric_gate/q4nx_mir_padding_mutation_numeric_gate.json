@@ -1,0 +1,97 @@
+{
+  "status": "failed",
+  "topology_before": {
+    "status": "ok",
+    "topology": "6x8",
+    "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+    "stderr": ""
+  },
+  "topology_after": {
+    "status": "ok",
+    "topology": "6x8",
+    "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+    "stderr": ""
+  },
+  "patch": {
+    "patched_raw": "main16-exps/031_q4nx_mir_padding_mutation_numeric_gate/build/patched_raw/mylm_c2r2_program.padding_mov_self.bin",
+    "mutation_address": "0x2ba",
+    "original_bytes": "00000000",
+    "replacement_bytes": "f8a0df1f",
+    "replacement_asm": "mov r31, r31",
+    "diff_count": 4,
+    "diffs": [
+      {
+        "address": "0x2ba",
+        "got": "0xf8",
+        "expected": "0x00"
+      },
+      {
+        "address": "0x2bb",
+        "got": "0xa0",
+        "expected": "0x00"
+      },
+      {
+        "address": "0x2bc",
+        "got": "0xdf",
+        "expected": "0x00"
+      },
+      {
+        "address": "0x2bd",
+        "got": "0x1f",
+        "expected": "0x00"
+      }
+    ]
+  },
+  "artifacts": {
+    "xclbin": "main16-exps/031_q4nx_mir_padding_mutation_numeric_gate/build/mylm_direct/qkv_nonzero_payload_direct/design.xclbin",
+    "insts": "main16-exps/031_q4nx_mir_padding_mutation_numeric_gate/build/mylm_direct/qkv_nonzero_payload_direct/design.bin",
+    "elf": "main16-exps/031_q4nx_mir_padding_mutation_numeric_gate/build/mylm_direct/qkv_nonzero_payload_direct/mylm_c2r2_dispatcher_stub_probe.elf",
+    "source_build": "main16-exps/031_q4nx_mir_padding_mutation_numeric_gate/build/mylm_direct/qkv_nonzero_payload_direct"
+  },
+  "cases": [
+    {
+      "name": "q4word0_allnibbles",
+      "expected_record": [
+        "0x1",
+        "0x3c803c80",
+        "0x3c803c80",
+        "0x3c803c80",
+        "0x3c803c80",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "observed_record": [
+        "0x1",
+        "0x48014801",
+        "0x48014801",
+        "0x48014801",
+        "0x48014801",
+        "0x48014801",
+        "0x48014801",
+        "0x48014801",
+        "0x48014801",
+        "0x48014801",
+        "0x48014801",
+        "0x48014801",
+        "0x48014801",
+        "0x48014801",
+        "0x48014801",
+        "0x48014801",
+        "0x48014801"
+      ],
+      "runtime_status": "record_observed",
+      "matches_expected": false,
+      "runtime_output": "run_ok\nelapsed=0.0010328292846679688\nnpu_time=982491\nrecord=0x1,0x48014801,0x48014801,0x48014801,0x48014801,0x48014801,0x48014801,0x48014801,0x48014801,0x48014801,0x48014801,0x48014801,0x48014801,0x48014801,0x48014801,0x48014801,0x48014801,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0"
+    }
+  ]
+}

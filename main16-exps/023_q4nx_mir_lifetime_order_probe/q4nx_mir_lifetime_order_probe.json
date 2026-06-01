@@ -1,0 +1,78 @@
+{
+  "experiment": "023_q4nx_mir_lifetime_order_probe",
+  "status": "passed",
+  "source": "experiments/130_mylm_main16_record_observable_harness/mylm_c2r2_main16_record_exec.elf",
+  "group1_projected_events": 73,
+  "results": [
+    {
+      "name": "naive_x2d_order",
+      "goal": "Naive x2d one-group order with the same macro counts as MyLM group1.",
+      "status": "pass",
+      "llc": {
+        "returncode": 0,
+        "stdout": "--- !Missed\nPass:            postpipeliner\nName:            schedule\nFunction:        naive_x2d_order\nArgs:\n  - String:          No schedule found.\n...\n--- !Missed\nPass:            postpipeliner\nName:            schedule\nFunction:        naive_x2d_order\nArgs:\n  - String:          No schedule found.\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        naive_x2d_order\nArgs:\n  - BasicBlock:      entry\n  - BundleCount:     '3'\n  - ByteCount:       '16'\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        naive_x2d_order\nArgs:\n  - BasicBlock:      loop\n  - BundleCount:     '70'\n  - ByteCount:       '304'\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        naive_x2d_order\nArgs:\n  - BasicBlock:      exit\n  - BundleCount:     '6'\n  - ByteCount:       '16'\n...\n",
+        "stderr": ""
+      },
+      "objdump": {
+        "returncode": 0,
+        "stdout": "\n/var/home/taowen/projects/IRON/main16-exps/023_q4nx_mir_lifetime_order_probe/build/naive_x2d_order.o:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <naive_x2d_order>:\n       0: 18 00 72 1d  \tadd.nc\tlc, r4, #0\n       4: 44 00 e0 01 00 00    \tmovxm\tls, #0\n\t\t\t00000004:  R_AIE_42\t.LBB0_1\n       a: 44 00 e0 06 00 00    \tmovxm\tle, #0\n\t\t\t0000000a:  R_AIE_42\t.L_LEnd0\n\n00000010 <.LBB0_1>:\n      10: f8 04 00 18  \tvups.4x\tdm0, x0, s0, upssign0\n      14: 58 03 59 18  \tvextbcst.16\t x0, x11, #0\n      18: f8 04 02 19  \tvups.4x\tdm1, x1, s0, upssign0\n      1c: 58 07 d9 18  \tvextbcst.16\t x1, x11, #1\n      20: f8 04 04 1a  \tvups.4x\tdm2, x2, s0, upssign0\n      24: 58 0b 59 19  \tvextbcst.16\t x2, x11, #2\n      28: f8 04 06 1b  \tvups.4x\tdm3, x3, s0, upssign0\n      2c: 58 0f d9 19  \tvextbcst.16\t x3, x11, #3\n      30: f8 04 08 1c  \tvups.4x\tdm4, x4, s0, upssign0\n      34: 58 13 59 1a  \tvextbcst.16\t x4, x11, #4\n      38: f8 04 0a 18  \tvups.4x\tdm0, x5, s0, upssign0\n      3c: 58 17 d9 1a  \tvextbcst.16\t x5, x11, #5\n      40: f8 04 0c 19  \tvups.4x\tdm1, x6, s0, upssign0\n      44: 58 1b 59 1b  \tvextbcst.16\t x6, x11, #6\n      48: f8 04 0e 1a  \tvups.4x\tdm2, x7, s0, upssign0\n      4c: 58 1f d9 1b  \tvextbcst.16\t x7, x11, #7\n      50: 58 23 59 18  \tvextbcst.16\t x0, x11, #8\n      54: 58 27 d9 18  \tvextbcst.16\t x1, x11, #9\n      58: 58 2b 59 19  \tvextbcst.16\t x2, x11, #10\n      5c: 58 2f d9 19  \tvextbcst.16\t x3, x11, #11\n      60: 58 33 59 1a  \tvextbcst.16\t x4, x11, #12\n      64: 58 37 d9 1a  \tvextbcst.16\t x5, x11, #13\n      68: 58 3b 59 1b  \tvextbcst.16\t x6, x11, #14\n      6c: 58 3f d9 1b  \tvextbcst.16\t x7, x11, #15\n      70: 58 43 59 18  \tvextbcst.16\t x0, x11, #16\n      74: 58 47 d9 18  \tvextbcst.16\t x1, x11, #17\n      78: 58 4b 59 19  \tvextbcst.16\t x2, x11, #18\n      7c: 58 4f d9 19  \tvextbcst.16\t x3, x11, #19\n      80: 58 53 59 1a  \tvextbcst.16\t x4, x11, #20\n      84: 58 57 d9 1a  \tvextbcst.16\t x5, x11, #21\n      88: 58 5b 59 1b  \tvextbcst.16\t x6, x11, #22\n      8c: 58 5f d9 1b  \tvextbcst.16\t x7, x11, #23\n      90: 58 63 59 18  \tvextbcst.16\t x0, x11, #24\n      94: 58 67 d9 18  \tvextbcst.16\t x1, x11, #25\n      98: 58 6b 59 19  \tvextbcst.16\t x2, x11, #26\n      9c: 58 6f d9 19  \tvextbcst.16\t x3, x11, #27\n      a0: 58 73 59 1a  \tvextbcst.16\t x4, x11, #28\n      a4: 62 61 20 20 46 77 d9 02      \tvextbcst.16\t x5, x11, #29;\t\tvmac.f\tdm0, dm1, x0, x3, r4\n      ac: 62 81 42 21 46 7b 59 03      \tvextbcst.16\t x6, x11, #30;\t\tvmac.f\tdm1, dm2, x1, x4, r4\n      b4: 62 a1 64 22 46 7f d9 03      \tvextbcst.16\t x7, x11, #31;\t\tvmac.f\tdm2, dm3, x2, x5, r4\n      bc: 48 c1 86 23  \tvmac.f\tdm3, dm4, x3, x6, r4\n      c0: 48 e1 08 24  \tvmac.f\tdm4, dm0, x4, x7, r4\n      c4: 48 01 2a 20  \tvmac.f\tdm0, dm1, x5, x0, r4\n      c8: 48 21 4c 21  \tvmac.f\tdm1, dm2, x6, x1, r4\n      cc: 48 41 6e 22  \tvmac.f\tdm2, dm3, x7, x2, r4\n      d0: 48 61 80 23  \tvmac.f\tdm3, dm4, x0, x3, r4\n      d4: 48 81 02 24  \tvmac.f\tdm4, dm0, x1, x4, r4\n      d8: 48 a1 24 20  \tvmac.f\tdm0, dm1, x2, x5, r4\n      dc: 48 c1 46 21  \tvmac.f\tdm1, dm2, x3, x6, r4\n      e0: 48 e1 68 22  \tvmac.f\tdm2, dm3, x4, x7, r4\n      e4: 48 01 8a 23  \tvmac.f\tdm3, dm4, x5, x0, r4\n      e8: 48 21 0c 24  \tvmac.f\tdm4, dm0, x6, x1, r4\n      ec: 48 41 2e 20  \tvmac.f\tdm0, dm1, x7, x2, r4\n      f0: 48 61 40 21  \tvmac.f\tdm1, dm2, x0, x3, r4\n      f4: 48 81 62 22  \tvmac.f\tdm2, dm3, x1, x4, r4\n      f8: 48 a1 84 23  \tvmac.f\tdm3, dm4, x2, x5, r4\n      fc: 48 c1 06 24  \tvmac.f\tdm4, dm0, x3, x6, r4\n     100: 48 e1 28 20  \tvmac.f\tdm0, dm1, x4, x7, r4\n     104: 48 01 4a 21  \tvmac.f\tdm1, dm2, x5, x0, r4\n     108: 48 21 6c 22  \tvmac.f\tdm2, dm3, x6, x1, r4\n     10c: 48 41 8e 23  \tvmac.f\tdm3, dm4, x7, x2, r4\n     110: 48 61 00 24  \tvmac.f\tdm4, dm0, x0, x3, r4\n     114: 48 81 22 20  \tvmac.f\tdm0, dm1, x1, x4, r4\n     118: 48 a1 44 21  \tvmac.f\tdm1, dm2, x2, x5, r4\n     11c: 48 c1 66 22  \tvmac.f\tdm2, dm3, x3, x6, r4\n     120: 48 e1 88 23  \tvmac.f\tdm3, dm4, x4, x7, r4\n     124: 48 21 2c 20  \tvmac.f\tdm0, dm1, x6, x1, r4\n     128: 48 01 0a 24  \tvmac.f\tdm4, dm0, x5, x0, r4\n     12c: 48 41 4e 21  \tvmac.f\tdm1, dm2, x7, x2, r4\n\n00000130 <.L_LEnd0>:\n     130: 0b 03 13 01 00 00 00 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopxm\t;\t\tvmac.f\tdm2, dm3, x0, x3, r4\n     140: 2c 00 50 f0 2c 00    \tnopa\t;\t\tret\tlr\n\t\t...\n     14e: 00 00        \tnop\t\n",
+        "stderr": ""
+      },
+      "counts": {
+        "vups_4x": 8,
+        "vups_2x": 0,
+        "vextbcst_16": 32,
+        "vextbcst_32": 0,
+        "vmac_f": 33,
+        "vst": 0,
+        "vlda": 0,
+        "schedule_found": 0,
+        "schedule_missed": 4,
+        "bundle_count_remarks": 6,
+        "loop_bundle_count": 70
+      },
+      "files": {
+        "mir": "/var/home/taowen/projects/IRON/main16-exps/023_q4nx_mir_lifetime_order_probe/build/naive_x2d_order.mir",
+        "object": "/var/home/taowen/projects/IRON/main16-exps/023_q4nx_mir_lifetime_order_probe/build/naive_x2d_order.o",
+        "asm": "/var/home/taowen/projects/IRON/main16-exps/023_q4nx_mir_lifetime_order_probe/build/naive_x2d_order.s",
+        "objdump": "/var/home/taowen/projects/IRON/main16-exps/023_q4nx_mir_lifetime_order_probe/build/naive_x2d_order.objdump"
+      },
+      "reasons": []
+    },
+    {
+      "name": "mylm_group1_projected_order",
+      "goal": "MyLM group1 projection preserving actual order and registers for vups/vext/vmac.",
+      "status": "pass",
+      "llc": {
+        "returncode": 0,
+        "stdout": "--- !Missed\nPass:            postpipeliner\nName:            schedule\nFunction:        mylm_group1_projected_order\nArgs:\n  - String:          Longest circuit does not fit II.\n  - II:              '40'\n  - BasicBlock:      loop\n...\n--- !Missed\nPass:            postpipeliner\nName:            schedule\nFunction:        mylm_group1_projected_order\nArgs:\n  - String:          No schedule found.\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        mylm_group1_projected_order\nArgs:\n  - BasicBlock:      entry\n  - BundleCount:     '3'\n  - ByteCount:       '16'\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        mylm_group1_projected_order\nArgs:\n  - BasicBlock:      loop\n  - BundleCount:     '94'\n  - ByteCount:       '368'\n...\n--- !Analysis\nPass:            aie-asm-printer\nName:            analysis\nFunction:        mylm_group1_projected_order\nArgs:\n  - BasicBlock:      exit\n  - BundleCount:     '6'\n  - ByteCount:       '16'\n...\n",
+        "stderr": ""
+      },
+      "objdump": {
+        "returncode": 0,
+        "stdout": "\n/var/home/taowen/projects/IRON/main16-exps/023_q4nx_mir_lifetime_order_probe/build/mylm_group1_projected_order.o:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <mylm_group1_projected_order>:\n       0: 18 00 72 1d  \tadd.nc\tlc, r4, #0\n       4: 44 00 e0 01 00 00    \tmovxm\tls, #0\n\t\t\t00000004:  R_AIE_42\t.LBB0_1\n       a: 44 00 e0 06 00 00    \tmovxm\tle, #0\n\t\t\t0000000a:  R_AIE_42\t.L_LEnd0\n\n00000010 <.LBB0_1>:\n      10: 62 41 33 21 01 00 00 00      \tnopx\t;\t\tvmac.f\tdm1, dm1, x9, x10, r4\n      18: 00 00        \tnop\t\n      1a: 00 00        \tnop\t\n      1c: 48 01 28 23  \tvmac.f\tdm3, dm1, x4, x0, r4\n      20: 00 00        \tnop\t\n      22: 00 00        \tnop\t\n      24: 48 61 67 23  \tvmac.f\tdm3, dm3, x3, x11, r4\n      28: 00 00        \tnop\t\n      2a: 58 07 d9 1c  \tvextbcst.16\t x9, x11, #1\n      2e: f8 04 12 1a  \tvups.4x\tdm2, x9, s0, upssign0\n      32: 62 21 6d 23 e6 04 14 03      \tvups.4x\tdm3, x10, s0, upssign0;\t\tvmac.f\tdm3, dm3, x6, x9, r4\n      3a: 58 0b 59 1d  \tvextbcst.16\t x10, x11, #2\n      3e: 58 03 d9 1b  \tvextbcst.16\t x7, x11, #0\n      42: 62 41 67 23 46 0f d9 03      \tvextbcst.16\t x7, x11, #3;\t\tvmac.f\tdm3, dm3, x3, x10, r4\n      4a: 58 13 d9 1b  \tvextbcst.16\t x7, x11, #4\n      4e: 00 00        \tnop\t\n      50: 48 e1 64 23  \tvmac.f\tdm3, dm3, x2, x7, r4\n      54: 62 41 88 24 46 17 59 02      \tvextbcst.16\t x4, x11, #5;\t\tvmac.f\tdm4, dm4, x4, x2, r4\n      5c: 00 00        \tnop\t\n      5e: 48 e1 68 23  \tvmac.f\tdm3, dm3, x4, x7, r4\n      62: 48 21 8c 24  \tvmac.f\tdm4, dm4, x6, x1, r4\n      66: 00 00        \tnop\t\n      68: 48 81 74 24  \tvmac.f\tdm4, dm3, x10, x4, r4\n      6c: 58 1b d9 19  \tvextbcst.16\t x3, x11, #6\n      70: f8 04 02 1c  \tvups.4x\tdm4, x1, s0, upssign0\n      74: 48 61 90 24  \tvmac.f\tdm4, dm4, x8, x3, r4\n      78: 58 1f 59 18  \tvextbcst.16\t x0, x11, #7\n      7c: 00 00        \tnop\t\n      7e: 48 01 86 24  \tvmac.f\tdm4, dm4, x3, x0, r4\n      82: 58 23 d9 1c  \tvextbcst.16\t x9, x11, #8\n      86: 00 00        \tnop\t\n      88: 48 21 8b 24  \tvmac.f\tdm4, dm4, x5, x9, r4\n      8c: 58 27 59 1a  \tvextbcst.16\t x4, x11, #9\n      90: 00 00        \tnop\t\n      92: 48 81 8a 24  \tvmac.f\tdm4, dm4, x5, x4, r4\n      96: 58 2b d9 1b  \tvextbcst.16\t x7, x11, #10\n      9a: 58 2f 59 1d  \tvextbcst.16\t x10, x11, #11\n      9e: 62 e1 84 23 46 3b 59 05      \tvextbcst.16\t x10, x11, #14;\t\tvmac.f\tdm3, dm4, x2, x7, r4\n      a6: 58 3f d9 19  \tvextbcst.16\t x3, x11, #15\n      aa: f8 04 02 1b  \tvups.4x\tdm3, x1, s0, upssign0\n      ae: 62 41 67 21 46 33 59 02      \tvextbcst.16\t x4, x11, #12;\t\tvmac.f\tdm1, dm3, x3, x10, r4\n      b6: 58 57 59 1a  \tvextbcst.16\t x4, x11, #21\n      ba: f8 04 0a 19  \tvups.4x\tdm1, x5, s0, upssign0\n      be: 62 81 30 23 46 47 d9 04      \tvextbcst.16\t x9, x11, #17;\t\tvmac.f\tdm3, dm1, x8, x4, r4\n      c6: 58 37 d9 1a  \tvextbcst.16\t x5, x11, #13\n      ca: 00 00        \tnop\t\n      cc: 48 a1 72 23  \tvmac.f\tdm3, dm3, x9, x5, r4\n      d0: 58 4b d9 18  \tvextbcst.16\t x1, x11, #18\n      d4: 00 00        \tnop\t\n      d6: 48 41 63 23  \tvmac.f\tdm3, dm3, x1, x10, r4\n      da: 58 4f 59 1c  \tvextbcst.16\t x8, x11, #19\n      de: f8 04 10 1a  \tvups.4x\tdm2, x8, s0, upssign0\n      e2: 62 61 70 23 46 43 d9 03      \tvextbcst.16\t x7, x11, #16;\t\tvmac.f\tdm3, dm3, x8, x3, r4\n      ea: 58 53 d9 1b  \tvextbcst.16\t x7, x11, #20\n      ee: 00 00        \tnop\t\n      f0: 48 e1 64 23  \tvmac.f\tdm3, dm3, x2, x7, r4\n      f4: 00 00        \tnop\t\n      f6: 00 00        \tnop\t\n      f8: 48 21 6b 23  \tvmac.f\tdm3, dm3, x5, x9, r4\n      fc: 58 67 59 18  \tvextbcst.16\t x0, x11, #25\n     100: 00 00        \tnop\t\n     102: 48 21 60 23  \tvmac.f\tdm3, dm3, x0, x1, r4\n     106: 00 00        \tnop\t\n     108: 00 00        \tnop\t\n     10a: 48 01 67 23  \tvmac.f\tdm3, dm3, x3, x8, r4\n     10e: 00 00        \tnop\t\n     110: 00 00        \tnop\t\n     112: 48 e1 64 23  \tvmac.f\tdm3, dm3, x2, x7, r4\n     116: 00 00        \tnop\t\n     118: f8 04 0c 19  \tvups.4x\tdm1, x6, s0, upssign0\n     11c: 62 81 64 23 46 5b 59 03      \tvextbcst.16\t x6, x11, #22;\t\tvmac.f\tdm3, dm3, x2, x4, r4\n     124: 58 6f 59 1b  \tvextbcst.16\t x6, x11, #27\n     128: 00 00        \tnop\t\n     12a: 48 c1 6a 22  \tvmac.f\tdm2, dm3, x5, x6, r4\n     12e: 58 5f d9 1c  \tvextbcst.16\t x9, x11, #23\n     132: 00 00        \tnop\t\n     134: 62 21 51 21 46 63 59 05      \tvextbcst.16\t x10, x11, #24;\t\tvmac.f\tdm1, dm2, x8, x9, r4\n     13c: 58 77 59 1d  \tvextbcst.16\t x10, x11, #29\n     140: 00 00        \tnop\t\n     142: 48 41 27 21  \tvmac.f\tdm1, dm1, x3, x10, r4\n     146: 58 7b 59 18  \tvextbcst.16\t x0, x11, #30\n     14a: 00 00        \tnop\t\n     14c: 48 01 26 21  \tvmac.f\tdm1, dm1, x3, x0, r4\n     150: 58 6b 59 19  \tvextbcst.16\t x2, x11, #26\n     154: 00 00        \tnop\t\n     156: 48 41 22 21  \tvmac.f\tdm1, dm1, x1, x2, r4\n     15a: 00 00        \tnop\t\n     15c: 00 00        \tnop\t\n     15e: 48 c1 30 21  \tvmac.f\tdm1, dm1, x8, x6, r4\n     162: 58 73 d9 1b  \tvextbcst.16\t x7, x11, #28\n     166: 00 00        \tnop\t\n     168: 48 e1 2a 21  \tvmac.f\tdm1, dm1, x5, x7, r4\n     16c: f8 04 08 1c  \tvups.4x\tdm4, x4, s0, upssign0\n\n00000170 <.L_LEnd0>:\n     170: e1 00 00 a8 bf ec 02 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopx\t;\t\tvextbcst.16\t x11, x11, #31;\t\tnopv\t\n     180: 2c 00 50 f0 2c 00    \tnopa\t;\t\tret\tlr\n\t\t...\n     18e: 00 00        \tnop\t\n",
+        "stderr": ""
+      },
+      "counts": {
+        "vups_4x": 8,
+        "vups_2x": 0,
+        "vextbcst_16": 32,
+        "vextbcst_32": 0,
+        "vmac_f": 33,
+        "vst": 0,
+        "vlda": 0,
+        "schedule_found": 0,
+        "schedule_missed": 4,
+        "bundle_count_remarks": 6,
+        "loop_bundle_count": 94
+      },
+      "files": {
+        "mir": "/var/home/taowen/projects/IRON/main16-exps/023_q4nx_mir_lifetime_order_probe/build/mylm_group1_projected_order.mir",
+        "object": "/var/home/taowen/projects/IRON/main16-exps/023_q4nx_mir_lifetime_order_probe/build/mylm_group1_projected_order.o",
+        "asm": "/var/home/taowen/projects/IRON/main16-exps/023_q4nx_mir_lifetime_order_probe/build/mylm_group1_projected_order.s",
+        "objdump": "/var/home/taowen/projects/IRON/main16-exps/023_q4nx_mir_lifetime_order_probe/build/mylm_group1_projected_order.objdump"
+      },
+      "reasons": []
+    }
+  ]
+}

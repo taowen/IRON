@@ -1,0 +1,292 @@
+{
+  "experiment": "021_llvm_aie_backend_surface",
+  "llvm_aie_root": "/var/home/taowen/projects/llvm-aie",
+  "status": "route-selected",
+  "source_hits": [
+    {
+      "name": "aie2p vextbcst.16 instruction",
+      "path": "/var/home/taowen/projects/llvm-aie/llvm/lib/Target/AIE/aie2p/AIE2PGenInstrInfo.td",
+      "line": 6358,
+      "matches": 1,
+      "pattern": "def VEXTBCST_16_vec_extract_broadcast_imm",
+      "reason": "Defines the exact AIE2P machine instruction spelling and operands for vextbcst.16.",
+      "excerpt": [
+        "6356: ",
+        "6357: let Itinerary = II_VEXTBCST_16_vec_extract_broadcast_imm in",
+        "6358: def VEXTBCST_16_vec_extract_broadcast_imm : AIE2P_inst_mv_instr32 <(outs OP_mXm:$dst), (ins OP_mXm:$s1, c6u:$idx), \"vextbcst.16\", \" $dst, $s1, #$idx\">{",
+        "6359: // id: me__instr128_or__alu_mv__alumv_or__mv__vec_extract_broadcast_imm__vec_extract_broadcast_core__s2v_wide1_16",
+        "6360: bits<4> dst;"
+      ]
+    },
+    {
+      "name": "aie2p vmac.f bf16 x/x instruction",
+      "path": "/var/home/taowen/projects/llvm-aie/llvm/lib/Target/AIE/aie2p/AIE2PGenInstrInfo.td",
+      "line": 8860,
+      "matches": 1,
+      "pattern": "def VMAC_f_vmac_bf_vmul_bf_core_X_X",
+      "reason": "Defines one of the bf16 vmac.f forms used by Q4NX-style MAC bodies.",
+      "excerpt": [
+        "8858: ",
+        "8859: let Itinerary = II_VMAC_f_vmac_bf_vmul_bf_core_X_X, Defs = [srFPFlags], Uses = [crFPMask] in",
+        "8860: def VMAC_f_vmac_bf_vmul_bf_core_X_X : AIE2P_inst_vec_instr32 <(outs eDM:$dst), (ins eDM:$acc1, OP_mXv:$s1, OP_mXw:$s2, eR:$acc), \"vmac.f\", \"$dst, $acc1, $s1, $s2, $acc\">{",
+        "8861: // id: me__instr128_or__vec__vmac_bf__mDMa__vmac_bf1_add__mDMa__vmul_bf_core__vmul_bf_core_X_X__vacc_bf_core__mRv",
+        "8862: bits<5> acc;"
+      ]
+    },
+    {
+      "name": "aie2p vups.4x x-to-d instruction",
+      "path": "/var/home/taowen/projects/llvm-aie/llvm/lib/Target/AIE/aie2p/AIE2PGenInstrInfo.td",
+      "line": 11946,
+      "matches": 1,
+      "pattern": "def VUPS_4x_mv_ups_x2d_upsSign0",
+      "reason": "Defines the vups.4x form closest to the MyLM dequant pipeline.",
+      "excerpt": [
+        "11944: ",
+        "11945: let Itinerary = II_VUPS_4x_mv_ups_x2d_upsSign0, Defs = [srUPS_of], Uses = [crSat, crUPSMode, upsSign0] in",
+        "11946: def VUPS_4x_mv_ups_x2d_upsSign0 : AIE2P_inst_mv_instr32 <(outs eDM:$dst), (ins OP_mXm:$src, eS:$su), \"vups.4x\", \"$dst, $src, $su, upssign0\">{",
+        "11947: // id: me__instr128_or__alu_mv__alumv_or__mv__mv_ups_x2d__ups_mov__x2d__mDMm__ups_mov__base__mSm__upsSign0",
+        "11948: bits<3> dst;"
+      ]
+    },
+    {
+      "name": "aie2p vups.4x pattern",
+      "path": "/var/home/taowen/projects/llvm-aie/llvm/lib/Target/AIE/aie2p/AIE2PInstrPatterns.td",
+      "line": 852,
+      "matches": 1,
+      "pattern": "VUPS_4x_mv_ups_x2d_upsSign0",
+      "reason": "Shows the intrinsic/global-isel pattern that can select vups.4x.",
+      "excerpt": [
+        "850: foreach intr = [int_aie2p_acc32_v64_I512_ups, int_aie2p_acc64_v32_I512_ups] in {",
+        "851:   def : PatInaccessibleMem<(intr VEC512:$src,  eS:$shft, 0x0),",
+        "852:              (VUPS_4x_mv_ups_x2d_upsSign0 VEC512:$src,  eS:$shft)>;",
+        "853:   def : PatInaccessibleMem<(intr VEC512:$src,  eS:$shft, 0x1),",
+        "854:              (VUPS_4x_mv_ups_x2d_upsSign1 VEC512:$src,  eS:$shft)>;"
+      ]
+    },
+    {
+      "name": "aie2p vextbcst.16 pattern",
+      "path": "/var/home/taowen/projects/llvm-aie/llvm/lib/Target/AIE/aie2p/AIE2PInstrPatterns.td",
+      "line": 1030,
+      "matches": 1,
+      "pattern": "ExtBcstPair<VEXTBCST_16_vec_extract_broadcast_imm",
+      "reason": "Shows that .16 extract-broadcast is explicitly modeled, not an accidental asm spelling.",
+      "excerpt": [
+        "1028: ",
+        "1029: defset list<ExtBcstPair> ExtBcst16Pairs={ ",
+        "1030:   def : ExtBcstPair<VEXTBCST_16_vec_extract_broadcast_imm, c6u>;",
+        "1031:   def : ExtBcstPair<VEXTBCST_16_vec_extract_broadcast_r, eRS4>;",
+        "1032: }"
+      ]
+    },
+    {
+      "name": "aie2p vextbcst.16 schedule",
+      "path": "/var/home/taowen/projects/llvm-aie/llvm/lib/Target/AIE/aie2p/AIE2PGenSchedule.td",
+      "line": 8285,
+      "matches": 1,
+      "pattern": "InstrItinData<II_VEXTBCST_16_vec_extract_broadcast_imm",
+      "reason": "Provides latency/bypass metadata for a scheduler or static checker.",
+      "excerpt": [
+        "8283: ",
+        "8284: // id: me__instr128_or__alu_mv__alumv_or__mv__vec_extract_broadcast_imm__vec_extract_broadcast_core__s2v_wide1_16",
+        "8285: InstrItinData<II_VEXTBCST_16_vec_extract_broadcast_imm, [], [/*dst*/2, /*s1*/1, /*idx*/1], [/*dst*/MV_Bypass, /*s1*/MV_Bypass, /*idx*/NoBypass]>,",
+        "8286: ",
+        "8287: // id: me__instr128_or__alu_mv__alumv_or__mv__vec_extract_broadcast_r__vec_extract_broadcast_core__s2v_wide1_16__mRm"
+      ]
+    },
+    {
+      "name": "aie2p vmac.f schedule",
+      "path": "/var/home/taowen/projects/llvm-aie/llvm/lib/Target/AIE/aie2p/AIE2PGenSchedule.td",
+      "line": 9049,
+      "matches": 1,
+      "pattern": "InstrItinData<II_VMAC_f_vmac_bf_vmul_bf_core_X_X",
+      "reason": "Provides latency/bypass metadata for bf16 vmac.f.",
+      "excerpt": [
+        "9047: ",
+        "9048: // id: me__instr128_or__vec__vmac_bf__mDMa__vmac_bf1_add__mDMa__vmul_bf_core__vmul_bf_core_X_X__vacc_bf_core__mRv",
+        "9049: InstrItinData<II_VMAC_f_vmac_bf_vmul_bf_core_X_X, [], [/*dst*/6, /*acc1*/4, /*s1*/1, /*s2*/1, /*acc*/1, /*srFPFlags*/7, /*crFPMask*/7], [/*dst*/NoBypass, /*acc1*/VEC_Bypass, /*s1*/NoBypass, /*s2*/NoBypass, /*acc*/NoBypass]>,",
+        "9050: ",
+        "9051: // id: me__instr128_or__vec__vmac_bf__mDMa__vmac_bf1_add__mDMa__vmul_bf_core__vmul_bf_core_Y_Y__mYv__mYw__vacc_bf_core__mRv"
+      ]
+    },
+    {
+      "name": "aie2p vups.4x schedule",
+      "path": "/var/home/taowen/projects/llvm-aie/llvm/lib/Target/AIE/aie2p/AIE2PGenSchedule.td",
+      "line": 10069,
+      "matches": 1,
+      "pattern": "InstrItinData<II_VUPS_4x_mv_ups_x2d_upsSign0",
+      "reason": "Provides latency/bypass metadata for vups.4x x-to-d.",
+      "excerpt": [
+        "10067: ",
+        "10068: // id: me__instr128_or__alu_mv__alumv_or__mv__mv_ups_x2d__ups_mov__x2d__mDMm__ups_mov__base__mSm__upsSign0",
+        "10069: InstrItinData<II_VUPS_4x_mv_ups_x2d_upsSign0, [SimpleCycle<CRSAT_RA>, PrefixCycle<CRUPSMODE_RA>, PrefixCycle<UPS__H__A>, SimpleCycle<UPS__OMUX>, PrefixCycle<DM_WM_L0_PORT>, PrefixCycle<EVENT_UPS_OF>, PrefixCycle<UPS__H__K>, SimpleCycle<UPS__K>], [/*dst*/3, /*src*/1, /*su*/1, /*srUPS_of*/3, /*crSat*/1, /*crUPSMode*/2, /*upsSign0*/1]>,",
+        "10070: ",
+        "10071: // id: me__instr128_or__alu_mv__alumv_or__mv__mv_ups_x2d__ups_mov__x2d__mDMm__ups_mov__base__mSm__upsSign1"
+      ]
+    },
+    {
+      "name": "postpipeliner spill guidance",
+      "path": "/var/home/taowen/projects/llvm-aie/PERF_OPT_GUIDE.md",
+      "line": 516,
+      "matches": 1,
+      "pattern": "The pipelined loop has spill code in the loop body",
+      "reason": "Explains why our C++ route fails when register pressure creates spills.",
+      "excerpt": [
+        "514: ",
+        "515: When to use `AIE_PREPARE_FOR_POSTPIPELINING`:",
+        "516: - The pipelined loop has spill code in the loop body",
+        "517: - The pipelined loop contains sequences of register moves",
+        "518:   (\"register-fifos\")"
+      ]
+    },
+    {
+      "name": "postpipeliner target ii guidance",
+      "path": "/var/home/taowen/projects/llvm-aie/PERF_OPT_GUIDE.md",
+      "line": 397,
+      "matches": 4,
+      "pattern": "AIE_TRY_INITIATION_INTERVAL",
+      "reason": "Documents the compiler-level control surface for software-pipelined loops.",
+      "excerpt": [
+        "395: | `AIE_PREPARE_FOR_POSTPIPELINING`  | `pipeline(disable)`                | Disable the pre-RA pipeliner; the post-RA pipeliner takes over (see [Section 7](#7-software-pipelining))  |",
+        "396: | `AIE_PREPARE_FOR_PIPELINING`      | (no-op)                            | Legacy; explicitly allows software pipelining (this is the default if a minimum iteration count is provided) |",
+        "397: | `AIE_TRY_INITIATION_INTERVAL(N)`  | `pipeline_initiation_interval(N)`  | Suggest a target II to the pipeliner                            |",
+        "398: | `AIE_LOOP_NO_UNROLL`              | `unroll(disable)`                  | Prevent loop unrolling                                          |",
+        "399: | `AIE_LOOP_UNROLL_FULL`            | `unroll(full)`                     | Fully unroll the loop                                           |"
+      ]
+    },
+    {
+      "name": "bundle count guidance",
+      "path": "/var/home/taowen/projects/llvm-aie/PERF_OPT_GUIDE.md",
+      "line": 1106,
+      "matches": 1,
+      "pattern": "BundleCount.*Number of VLIW bundles",
+      "reason": "Gives a compiler-reported cycle proxy we can gate in experiments.",
+      "excerpt": [
+        "1104: ```",
+        "1105: ",
+        "1106: - **BundleCount**: Number of VLIW bundles (one bundle = one cycle).",
+        "1107:   For a pipelined loop, the BundleCount of the loop body equals II.",
+        "1108: - **ByteCount**: Total instruction bytes. Useful for tracking program"
+      ]
+    }
+  ],
+  "mir_metrics": [
+    {
+      "name": "aie2p vups binary MIR",
+      "path": "/var/home/taowen/projects/llvm-aie/llvm/test/CodeGen/AIE/aie2p/BinaryOutput/vups.mir",
+      "metrics": {
+        "vups_4x": 148,
+        "vups_2x": 148,
+        "vextbcst_16": 0,
+        "vextbcst_32": 0,
+        "vmac_f": 0,
+        "postpipeliner": 0,
+        "schedule_found": 0,
+        "hardware_loop": 0
+      },
+      "reason": "Contains concrete machine-instruction names for vups.2x and vups.4x."
+    },
+    {
+      "name": "aie2p vextbcst binary MIR",
+      "path": "/var/home/taowen/projects/llvm-aie/llvm/test/CodeGen/AIE/aie2p/BinaryOutput/vextbcst.mir",
+      "metrics": {
+        "vups_4x": 0,
+        "vups_2x": 0,
+        "vextbcst_16": 90,
+        "vextbcst_32": 90,
+        "vmac_f": 0,
+        "postpipeliner": 0,
+        "schedule_found": 0,
+        "hardware_loop": 0
+      },
+      "reason": "Contains concrete machine-instruction names for vextbcst.16."
+    },
+    {
+      "name": "aie2p vmac binary MIR",
+      "path": "/var/home/taowen/projects/llvm-aie/llvm/test/CodeGen/AIE/aie2p/BinaryOutput/vmac.mir",
+      "metrics": {
+        "vups_4x": 0,
+        "vups_2x": 0,
+        "vextbcst_16": 0,
+        "vextbcst_32": 0,
+        "vmac_f": 390,
+        "postpipeliner": 0,
+        "schedule_found": 0,
+        "hardware_loop": 0
+      },
+      "reason": "Contains concrete machine-instruction names for vmac.f forms."
+    },
+    {
+      "name": "aie2p postpipelined gemm MIR",
+      "path": "/var/home/taowen/projects/llvm-aie/llvm/test/CodeGen/AIE/aie2p/schedule/postpipeliner/gemm-bfp16-v10.mir",
+      "metrics": {
+        "vups_4x": 0,
+        "vups_2x": 0,
+        "vextbcst_16": 0,
+        "vextbcst_32": 0,
+        "vmac_f": 4,
+        "postpipeliner": 1,
+        "schedule_found": 2,
+        "hardware_loop": 4
+      },
+      "reason": "Shows the MIR-level route into postpipeliner, remarks, ZOL, liveins, and fixed registers."
+    }
+  ],
+  "backend_surfaces": [
+    {
+      "name": "instruction database",
+      "paths": [
+        "llvm/lib/Target/AIE/aie2p/AIE2PGenInstrInfo.td",
+        "llvm/lib/Target/AIE/aie2p/AIE2PInstrPatterns.td"
+      ],
+      "use": "Parse or reference exact instruction names, operands, implicit regs, and selectable patterns for the Q4NX generator.",
+      "risk": "Generated TD files are backend-internal contracts; pin the llvm-aie revision before depending on names."
+    },
+    {
+      "name": "schedule database",
+      "paths": [
+        "llvm/lib/Target/AIE/aie2p/AIE2PGenSchedule.td"
+      ],
+      "use": "Extract instruction latency/bypass facts for a nop-free source-asm checker or for MIR schedule expectations.",
+      "risk": "It is not enough to count opcodes; resource conflicts and VLIW packetization still need llc/llvm-mc validation."
+    },
+    {
+      "name": "MIR examples",
+      "paths": [
+        "llvm/test/CodeGen/AIE/aie2p/BinaryOutput/vups.mir",
+        "llvm/test/CodeGen/AIE/aie2p/BinaryOutput/vextbcst.mir",
+        "llvm/test/CodeGen/AIE/aie2p/BinaryOutput/vmac.mir",
+        "llvm/test/CodeGen/AIE/aie2p/schedule/postpipeliner/gemm-bfp16-v10.mir"
+      ],
+      "use": "Use as templates for a tiny Q4NX MIR/codegen experiment with explicit registers and postpipeliner remarks.",
+      "risk": "MIR is lower-level and brittle, but it gives more control than C++ and less manual scheduling than raw source asm."
+    },
+    {
+      "name": "external tools",
+      "paths": [
+        ".venv/lib/python3.12/site-packages/llvm-aie/bin/llc",
+        ".venv/lib/python3.12/site-packages/llvm-aie/bin/llvm-mc",
+        ".venv/lib/python3.12/site-packages/llvm-aie/bin/llvm-objdump"
+      ],
+      "use": "Keep assembler, disassembler, object writer, and scheduler as external services invoked by experiments.",
+      "risk": "Do not copy these internals into IRON; use command outputs as gates."
+    },
+    {
+      "name": "backend implementation reference",
+      "paths": [
+        "llvm/lib/Target/AIE/AIEPostPipeliner.cpp",
+        "llvm/lib/Target/AIE/AIEHazardRecognizer.cpp",
+        "llvm/lib/Target/AIE/AIEFinalizeBundle.cpp",
+        "llvm/lib/Target/AIE/MCTargetDesc/aie2p/AIE2PMCCodeEmitter.cpp",
+        "llvm/lib/Target/AIE/AsmParser/AIE2PAsmParser.cpp",
+        "llvm/lib/Target/AIE/Disassembler/AIE2PDisassembler.cpp"
+      ],
+      "use": "Read-only reference for why schedules fail, how bundles are finalized, and how source/MIR becomes bytes.",
+      "risk": "These files are not small reusable libraries; direct extraction would import too much LLVM state."
+    }
+  ],
+  "decision": [
+    "C++ is not the right control surface for MyLM-style main16 Q4NX.",
+    "Use llvm-aie TD/MIR/schedule data and tools, not copied backend C++.",
+    "Try a tiny MIR schedule probe next."
+  ]
+}

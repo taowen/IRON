@@ -1,0 +1,108 @@
+{
+  "status": "passed",
+  "candidates": [
+    {
+      "name": "highhalf_swap_045",
+      "expected_interface_ok": true,
+      "interface_ok": true,
+      "expected_resource_ok": true,
+      "resource_ok": true,
+      "window": {
+        "start": "0x6f6",
+        "end": "0x700",
+        "live_ins": [
+          "$bmhh2",
+          "$bmhl2",
+          "$cml1",
+          "$crf2fmask",
+          "$crfpmask",
+          "$crrnd",
+          "$dm3",
+          "$r4",
+          "$x7"
+        ],
+        "boundary_defs": [
+          "$bmhh1",
+          "$bmhl1",
+          "$dm3",
+          "$srf2fflags",
+          "$srfpflags",
+          "$x2"
+        ]
+      },
+      "diffs": [],
+      "resource_violations": []
+    },
+    {
+      "name": "vups_advance_046",
+      "expected_interface_ok": true,
+      "interface_ok": true,
+      "expected_resource_ok": false,
+      "resource_ok": false,
+      "window": {
+        "start": "0x700",
+        "end": "0x704",
+        "live_ins": [
+          "$bmhh2",
+          "$crsat",
+          "$crupsmode",
+          "$dm0",
+          "$r0",
+          "$s0",
+          "$upssign0",
+          "$x6"
+        ],
+        "boundary_defs": [
+          "$bmhh1",
+          "$dm1",
+          "$dm2",
+          "$srups_of"
+        ]
+      },
+      "diffs": [],
+      "resource_violations": [
+        {
+          "address": "0x704",
+          "signature": [
+            "vmov_x",
+            "vadd"
+          ],
+          "lines": [
+            "      $bmhh1 = VMOV_alu_mv_mv_x $bmhh2",
+            "      $dm2 = VADD_vmac_cm2_add_reg $dm1, $dm0, $r0"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "drop_bmhh_copy_negative_control",
+      "expected_interface_ok": false,
+      "interface_ok": false,
+      "expected_resource_ok": true,
+      "resource_ok": true,
+      "window": {
+        "start": "0x700",
+        "end": "0x700",
+        "live_ins": [],
+        "boundary_defs": []
+      },
+      "diffs": [
+        {
+          "field": "live_ins",
+          "original": [
+            "$bmhh2"
+          ],
+          "candidate": []
+        },
+        {
+          "field": "boundary_defs",
+          "original": [
+            "$bmhh1"
+          ],
+          "candidate": []
+        }
+      ],
+      "resource_violations": []
+    }
+  ]
+}
