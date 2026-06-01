@@ -1,0 +1,2550 @@
+{
+  "boundary_cells": [
+    {
+      "cell": "acc1.bmhh",
+      "first_use": "g1@0x52a:vmac.f",
+      "producer": "g0@0x51e:vmac.f/mac"
+    },
+    {
+      "cell": "acc1.bmhl",
+      "first_use": "g1@0x52a:vmac.f",
+      "producer": "g0@0x51e:vmac.f/mac"
+    },
+    {
+      "cell": "acc1.bmlh",
+      "first_use": "g1@0x52a:vmac.f",
+      "producer": "g0@0x51e:vmac.f/mac"
+    },
+    {
+      "cell": "acc1.bmll",
+      "first_use": "g1@0x52a:vmac.f",
+      "producer": "g0@0x51e:vmac.f/mac"
+    },
+    {
+      "cell": "acc4.bmhh",
+      "first_use": "g1@0x570:vmac.f",
+      "producer": "g0@0x41c:vsub.f/dequant_sub"
+    },
+    {
+      "cell": "acc4.bmhl",
+      "first_use": "g1@0x570:vmac.f",
+      "producer": "g0@0x41c:vsub.f/dequant_sub"
+    },
+    {
+      "cell": "acc4.bmlh",
+      "first_use": "g1@0x570:vmac.f",
+      "producer": "g0@0x41c:vsub.f/dequant_sub"
+    },
+    {
+      "cell": "acc4.bmll",
+      "first_use": "g1@0x570:vmac.f",
+      "producer": "g0@0x478:vmov/register_move"
+    },
+    {
+      "cell": "vec0.hi",
+      "first_use": "g1@0x53a:vmac.f",
+      "producer": "g0@0x51e:vldb/weight_or_state_load"
+    },
+    {
+      "cell": "vec0.lo",
+      "first_use": "g1@0x53a:vmac.f",
+      "producer": "g0@0x51e:vldb/weight_or_state_load"
+    },
+    {
+      "cell": "vec10.hi",
+      "first_use": "g1@0x52a:vmac.f",
+      "producer": "g0@0x51a:vunpack/q4_unpack"
+    },
+    {
+      "cell": "vec10.lo",
+      "first_use": "g1@0x52a:vmac.f",
+      "producer": "g0@0x51a:vunpack/q4_unpack"
+    },
+    {
+      "cell": "vec2.hi",
+      "first_use": "g1@0x570:vmac.f",
+      "producer": "g0@0x4b2:vextbcst.16/activation_lane_broadcast lane #0x1a"
+    },
+    {
+      "cell": "vec2.lo",
+      "first_use": "g1@0x570:vmac.f",
+      "producer": "g0@0x4dc:vldb/vldb"
+    },
+    {
+      "cell": "vec3.hi",
+      "first_use": "g1@0x54a:vmac.f",
+      "producer": "g0@0x490:vconv.bf16.fp32/accum_to_bf16_vector"
+    },
+    {
+      "cell": "vec3.lo",
+      "first_use": "g1@0x54a:vmac.f",
+      "producer": "g0@0x4f8:vmov/register_move"
+    },
+    {
+      "cell": "vec4.hi",
+      "first_use": "g1@0x53a:vmac.f",
+      "producer": "g0@0x4ba:vconv.bf16.fp32/accum_to_bf16_vector"
+    },
+    {
+      "cell": "vec4.lo",
+      "first_use": "g1@0x53a:vmac.f",
+      "producer": "g0@0x4ba:vconv.bf16.fp32/accum_to_bf16_vector"
+    },
+    {
+      "cell": "vec6.hi",
+      "first_use": "g1@0x580:vmac.f",
+      "producer": "g0@0x4ba:vextbcst.16/activation_lane_broadcast lane #0x1b"
+    },
+    {
+      "cell": "vec8.hi",
+      "first_use": "g1@0x53a:vups.4x",
+      "producer": "g0@0x516:vunpack/q4_unpack"
+    },
+    {
+      "cell": "vec8.lo",
+      "first_use": "g1@0x53a:vups.4x",
+      "producer": "g0@0x516:vunpack/q4_unpack"
+    },
+    {
+      "cell": "vec9.hi",
+      "first_use": "g1@0x52a:vmac.f",
+      "producer": "g0@0x50e:vunpack/q4_unpack"
+    },
+    {
+      "cell": "vec9.lo",
+      "first_use": "g1@0x52a:vmac.f",
+      "producer": "g0@0x50e:vunpack/q4_unpack"
+    }
+  ],
+  "group_mac_traces": [
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "lane": null,
+            "producer": "g0@0x51e:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmlh",
+            "lane": null,
+            "producer": "g0@0x51e:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmhl",
+            "lane": null,
+            "producer": "g0@0x51e:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmhh",
+            "lane": null,
+            "producer": "g0@0x51e:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": true,
+        "mixed": false,
+        "register": "dm1"
+      },
+      "address": "0x52a",
+      "index": 193,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec9.lo",
+            "lane": null,
+            "producer": "g0@0x50e:vunpack/q4_unpack",
+            "semantic": "q4_unpack"
+          },
+          {
+            "cell": "vec9.hi",
+            "lane": null,
+            "producer": "g0@0x50e:vunpack/q4_unpack",
+            "semantic": "q4_unpack"
+          }
+        ],
+        "crosses_group": true,
+        "mixed": false,
+        "register": "x9"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec10.lo",
+            "lane": null,
+            "producer": "g0@0x51a:vunpack/q4_unpack",
+            "semantic": "q4_unpack"
+          },
+          {
+            "cell": "vec10.hi",
+            "lane": null,
+            "producer": "g0@0x51a:vunpack/q4_unpack",
+            "semantic": "q4_unpack"
+          }
+        ],
+        "crosses_group": true,
+        "mixed": false,
+        "register": "x10"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "lane": null,
+            "producer": "g1@0x536:vadd/dequant_add",
+            "semantic": "dequant_add"
+          },
+          {
+            "cell": "acc1.bmlh",
+            "lane": null,
+            "producer": "g1@0x536:vadd/dequant_add",
+            "semantic": "dequant_add"
+          },
+          {
+            "cell": "acc1.bmhl",
+            "lane": null,
+            "producer": "g1@0x536:vadd/dequant_add",
+            "semantic": "dequant_add"
+          },
+          {
+            "cell": "acc1.bmhh",
+            "lane": null,
+            "producer": "g1@0x536:vadd/dequant_add",
+            "semantic": "dequant_add"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm1"
+      },
+      "address": "0x53a",
+      "index": 197,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec4.lo",
+            "lane": null,
+            "producer": "g0@0x4ba:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          },
+          {
+            "cell": "vec4.hi",
+            "lane": null,
+            "producer": "g0@0x4ba:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": true,
+        "mixed": false,
+        "register": "x4"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec0.lo",
+            "lane": null,
+            "producer": "g0@0x51e:vldb/weight_or_state_load",
+            "semantic": "weight_or_state_load"
+          },
+          {
+            "cell": "vec0.hi",
+            "lane": null,
+            "producer": "g0@0x51e:vldb/weight_or_state_load",
+            "semantic": "weight_or_state_load"
+          }
+        ],
+        "crosses_group": true,
+        "mixed": false,
+        "register": "x0"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x53a:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x53a:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x53a:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x53a:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x54a",
+      "index": 200,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "lane": null,
+            "producer": "g0@0x4f8:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec3.hi",
+            "lane": null,
+            "producer": "g0@0x490:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": true,
+        "mixed": true,
+        "register": "x3"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec11.lo",
+            "lane": null,
+            "producer": "g1@0x52a:vldb/activation_load",
+            "semantic": "activation_load"
+          },
+          {
+            "cell": "vec11.hi",
+            "lane": null,
+            "producer": "g1@0x52a:vldb/activation_load",
+            "semantic": "activation_load"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x11"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc4.bmll",
+            "lane": null,
+            "producer": "g0@0x478:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "acc4.bmlh",
+            "lane": null,
+            "producer": "g0@0x41c:vsub.f/dequant_sub",
+            "semantic": "dequant_sub"
+          },
+          {
+            "cell": "acc4.bmhl",
+            "lane": null,
+            "producer": "g0@0x41c:vsub.f/dequant_sub",
+            "semantic": "dequant_sub"
+          },
+          {
+            "cell": "acc4.bmhh",
+            "lane": null,
+            "producer": "g0@0x41c:vsub.f/dequant_sub",
+            "semantic": "dequant_sub"
+          }
+        ],
+        "crosses_group": true,
+        "mixed": true,
+        "register": "dm4"
+      },
+      "address": "0x570",
+      "index": 213,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec4.lo",
+            "lane": null,
+            "producer": "g1@0x564:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          },
+          {
+            "cell": "vec4.hi",
+            "lane": null,
+            "producer": "g0@0x4ba:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": true,
+        "mixed": true,
+        "register": "x4"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec2.lo",
+            "lane": null,
+            "producer": "g0@0x4dc:vldb/vldb",
+            "semantic": "vldb"
+          },
+          {
+            "cell": "vec2.hi",
+            "lane": 26,
+            "producer": "g0@0x4b2:vextbcst.16/activation_lane_broadcast lane #0x1a",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": true,
+        "mixed": true,
+        "register": "x2"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc4.bmll",
+            "lane": null,
+            "producer": "g1@0x570:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmlh",
+            "lane": null,
+            "producer": "g1@0x570:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmhl",
+            "lane": null,
+            "producer": "g1@0x570:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmhh",
+            "lane": null,
+            "producer": "g1@0x570:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm4"
+      },
+      "address": "0x580",
+      "index": 217,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec6.lo",
+            "lane": null,
+            "producer": "g1@0x580:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec6.hi",
+            "lane": 27,
+            "producer": "g0@0x4ba:vextbcst.16/activation_lane_broadcast lane #0x1b",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": true,
+        "mixed": true,
+        "register": "x6"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec1.lo",
+            "lane": null,
+            "producer": "g1@0x55e:vunpack/q4_unpack",
+            "semantic": "q4_unpack"
+          },
+          {
+            "cell": "vec1.hi",
+            "lane": null,
+            "producer": "g1@0x55e:vunpack/q4_unpack",
+            "semantic": "q4_unpack"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x1"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x5bc:vmul.f/mul_seed",
+            "semantic": "mul_seed"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x5bc:vmul.f/mul_seed",
+            "semantic": "mul_seed"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x5bc:vmul.f/mul_seed",
+            "semantic": "mul_seed"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x5bc:vmul.f/mul_seed",
+            "semantic": "mul_seed"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x5d0",
+      "index": 241,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec6.lo",
+            "lane": null,
+            "producer": "g1@0x5a8:vldb/weight_or_state_load",
+            "semantic": "weight_or_state_load"
+          },
+          {
+            "cell": "vec6.hi",
+            "lane": null,
+            "producer": "g1@0x5a8:vldb/weight_or_state_load",
+            "semantic": "weight_or_state_load"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x6"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec9.lo",
+            "lane": 1,
+            "producer": "g1@0x556:vextbcst.16/activation_lane_broadcast lane #0x1",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec9.hi",
+            "lane": 1,
+            "producer": "g1@0x556:vextbcst.16/activation_lane_broadcast lane #0x1",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x9"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x5d0:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x5d0:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x5d0:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x5d0:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x5e2",
+      "index": 245,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "lane": null,
+            "producer": "g1@0x588:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          },
+          {
+            "cell": "vec3.hi",
+            "lane": null,
+            "producer": "g1@0x588:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x3"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec10.lo",
+            "lane": null,
+            "producer": "g1@0x5de:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec10.hi",
+            "lane": 2,
+            "producer": "g1@0x5bc:vextbcst.16/activation_lane_broadcast lane #0x2",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x10"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x5e2:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x5e2:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x5e2:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x5e2:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x5f4",
+      "index": 250,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec2.lo",
+            "lane": null,
+            "producer": "g1@0x58e:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec2.hi",
+            "lane": 26,
+            "producer": "g0@0x4b2:vextbcst.16/activation_lane_broadcast lane #0x1a",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": true,
+        "mixed": true,
+        "register": "x2"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec7.lo",
+            "lane": 4,
+            "producer": "g1@0x5ee:vextbcst.16/activation_lane_broadcast lane #0x4",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec7.hi",
+            "lane": 4,
+            "producer": "g1@0x5ee:vextbcst.16/activation_lane_broadcast lane #0x4",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x7"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x5f4:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x5f4:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x5f4:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x5f4:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x608",
+      "index": 255,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec4.lo",
+            "lane": 5,
+            "producer": "g1@0x600:vextbcst.16/activation_lane_broadcast lane #0x5",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec4.hi",
+            "lane": 5,
+            "producer": "g1@0x600:vextbcst.16/activation_lane_broadcast lane #0x5",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x4"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec7.lo",
+            "lane": 4,
+            "producer": "g1@0x5ee:vextbcst.16/activation_lane_broadcast lane #0x4",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec7.hi",
+            "lane": 4,
+            "producer": "g1@0x5ee:vextbcst.16/activation_lane_broadcast lane #0x4",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x7"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x608:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x608:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x608:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x608:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x62a",
+      "index": 264,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec10.lo",
+            "lane": null,
+            "producer": "g1@0x5de:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec10.hi",
+            "lane": 2,
+            "producer": "g1@0x5bc:vextbcst.16/activation_lane_broadcast lane #0x2",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x10"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec4.lo",
+            "lane": 5,
+            "producer": "g1@0x600:vextbcst.16/activation_lane_broadcast lane #0x5",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec4.hi",
+            "lane": 5,
+            "producer": "g1@0x600:vextbcst.16/activation_lane_broadcast lane #0x5",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x4"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc4.bmll",
+            "lane": null,
+            "producer": "g1@0x62a:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmlh",
+            "lane": null,
+            "producer": "g1@0x62a:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmhl",
+            "lane": null,
+            "producer": "g1@0x62a:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmhh",
+            "lane": null,
+            "producer": "g1@0x62a:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm4"
+      },
+      "address": "0x640",
+      "index": 270,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec8.lo",
+            "lane": null,
+            "producer": "g1@0x636:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          },
+          {
+            "cell": "vec8.hi",
+            "lane": null,
+            "producer": "g1@0x636:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x8"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "lane": null,
+            "producer": "g1@0x636:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec3.hi",
+            "lane": 6,
+            "producer": "g1@0x61e:vextbcst.16/activation_lane_broadcast lane #0x6",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x3"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc4.bmll",
+            "lane": null,
+            "producer": "g1@0x640:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmlh",
+            "lane": null,
+            "producer": "g1@0x640:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmhl",
+            "lane": null,
+            "producer": "g1@0x640:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmhh",
+            "lane": null,
+            "producer": "g1@0x640:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm4"
+      },
+      "address": "0x654",
+      "index": 274,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "lane": null,
+            "producer": "g1@0x650:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec3.hi",
+            "lane": 6,
+            "producer": "g1@0x61e:vextbcst.16/activation_lane_broadcast lane #0x6",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x3"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec0.lo",
+            "lane": 7,
+            "producer": "g1@0x62a:vextbcst.16/activation_lane_broadcast lane #0x7",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec0.hi",
+            "lane": 7,
+            "producer": "g1@0x62a:vextbcst.16/activation_lane_broadcast lane #0x7",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x0"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc4.bmll",
+            "lane": null,
+            "producer": "g1@0x654:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmlh",
+            "lane": null,
+            "producer": "g1@0x654:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmhl",
+            "lane": null,
+            "producer": "g1@0x654:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmhh",
+            "lane": null,
+            "producer": "g1@0x654:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm4"
+      },
+      "address": "0x65e",
+      "index": 278,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec5.lo",
+            "lane": null,
+            "producer": "g1@0x65a:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec5.hi",
+            "lane": null,
+            "producer": "g1@0x600:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x5"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec9.lo",
+            "lane": null,
+            "producer": "g1@0x65e:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec9.hi",
+            "lane": 8,
+            "producer": "g1@0x5da:vextbcst.16/activation_lane_broadcast lane #0x8",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x9"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc4.bmll",
+            "lane": null,
+            "producer": "g1@0x65e:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmlh",
+            "lane": null,
+            "producer": "g1@0x65e:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmhl",
+            "lane": null,
+            "producer": "g1@0x65e:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmhh",
+            "lane": null,
+            "producer": "g1@0x65e:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm4"
+      },
+      "address": "0x66e",
+      "index": 283,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec5.lo",
+            "lane": null,
+            "producer": "g1@0x65a:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec5.hi",
+            "lane": null,
+            "producer": "g1@0x600:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x5"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec4.lo",
+            "lane": 9,
+            "producer": "g1@0x632:vextbcst.16/activation_lane_broadcast lane #0x9",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec4.hi",
+            "lane": 9,
+            "producer": "g1@0x632:vextbcst.16/activation_lane_broadcast lane #0x9",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x4"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc4.bmll",
+            "lane": null,
+            "producer": "g1@0x66e:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmlh",
+            "lane": null,
+            "producer": "g1@0x66e:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmhl",
+            "lane": null,
+            "producer": "g1@0x66e:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc4.bmhh",
+            "lane": null,
+            "producer": "g1@0x66e:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm4"
+      },
+      "address": "0x686",
+      "index": 290,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec2.lo",
+            "lane": null,
+            "producer": "g1@0x614:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          },
+          {
+            "cell": "vec2.hi",
+            "lane": null,
+            "producer": "g1@0x614:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x2"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec7.lo",
+            "lane": 10,
+            "producer": "g1@0x640:vextbcst.16/activation_lane_broadcast lane #0xa",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec7.hi",
+            "lane": 10,
+            "producer": "g1@0x640:vextbcst.16/activation_lane_broadcast lane #0xa",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x7"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x686:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x686:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x686:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x686:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x6a2",
+      "index": 297,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "lane": 15,
+            "producer": "g1@0x6a2:vextbcst.16/activation_lane_broadcast lane #0xf",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec3.hi",
+            "lane": 15,
+            "producer": "g1@0x6a2:vextbcst.16/activation_lane_broadcast lane #0xf",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x3"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec10.lo",
+            "lane": 14,
+            "producer": "g1@0x69a:vextbcst.16/activation_lane_broadcast lane #0xe",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec10.hi",
+            "lane": 14,
+            "producer": "g1@0x69a:vextbcst.16/activation_lane_broadcast lane #0xe",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x10"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "lane": null,
+            "producer": "g1@0x6a2:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmlh",
+            "lane": null,
+            "producer": "g1@0x6a2:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmhl",
+            "lane": null,
+            "producer": "g1@0x6a2:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmhh",
+            "lane": null,
+            "producer": "g1@0x6a2:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm1"
+      },
+      "address": "0x6b2",
+      "index": 301,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec8.lo",
+            "lane": null,
+            "producer": "g1@0x6ae:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec8.hi",
+            "lane": null,
+            "producer": "g1@0x636:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x8"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec4.lo",
+            "lane": 21,
+            "producer": "g1@0x6b2:vextbcst.16/activation_lane_broadcast lane #0x15",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec4.hi",
+            "lane": 21,
+            "producer": "g1@0x6b2:vextbcst.16/activation_lane_broadcast lane #0x15",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x4"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x6b2:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x6b2:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x6b2:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x6b2:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x6c6",
+      "index": 306,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec9.lo",
+            "lane": 17,
+            "producer": "g1@0x6c6:vextbcst.16/activation_lane_broadcast lane #0x11",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec9.hi",
+            "lane": 17,
+            "producer": "g1@0x6c6:vextbcst.16/activation_lane_broadcast lane #0x11",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x9"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec5.lo",
+            "lane": null,
+            "producer": "g1@0x6c2:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec5.hi",
+            "lane": 13,
+            "producer": "g1@0x690:vextbcst.16/activation_lane_broadcast lane #0xd",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x5"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x6c6:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x6c6:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x6c6:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x6c6:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x6d6",
+      "index": 310,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec1.lo",
+            "lane": 18,
+            "producer": "g1@0x6d2:vextbcst.16/activation_lane_broadcast lane #0x12",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec1.hi",
+            "lane": 18,
+            "producer": "g1@0x6d2:vextbcst.16/activation_lane_broadcast lane #0x12",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x1"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec10.lo",
+            "lane": 14,
+            "producer": "g1@0x69a:vextbcst.16/activation_lane_broadcast lane #0xe",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec10.hi",
+            "lane": 14,
+            "producer": "g1@0x69a:vextbcst.16/activation_lane_broadcast lane #0xe",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x10"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x6d6:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x6d6:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x6d6:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x6d6:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x6e6",
+      "index": 314,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec8.lo",
+            "lane": 19,
+            "producer": "g1@0x6e6:vextbcst.16/activation_lane_broadcast lane #0x13",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec8.hi",
+            "lane": 19,
+            "producer": "g1@0x6e6:vextbcst.16/activation_lane_broadcast lane #0x13",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x8"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "lane": null,
+            "producer": "g1@0x6e2:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec3.hi",
+            "lane": 15,
+            "producer": "g1@0x6a2:vextbcst.16/activation_lane_broadcast lane #0xf",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x3"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x6e6:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x6e6:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x6e6:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x6e6:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x6f6",
+      "index": 319,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec2.lo",
+            "lane": null,
+            "producer": "g1@0x6f6:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          },
+          {
+            "cell": "vec2.hi",
+            "lane": null,
+            "producer": "g1@0x6f6:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x2"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec7.lo",
+            "lane": 20,
+            "producer": "g1@0x6f2:vextbcst.16/activation_lane_broadcast lane #0x14",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec7.hi",
+            "lane": 20,
+            "producer": "g1@0x6f2:vextbcst.16/activation_lane_broadcast lane #0x14",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x7"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x6f6:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x6f6:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x6f6:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x6f6:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x70c",
+      "index": 325,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec5.lo",
+            "lane": null,
+            "producer": "g1@0x70c:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          },
+          {
+            "cell": "vec5.hi",
+            "lane": null,
+            "producer": "g1@0x70c:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x5"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec9.lo",
+            "lane": 17,
+            "producer": "g1@0x6c6:vextbcst.16/activation_lane_broadcast lane #0x11",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec9.hi",
+            "lane": 17,
+            "producer": "g1@0x6c6:vextbcst.16/activation_lane_broadcast lane #0x11",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x9"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x70c:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x70c:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x70c:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x70c:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x722",
+      "index": 330,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec0.lo",
+            "lane": 25,
+            "producer": "g1@0x71e:vextbcst.16/activation_lane_broadcast lane #0x19",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec0.hi",
+            "lane": 25,
+            "producer": "g1@0x71e:vextbcst.16/activation_lane_broadcast lane #0x19",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x0"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec1.lo",
+            "lane": 18,
+            "producer": "g1@0x6d2:vextbcst.16/activation_lane_broadcast lane #0x12",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec1.hi",
+            "lane": 18,
+            "producer": "g1@0x6d2:vextbcst.16/activation_lane_broadcast lane #0x12",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x1"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x722:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x722:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x722:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x722:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x730",
+      "index": 334,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "lane": null,
+            "producer": "g1@0x6e2:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec3.hi",
+            "lane": 15,
+            "producer": "g1@0x6a2:vextbcst.16/activation_lane_broadcast lane #0xf",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x3"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec8.lo",
+            "lane": null,
+            "producer": "g1@0x72c:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec8.hi",
+            "lane": 19,
+            "producer": "g1@0x6e6:vextbcst.16/activation_lane_broadcast lane #0x13",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x8"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x730:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x730:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x730:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x730:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x744",
+      "index": 339,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec2.lo",
+            "lane": null,
+            "producer": "g1@0x73c:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec2.hi",
+            "lane": null,
+            "producer": "g1@0x6f6:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x2"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec7.lo",
+            "lane": 20,
+            "producer": "g1@0x6f2:vextbcst.16/activation_lane_broadcast lane #0x14",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec7.hi",
+            "lane": 20,
+            "producer": "g1@0x6f2:vextbcst.16/activation_lane_broadcast lane #0x14",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x7"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x744:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x744:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x744:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x744:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x758",
+      "index": 344,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec2.lo",
+            "lane": null,
+            "producer": "g1@0x73c:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec2.hi",
+            "lane": null,
+            "producer": "g1@0x6f6:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x2"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec4.lo",
+            "lane": 21,
+            "producer": "g1@0x6b2:vextbcst.16/activation_lane_broadcast lane #0x15",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec4.hi",
+            "lane": 21,
+            "producer": "g1@0x6b2:vextbcst.16/activation_lane_broadcast lane #0x15",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x4"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc3.bmll",
+            "lane": null,
+            "producer": "g1@0x758:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmlh",
+            "lane": null,
+            "producer": "g1@0x758:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhl",
+            "lane": null,
+            "producer": "g1@0x758:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc3.bmhh",
+            "lane": null,
+            "producer": "g1@0x758:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm3"
+      },
+      "address": "0x76c",
+      "index": 350,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec5.lo",
+            "lane": null,
+            "producer": "g1@0x764:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          },
+          {
+            "cell": "vec5.hi",
+            "lane": null,
+            "producer": "g1@0x764:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x5"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec6.lo",
+            "lane": 27,
+            "producer": "g1@0x76c:vextbcst.16/activation_lane_broadcast lane #0x1b",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec6.hi",
+            "lane": 27,
+            "producer": "g1@0x76c:vextbcst.16/activation_lane_broadcast lane #0x1b",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x6"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc2.bmll",
+            "lane": null,
+            "producer": "g1@0x76c:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc2.bmlh",
+            "lane": null,
+            "producer": "g1@0x76c:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc2.bmhl",
+            "lane": null,
+            "producer": "g1@0x76c:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc2.bmhh",
+            "lane": null,
+            "producer": "g1@0x76c:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm2"
+      },
+      "address": "0x77e",
+      "index": 354,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec8.lo",
+            "lane": null,
+            "producer": "g1@0x77a:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec8.hi",
+            "lane": 19,
+            "producer": "g1@0x6e6:vextbcst.16/activation_lane_broadcast lane #0x13",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x8"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec9.lo",
+            "lane": null,
+            "producer": "g1@0x77e:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec9.hi",
+            "lane": 23,
+            "producer": "g1@0x716:vextbcst.16/activation_lane_broadcast lane #0x17",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x9"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "lane": null,
+            "producer": "g1@0x77e:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmlh",
+            "lane": null,
+            "producer": "g1@0x77e:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmhl",
+            "lane": null,
+            "producer": "g1@0x77e:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmhh",
+            "lane": null,
+            "producer": "g1@0x77e:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm1"
+      },
+      "address": "0x790",
+      "index": 360,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "lane": null,
+            "producer": "g1@0x78a:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec3.hi",
+            "lane": null,
+            "producer": "g1@0x73c:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x3"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec10.lo",
+            "lane": 29,
+            "producer": "g1@0x790:vextbcst.16/activation_lane_broadcast lane #0x1d",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec10.hi",
+            "lane": 29,
+            "producer": "g1@0x790:vextbcst.16/activation_lane_broadcast lane #0x1d",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x10"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "lane": null,
+            "producer": "g1@0x790:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmlh",
+            "lane": null,
+            "producer": "g1@0x790:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmhl",
+            "lane": null,
+            "producer": "g1@0x790:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmhh",
+            "lane": null,
+            "producer": "g1@0x790:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm1"
+      },
+      "address": "0x7a0",
+      "index": 366,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec3.lo",
+            "lane": null,
+            "producer": "g1@0x78a:vmov/register_move",
+            "semantic": "register_move"
+          },
+          {
+            "cell": "vec3.hi",
+            "lane": null,
+            "producer": "g1@0x73c:vconv.bf16.fp32/accum_to_bf16_vector",
+            "semantic": "accum_to_bf16_vector"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x3"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec0.lo",
+            "lane": 30,
+            "producer": "g1@0x79c:vextbcst.16/activation_lane_broadcast lane #0x1e",
+            "semantic": "activation_lane_broadcast"
+          },
+          {
+            "cell": "vec0.hi",
+            "lane": 30,
+            "producer": "g1@0x79c:vextbcst.16/activation_lane_broadcast lane #0x1e",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x0"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "lane": null,
+            "producer": "g1@0x7a0:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmlh",
+            "lane": null,
+            "producer": "g1@0x7a0:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmhl",
+            "lane": null,
+            "producer": "g1@0x7a0:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmhh",
+            "lane": null,
+            "producer": "g1@0x7a0:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm1"
+      },
+      "address": "0x7b4",
+      "index": 370,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec1.lo",
+            "lane": null,
+            "producer": "g1@0x7b0:vbcst.16/vbcst.16",
+            "semantic": "vbcst.16"
+          },
+          {
+            "cell": "vec1.hi",
+            "lane": null,
+            "producer": "g1@0x7b0:vbcst.16/vbcst.16",
+            "semantic": "vbcst.16"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x1"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec2.lo",
+            "lane": null,
+            "producer": "g1@0x790:vldb/vldb",
+            "semantic": "vldb"
+          },
+          {
+            "cell": "vec2.hi",
+            "lane": 26,
+            "producer": "g1@0x764:vextbcst.16/activation_lane_broadcast lane #0x1a",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x2"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "lane": null,
+            "producer": "g1@0x7b4:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmlh",
+            "lane": null,
+            "producer": "g1@0x7b4:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmhl",
+            "lane": null,
+            "producer": "g1@0x7b4:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmhh",
+            "lane": null,
+            "producer": "g1@0x7b4:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm1"
+      },
+      "address": "0x7c2",
+      "index": 374,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec8.lo",
+            "lane": null,
+            "producer": "g1@0x7a0:vlda/weight_or_state_load",
+            "semantic": "weight_or_state_load"
+          },
+          {
+            "cell": "vec8.hi",
+            "lane": null,
+            "producer": "g1@0x7a0:vlda/weight_or_state_load",
+            "semantic": "weight_or_state_load"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x8"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec6.lo",
+            "lane": null,
+            "producer": "g1@0x7a0:vldb/vldb",
+            "semantic": "vldb"
+          },
+          {
+            "cell": "vec6.hi",
+            "lane": 27,
+            "producer": "g1@0x76c:vextbcst.16/activation_lane_broadcast lane #0x1b",
+            "semantic": "activation_lane_broadcast"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": true,
+        "register": "x6"
+      }
+    },
+    {
+      "accumulator": {
+        "cells": [
+          {
+            "cell": "acc1.bmll",
+            "lane": null,
+            "producer": "g1@0x7c2:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmlh",
+            "lane": null,
+            "producer": "g1@0x7c2:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmhl",
+            "lane": null,
+            "producer": "g1@0x7c2:vmac.f/mac",
+            "semantic": "mac"
+          },
+          {
+            "cell": "acc1.bmhh",
+            "lane": null,
+            "producer": "g1@0x7c2:vmac.f/mac",
+            "semantic": "mac"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "dm1"
+      },
+      "address": "0x7d2",
+      "index": 378,
+      "left": {
+        "cells": [
+          {
+            "cell": "vec5.lo",
+            "lane": null,
+            "producer": "g1@0x7bc:vunpack/q4_unpack",
+            "semantic": "q4_unpack"
+          },
+          {
+            "cell": "vec5.hi",
+            "lane": null,
+            "producer": "g1@0x7bc:vunpack/q4_unpack",
+            "semantic": "q4_unpack"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x5"
+      },
+      "right": {
+        "cells": [
+          {
+            "cell": "vec7.lo",
+            "lane": null,
+            "producer": "g1@0x7b4:vldb/weight_or_state_load",
+            "semantic": "weight_or_state_load"
+          },
+          {
+            "cell": "vec7.hi",
+            "lane": null,
+            "producer": "g1@0x7b4:vldb/weight_or_state_load",
+            "semantic": "weight_or_state_load"
+          }
+        ],
+        "crosses_group": false,
+        "mixed": false,
+        "register": "x7"
+      }
+    }
+  ],
+  "metrics": {
+    "boundary_cells": 23,
+    "cross_group_accumulators": 2,
+    "cross_group_vector_operands": 9,
+    "group": 1,
+    "mac_count": 33,
+    "mixed_vector_operands": 25,
+    "shape:accum_to_bf16_vector": 8,
+    "shape:activation_lane_broadcast": 24,
+    "shape:activation_load": 1,
+    "shape:q4_unpack": 4,
+    "shape:register_move+accum_to_bf16_vector": 8,
+    "shape:register_move+activation_lane_broadcast": 13,
+    "shape:vbcst.16": 1,
+    "shape:vldb+activation_lane_broadcast": 3,
+    "shape:weight_or_state_load": 4
+  },
+  "source": "experiments/130_mylm_main16_record_observable_harness/mylm_c2r2_main16_record_exec.elf",
+  "status": "passed",
+  "steady_group": 1
+}

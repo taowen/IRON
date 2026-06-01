@@ -1,0 +1,110 @@
+{
+  "aiecc_no_compile_package": {
+    "project_dir": "experiments/128_raw_core_program_codegen_feasibility/aiecc_raw_probe_prj",
+    "txn": "experiments/128_raw_core_program_codegen_feasibility/raw_codegen_probe.aiecc.txn.mlir",
+    "txn_payload_bytes": [
+      32
+    ],
+    "xclbin": "experiments/128_raw_core_program_codegen_feasibility/raw_codegen_probe.xclbin",
+    "xclbin_bytes": 7268
+  },
+  "et_rel_negative_control": {
+    "expected": "no config_blockwrite payloads from ET_REL",
+    "mlir": "experiments/128_raw_core_program_codegen_feasibility/raw_codegen_probe_rel.mlir",
+    "object": "experiments/128_raw_core_program_codegen_feasibility/raw_codegen_probe.o",
+    "txn": "experiments/128_raw_core_program_codegen_feasibility/raw_codegen_probe_rel.txn.mlir",
+    "txn_payload_bytes": []
+  },
+  "main16_scaffold_exec": {
+    "available": true,
+    "elf": "experiments/128_raw_core_program_codegen_feasibility/main16_scaffold_whole_core.elf",
+    "elf_header": {
+      "entry": "0x0",
+      "load_segments": 2,
+      "program_headers": 3,
+      "type": "EXEC"
+    },
+    "sections": {
+      ".bss": 128,
+      ".comment": 97,
+      ".text": 6198
+    },
+    "source_object": "experiments/127_main16_whole_program_scaffold/main16_whole_program_scaffold.o",
+    "txn": "experiments/128_raw_core_program_codegen_feasibility/main16_scaffold_whole_core.txn.mlir",
+    "txn_payload_bytes": [
+      6200,
+      128
+    ]
+  },
+  "mylm_raw_exec": {
+    "available": true,
+    "elf": "experiments/128_raw_core_program_codegen_feasibility/mylm_c2r2_exec.elf",
+    "elf_header": {
+      "entry": "0x0",
+      "load_segments": 1,
+      "program_headers": 1,
+      "type": "EXEC"
+    },
+    "raw_copy": "experiments/128_raw_core_program_codegen_feasibility/mylm_c2r2_program.bin",
+    "raw_input": "/tmp/mylm_qwen3_8b_layer_redump/programs/c2r2_program.bin",
+    "sections": {
+      ".text": 14868
+    },
+    "txn": "experiments/128_raw_core_program_codegen_feasibility/mylm_c2r2_exec.txn.mlir",
+    "txn_payload_bytes": [
+      14868
+    ]
+  },
+  "status": "pass",
+  "tiny_source_asm_exec": {
+    "asm": "experiments/128_raw_core_program_codegen_feasibility/raw_codegen_probe.s",
+    "disasm_head": [
+      "",
+      "/var/home/taowen/projects/IRON/experiments/128_raw_core_program_codegen_feasibility/raw_codegen_probe.elf:\tfile format elf32-aie",
+      "",
+      "Disassembly of section .text:",
+      "",
+      "00000000 <__start>:",
+      "       0:      \tmova\tr0, #0x7",
+      "       4:      \tmova\tr1, #0x23",
+      "",
+      "00000008 <.Lspin>:",
+      "       8:      \tadd\tr0, r0, #0x1",
+      "       c:      \tj\t#0x8",
+      "\t\t...",
+      "      1a:      \tnop\t",
+      "      1c:      \tnopx\t"
+    ],
+    "elf": "experiments/128_raw_core_program_codegen_feasibility/raw_codegen_probe.elf",
+    "elf_header": {
+      "entry": "0x0",
+      "load_segments": 1,
+      "program_headers": 2,
+      "type": "EXEC"
+    },
+    "object": "experiments/128_raw_core_program_codegen_feasibility/raw_codegen_probe.o",
+    "sections": {
+      ".comment": 97,
+      ".text": 32
+    },
+    "txn": "experiments/128_raw_core_program_codegen_feasibility/raw_codegen_probe.txn.mlir",
+    "txn_payload_bytes": [
+      32
+    ]
+  },
+  "tools": {
+    "aie_opt": ".venv/lib/python3.12/site-packages/mlir_aie/bin/aie-opt",
+    "aiecc": ".venv/lib/python3.12/site-packages/mlir_aie/bin/aiecc",
+    "clang": ".venv/lib/python3.12/site-packages/llvm-aie/bin/clang",
+    "ld_lld": ".venv/lib/python3.12/site-packages/llvm-aie/bin/ld.lld",
+    "wrap_raw_aie_program": "qwen3-layer/tools/wrap_raw_aie_program.py"
+  },
+  "verdict": {
+    "aiecc_no_compile_xclbin_package": true,
+    "exec_elf_to_transaction_payload": true,
+    "main16_scaffold_can_be_whole_core_elf": true,
+    "mylm_raw_bytes_can_be_wrapped_as_exec": true,
+    "raw_asm_to_exec_elf": true,
+    "relocatable_object_is_not_enough": true
+  }
+}

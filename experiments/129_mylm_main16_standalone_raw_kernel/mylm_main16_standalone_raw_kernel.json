@@ -1,0 +1,115 @@
+{
+  "artifacts": {
+    "elf": "experiments/129_mylm_main16_standalone_raw_kernel/mylm_c2r2_main16_exec.elf",
+    "insts": "experiments/129_mylm_main16_standalone_raw_kernel/design.bin",
+    "mlir": "experiments/129_mylm_main16_standalone_raw_kernel/design.mlir",
+    "project_dir": "experiments/129_mylm_main16_standalone_raw_kernel/prj",
+    "raw_copy": "experiments/129_mylm_main16_standalone_raw_kernel/mylm_c2r2_program.bin",
+    "static_73c80_copy": "experiments/129_mylm_main16_standalone_raw_kernel/mylm_static_73c80.bin",
+    "static_73d00_copy": "experiments/129_mylm_main16_standalone_raw_kernel/mylm_static_73d00.bin",
+    "txn": "experiments/129_mylm_main16_standalone_raw_kernel/design.txn.mlir",
+    "xclbin": "experiments/129_mylm_main16_standalone_raw_kernel/design.xclbin"
+  },
+  "elf": {
+    "disasm_head": [
+      "",
+      "/var/home/taowen/projects/IRON/experiments/129_mylm_main16_standalone_raw_kernel/mylm_c2r2_main16_exec.elf:\tfile format elf32-aie",
+      "",
+      "Disassembly of section .text:",
+      "",
+      "00000000 <.text>:",
+      "       0:      \tmovxm\tsp, #0x70000",
+      "       6:      \tmovxm\tr8, #0x0",
+      "       c:      \tmovxm\tr16, #0x0",
+      "      12:      \teq\t r16, r8, r16",
+      "      16:      \tjnz\t r16, #0x80",
+      "\t\t...",
+      "      24:      \tnop\t",
+      "      26:      \tmovs\tp7, p0;\t\tmovxm\tp6, #-0x4",
+      "      30:      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopx\t;\t\tmov\tr9, r1;\t\tnopv\t",
+      "      40:      \tlda\t p0, [p6], #-4;\t\tmov\tr10, p6",
+      "\t\t...",
+      "      52:      \tjl\tp0",
+      "\t\t...",
+      "      5e:      \tnop\t",
+      "<llvm-objdump exited -6; stdout above is partial>",
+      "llvm-objdump: /project/build/temp/lib/Target/AIE/AIE2PGenAsmWriter.inc:5096: virtual void llvm::AIE2PInstPrinter::printInstruction(const llvm::MCInst*, uint64_t, const llvm::MCSubtargetInfo&, llvm::raw_ostream&): Assertion `Bits != 0 && \"Cannot print this instruction.\"' failed.",
+      "PLEASE submit a bug report to https://github.com/llvm/llvm-project/issues/ and include the crash backtrace.",
+      "Stack dump:",
+      "0.\tProgram arguments: /var/home/taowen/projects/IRON/.venv/lib/python3.12/site-packages/llvm-aie/bin/llvm-objdump -d --no-show-raw-insn /var/home/taowen/projects/IRON/experiments/129_mylm_main16_standalone_raw_kernel/mylm_c2r2_main16_exec.elf"
+    ],
+    "header": {
+      "entry": "0x0",
+      "load_segments": 3,
+      "program_headers": 3,
+      "type": "EXEC"
+    },
+    "sections": {
+      ".mylm_static_73c80": 128,
+      ".mylm_static_73d00": 32,
+      ".text": 14868
+    }
+  },
+  "insts": {
+    "bytes": 40
+  },
+  "known_kernel_runtime_probe": {
+    "elapsed_s": 0.35852718353271484,
+    "returncode": 0,
+    "status": "run_pass",
+    "stderr": "",
+    "stdout": "load_begin\nload_ok\nrun_ok\nelapsed=0.018132925033569336\nresult_type=XRTKernelResult\nnpu_time=18091776\n"
+  },
+  "mylm_disasm": {
+    "available": false,
+    "path": "/nonexistent/c2r2.s"
+  },
+  "runtime_probe": {
+    "elapsed_s": 0.6422405242919922,
+    "returncode": 0,
+    "status": "run_pass",
+    "stderr": "",
+    "stdout": "load_begin\nload_ok\nrun_ok\nelapsed=0.0005347728729248047\nresult_type=XRTKernelResult\nnpu_time=488013\n"
+  },
+  "source": {
+    "mylm_raw": "experiments/129_mylm_main16_standalone_raw_kernel/mylm_c2r2_program.bin",
+    "raw_bytes": 14868,
+    "static_73c80": "experiments/129_mylm_main16_standalone_raw_kernel/mylm_static_73c80.bin",
+    "static_73d00": "experiments/129_mylm_main16_standalone_raw_kernel/mylm_static_73d00.bin",
+    "static_segments": [
+      {
+        "addr": "0x73c80",
+        "bytes": 128,
+        "name": ".mylm_static_73c80"
+      },
+      {
+        "addr": "0x73d00",
+        "bytes": 32,
+        "name": ".mylm_static_73d00"
+      }
+    ]
+  },
+  "status": "run_pass",
+  "transaction": {
+    "blockwrite_addresses": [
+      "0x4220000",
+      "0x4203c80",
+      "0x4203d00"
+    ],
+    "has_start_lock_release": true,
+    "payload_bytes": [
+      14868,
+      128,
+      32
+    ]
+  },
+  "xclbin": {
+    "bytes": 22378
+  },
+  "xrt_validate": {
+    "returncode": 0,
+    "status": "pass",
+    "stderr": "",
+    "stdout": "WARNING: User doesn't have admin permissions to set performance mode. Running validate in Default mode\nValidate Device           : [0000:c6:00.1]\n    Platform              : RyzenAI-npu4\n    Power Mode            : Default\n-------------------------------------------------------------------------------\nTest 1 [0000:c6:00.1]     : gemm \n\u001b[?25l\u001b[39m[\u001b[38;5;111m                    \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m<->                 \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m <->                \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m  <->               \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m   <->              \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m    <->             \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m     <->            \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m      <->           \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m       <->          \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m        <->         \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m         <->        \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m          <->       \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m           <->      \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m            <->     \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m             <->    \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m              <->   \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m               <->  \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m                <-> \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m                 <->\u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m                <-> \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m               <->  \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 2s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m              <->   \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 2s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m             <->    \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 2s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m            <->     \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 2s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m           <->      \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 2s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m          <->       \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 2s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m         <->        \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 2s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m        <->         \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 2s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m       <->          \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 2s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m      <->           \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 2s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m     <->            \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 3s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m    <->             \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 3s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m   <->              \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 3s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m  <->               \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 3s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m <->                \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 3s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m<->                 \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 3s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m <->                \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 3s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m  <->               \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 3s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m   <->              \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 3s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m    <->             \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 3s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m     <->            \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 4s >\n\n\u001b[1A                                                                                \n\n\u001b[1A\u001b[?25h    Details               : TOPS: 51.0\n    Test Status           : [PASSED]\n-------------------------------------------------------------------------------\nTest 2 [0000:c6:00.1]     : latency \n\u001b[?25l\u001b[39m[\u001b[38;5;111m                    \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m<->                 \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m <->                \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m  <->               \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m   <->              \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m    <->             \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m     <->            \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m      <->           \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m       <->          \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m        <->         \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m         <->        \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m          <->       \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m           <->      \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m            <->     \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m             <->    \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m              <->   \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m               <->  \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m                <-> \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m                 <->\u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m                <-> \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m               <->  \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 2s >\n\n\u001b[1A                                                                                \n\n\u001b[1A\u001b[?25h    Details               : Average latency: 112.0 us\n    Test Status           : [PASSED]\n-------------------------------------------------------------------------------\nTest 3 [0000:c6:00.1]     : throughput \n\u001b[?25l\u001b[39m[\u001b[38;5;111m                    \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m<->                 \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m <->                \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m  <->               \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m   <->              \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m    <->             \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m     <->            \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m      <->           \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m       <->          \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m        <->         \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\n\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m         <->        \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 1s >\n\n\u001b[1A                                                                                \n\n\u001b[1A\u001b[?25h    Details               : Average throughput: 31478.0 op/s\n    Test Status           : [PASSED]\n-------------------------------------------------------------------------------\nValidation completed. Please run the command '--verbose' option for more details\n"
+  }
+}

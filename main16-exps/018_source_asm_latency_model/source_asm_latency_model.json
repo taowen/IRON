@@ -1,0 +1,1128 @@
+{
+  "min_safe_gaps": {
+    "and_to_eq_value": 0,
+    "eq_to_jz": 0,
+    "lda_to_eq_jz": 6,
+    "lda_to_st": 6,
+    "lshl_to_or": 0
+  },
+  "results": [
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap0/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap0/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap0/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap0/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap0/design.xclbin"
+      },
+      "expected": "0x3c803c80",
+      "gap": 0,
+      "kind": "lda_to_st",
+      "observed": "0x0",
+      "passed": false,
+      "runtime_output": "run_ok\nelapsed=0.0005755424499511719\nnpu_time=518226\nrecord=0x1,0x0,0x0,0x0,0x3c803c80,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap0/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap0/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap0/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap0/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap0/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 0,
+      "kind": "lda_to_eq_jz",
+      "observed": "0xa55a5a5a",
+      "passed": false,
+      "runtime_output": "run_ok\nelapsed=0.0005557537078857422\nnpu_time=498068\nrecord=0x1,0xa55a5a5a,0xa55a5a5a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap1/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap1/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap1/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap1/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap1/design.xclbin"
+      },
+      "expected": "0x3c803c80",
+      "gap": 1,
+      "kind": "lda_to_st",
+      "observed": "0x0",
+      "passed": false,
+      "runtime_output": "run_ok\nelapsed=0.0005056858062744141\nnpu_time=460989\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap1/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap1/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap1/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap1/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap1/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 1,
+      "kind": "lda_to_eq_jz",
+      "observed": "0xa55a5a5a",
+      "passed": false,
+      "runtime_output": "run_ok\nelapsed=0.0005397796630859375\nnpu_time=492127\nrecord=0x1,0xa55a5a5a,0xa55a5a5a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap2/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap2/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap2/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap2/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap2/design.xclbin"
+      },
+      "expected": "0x3c803c80",
+      "gap": 2,
+      "kind": "lda_to_st",
+      "observed": "0x0",
+      "passed": false,
+      "runtime_output": "run_ok\nelapsed=0.00048470497131347656\nnpu_time=439298\nrecord=0x1,0x0,0x0,0x3c803c80,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap2/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap2/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap2/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap2/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap2/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 2,
+      "kind": "lda_to_eq_jz",
+      "observed": "0xa55a5a5a",
+      "passed": false,
+      "runtime_output": "run_ok\nelapsed=0.0004951953887939453\nnpu_time=449017\nrecord=0x1,0xa55a5a5a,0xa55a5a5a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap3/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap3/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap3/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap3/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap3/design.xclbin"
+      },
+      "expected": "0x3c803c80",
+      "gap": 3,
+      "kind": "lda_to_st",
+      "observed": "0x0",
+      "passed": false,
+      "runtime_output": "run_ok\nelapsed=0.0005140304565429688\nnpu_time=466620\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap3/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap3/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap3/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap3/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap3/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 3,
+      "kind": "lda_to_eq_jz",
+      "observed": "0xa55a5a5a",
+      "passed": false,
+      "runtime_output": "run_ok\nelapsed=0.0005769729614257812\nnpu_time=524517\nrecord=0x1,0xa55a5a5a,0xa55a5a5a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap4/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap4/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap4/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap4/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap4/design.xclbin"
+      },
+      "expected": "0x3c803c80",
+      "gap": 4,
+      "kind": "lda_to_st",
+      "observed": "0x0",
+      "passed": false,
+      "runtime_output": "run_ok\nelapsed=0.0005593299865722656\nnpu_time=513046\nrecord=0x1,0x0,0x3c803c80,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap4/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap4/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap4/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap4/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap4/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 4,
+      "kind": "lda_to_eq_jz",
+      "observed": "0xa55a5a5a",
+      "passed": false,
+      "runtime_output": "run_ok\nelapsed=0.0005109310150146484\nnpu_time=465207\nrecord=0x1,0xa55a5a5a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap5/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap5/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap5/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap5/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap5/design.xclbin"
+      },
+      "expected": "0x3c803c80",
+      "gap": 5,
+      "kind": "lda_to_st",
+      "observed": "0x0",
+      "passed": false,
+      "runtime_output": "run_ok\nelapsed=0.00051116943359375\nnpu_time=465327\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap5/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap5/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap5/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap5/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap5/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 5,
+      "kind": "lda_to_eq_jz",
+      "observed": "0xa55a5a5a",
+      "passed": false,
+      "runtime_output": "run_ok\nelapsed=0.0005581378936767578\nnpu_time=505492\nrecord=0x1,0xa55a5a5a,0xa55a5a5a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap6/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap6/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap6/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap6/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap6/design.xclbin"
+      },
+      "expected": "0x3c803c80",
+      "gap": 6,
+      "kind": "lda_to_st",
+      "observed": "0x3c803c80",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005011558532714844\nnpu_time=455459\nrecord=0x1,0x3c803c80,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap6/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap6/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap6/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap6/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap6/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 6,
+      "kind": "lda_to_eq_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0006279945373535156\nnpu_time=542892\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap7/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap7/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap7/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap7/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap7/design.xclbin"
+      },
+      "expected": "0x3c803c80",
+      "gap": 7,
+      "kind": "lda_to_st",
+      "observed": "0x3c803c80",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.000514984130859375\nnpu_time=460478\nrecord=0x1,0x3c803c80,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap7/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap7/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap7/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap7/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap7/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 7,
+      "kind": "lda_to_eq_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.00048279762268066406\nnpu_time=437976\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap8/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap8/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap8/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap8/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_st_gap8/design.xclbin"
+      },
+      "expected": "0x3c803c80",
+      "gap": 8,
+      "kind": "lda_to_st",
+      "observed": "0x3c803c80",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005142688751220703\nnpu_time=458785\nrecord=0x1,0x3c803c80,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap8/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap8/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap8/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap8/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lda_to_eq_jz_gap8/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 8,
+      "kind": "lda_to_eq_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005736351013183594\nnpu_time=529377\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap0/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap0/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap0/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap0/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap0/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 0,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005600452423095703\nnpu_time=499321\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap0/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap0/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap0/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap0/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap0/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 0,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005075931549072266\nnpu_time=458835\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap0/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap0/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap0/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap0/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap0/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 0,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005145072937011719\nnpu_time=456601\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap1/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap1/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap1/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap1/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap1/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 1,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005931854248046875\nnpu_time=535628\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap1/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap1/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap1/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap1/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap1/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 1,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005269050598144531\nnpu_time=475466\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap1/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap1/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap1/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap1/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap1/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 1,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0004899501800537109\nnpu_time=441042\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap2/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap2/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap2/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap2/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap2/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 2,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005550384521484375\nnpu_time=490554\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap2/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap2/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap2/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap2/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap2/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 2,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005214214324951172\nnpu_time=478152\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap2/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap2/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap2/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap2/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap2/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 2,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005519390106201172\nnpu_time=498759\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap3/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap3/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap3/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap3/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap3/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 3,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005443096160888672\nnpu_time=497898\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap3/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap3/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap3/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap3/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap3/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 3,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005106925964355469\nnpu_time=466239\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap3/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap3/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap3/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap3/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap3/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 3,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0006399154663085938\nnpu_time=510882\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap4/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap4/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap4/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap4/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap4/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 4,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005638599395751953\nnpu_time=518947\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap4/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap4/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap4/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap4/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap4/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 4,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005667209625244141\nnpu_time=516222\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap4/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap4/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap4/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap4/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap4/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 4,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005848407745361328\nnpu_time=536520\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap5/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap5/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap5/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap5/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap5/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 5,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0013396739959716797\nnpu_time=1279154\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap5/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap5/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap5/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap5/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap5/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 5,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005006790161132812\nnpu_time=456150\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap5/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap5/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap5/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap5/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap5/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 5,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0004942417144775391\nnpu_time=450068\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap6/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap6/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap6/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap6/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap6/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 6,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005288124084472656\nnpu_time=470507\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap6/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap6/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap6/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap6/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap6/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 6,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0007338523864746094\nnpu_time=679536\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap6/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap6/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap6/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap6/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap6/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 6,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005714893341064453\nnpu_time=511102\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap7/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap7/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap7/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap7/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap7/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 7,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.000522613525390625\nnpu_time=468833\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap7/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap7/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap7/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap7/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap7/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 7,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0004999637603759766\nnpu_time=453115\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap7/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap7/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap7/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap7/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap7/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 7,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0004944801330566406\nnpu_time=448676\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap8/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap8/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap8/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap8/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap8/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 8,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005271434783935547\nnpu_time=481136\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap8/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap8/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap8/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap8/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap8/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 8,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0004813671112060547\nnpu_time=436664\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap8/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap8/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap8/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap8/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap8/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 8,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005326271057128906\nnpu_time=478071\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap9/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap9/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap9/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap9/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap9/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 9,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005040168762207031\nnpu_time=458324\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap9/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap9/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap9/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap9/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap9/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 9,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005369186401367188\nnpu_time=485695\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap9/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap9/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap9/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap9/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap9/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 9,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005102157592773438\nnpu_time=439438\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap10/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap10/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap10/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap10/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap10/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 10,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005202293395996094\nnpu_time=473112\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap10/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap10/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap10/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap10/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap10/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 10,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0008695125579833984\nnpu_time=817314\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap10/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap10/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap10/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap10/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap10/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 10,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0004966259002685547\nnpu_time=452052\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap11/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap11/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap11/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap11/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap11/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 11,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005078315734863281\nnpu_time=461740\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap11/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap11/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap11/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap11/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap11/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 11,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005252361297607422\nnpu_time=478432\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap11/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap11/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap11/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap11/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap11/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 11,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0004963874816894531\nnpu_time=448917\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap12/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap12/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap12/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap12/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap12/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 12,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005171298980712891\nnpu_time=471418\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap12/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap12/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap12/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap12/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap12/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 12,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005292892456054688\nnpu_time=482058\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap12/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap12/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap12/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap12/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap12/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 12,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0006048679351806641\nnpu_time=537632\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap13/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap13/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap13/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap13/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap13/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 13,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0006034374237060547\nnpu_time=556286\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap13/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap13/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap13/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap13/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap13/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 13,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005233287811279297\nnpu_time=466509\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap13/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap13/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap13/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap13/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap13/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 13,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005700588226318359\nnpu_time=521963\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap14/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap14/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap14/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap14/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap14/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 14,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005075931549072266\nnpu_time=462732\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap14/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap14/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap14/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap14/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap14/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 14,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.000553131103515625\nnpu_time=500393\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap14/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap14/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap14/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap14/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap14/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 14,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005469322204589844\nnpu_time=498168\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap15/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap15/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap15/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap15/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap15/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 15,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0004906654357910156\nnpu_time=438366\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap15/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap15/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap15/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap15/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap15/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 15,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005459785461425781\nnpu_time=497076\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap15/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap15/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap15/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap15/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap15/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 15,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005176067352294922\nnpu_time=473893\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap16/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap16/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap16/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap16/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/eq_to_jz_gap16/design.xclbin"
+      },
+      "expected": "0x5a5aa55a",
+      "gap": 16,
+      "kind": "eq_to_jz",
+      "observed": "0x5a5aa55a",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005528926849365234\nnpu_time=506674\nrecord=0x1,0x5a5aa55a,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap16/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap16/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap16/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap16/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/and_to_eq_value_gap16/design.xclbin"
+      },
+      "expected": "0x0",
+      "gap": 16,
+      "kind": "and_to_eq_value",
+      "observed": "0x0",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005097389221191406\nnpu_time=465668\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    },
+    {
+      "artifacts": {
+        "asm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap16/source_asm_latency_probe.s",
+        "disasm": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap16/source_asm_latency_probe.disasm.s",
+        "elf": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap16/source_asm_latency_probe.elf",
+        "insts": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap16/design.bin",
+        "xclbin": "main16-exps/018_source_asm_latency_model/build/lshl_to_or_gap16/design.xclbin"
+      },
+      "expected": "0x3c800000",
+      "gap": 16,
+      "kind": "lshl_to_or",
+      "observed": "0x3c800000",
+      "passed": true,
+      "runtime_output": "run_ok\nelapsed=0.0005314350128173828\nnpu_time=478723\nrecord=0x1,0x3c800000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_status": "record_observed"
+    }
+  ],
+  "status": "passed",
+  "topology_after": {
+    "status": "ok",
+    "stderr": "",
+    "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+    "topology": "6x8"
+  },
+  "topology_before": {
+    "status": "ok",
+    "stderr": "",
+    "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+    "topology": "6x8"
+  }
+}

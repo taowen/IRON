@@ -1,0 +1,99 @@
+{
+  "artifacts": {
+    "elf": "experiments/130_mylm_main16_record_observable_harness/mylm_c2r2_main16_record_exec.elf",
+    "insts": "experiments/130_mylm_main16_record_observable_harness/design.bin",
+    "mlir": "experiments/130_mylm_main16_record_observable_harness/design.mlir",
+    "txn": "experiments/130_mylm_main16_record_observable_harness/design.txn.mlir",
+    "xclbin": "experiments/130_mylm_main16_record_observable_harness/design.xclbin"
+  },
+  "elf": {
+    "header": {
+      "load_segments": 3,
+      "type": "EXEC"
+    },
+    "sections": {
+      ".mylm_static_73c80": 128,
+      ".mylm_static_73d00": 32,
+      ".text": 14868
+    }
+  },
+  "harness": {
+    "activation_chunks": 1104,
+    "activation_dwords": 141312,
+    "activation_pong_flag": 1,
+    "preserve_dispatcher_p5": true,
+    "record_dwords": 1173,
+    "records_to_observe": 69,
+    "route": "shim2 MM2S0/1 -> c2r2 DMA0/1; c2r2 MM2S1 -> shim3 S2MM1",
+    "tile": "c2r2",
+    "weight_chunks": 1104,
+    "weight_dwords": 1413120
+  },
+  "record_headers": [],
+  "runtime_probe": {
+    "elapsed_s": 60.06133699417114,
+    "status": "timeout_waiting_for_record",
+    "stderr": "",
+    "stdout": "",
+    "timeout_s": 60
+  },
+  "source": {
+    "mylm_raw": "/var/home/taowen/projects/IRON/experiments/129_mylm_main16_standalone_raw_kernel/mylm_c2r2_program.bin",
+    "raw_bytes": 14868,
+    "raw_patches": [
+      {
+        "meaning": "replace lda p5,[sp,#-68] with nopa in the same bundle, preserving caller p5",
+        "name": "preserve_dispatcher_p5",
+        "offset": "0x36de",
+        "original": "ba72600a028b8027d3f7",
+        "patched": "ba72600a028b80f72c00"
+      }
+    ],
+    "static_73c80": "/var/home/taowen/projects/IRON/experiments/129_mylm_main16_standalone_raw_kernel/mylm_static_73c80.bin",
+    "static_73d00": "/var/home/taowen/projects/IRON/experiments/129_mylm_main16_standalone_raw_kernel/mylm_static_73d00.bin",
+    "static_segments": [
+      {
+        "addr": "0x73c80",
+        "bytes": 128,
+        "name": ".mylm_static_73c80"
+      },
+      {
+        "addr": "0x73d00",
+        "bytes": 32,
+        "name": ".mylm_static_73d00"
+      }
+    ]
+  },
+  "status": "timeout_waiting_for_record",
+  "transaction": {
+    "blockwrite_addresses": [
+      "0x4220000",
+      "0x4203c80",
+      "0x4203d00",
+      "0x421d000",
+      "0x421d040",
+      "0x421d080",
+      "0x421d0a0",
+      "0x421d060",
+      "0x421d020"
+    ],
+    "payload_bytes": [
+      14868,
+      128,
+      32,
+      24,
+      24,
+      24,
+      24,
+      24,
+      24
+    ]
+  },
+  "unique_record_headers": [],
+  "xrt_validate": {
+    "status": "timeout",
+    "stderr": "",
+    "stdout": "WARNING: User doesn't have admin permissions to set performance mode. Running validate in Default mode\nValidate Device           : [0000:c6:00.1]\n    Platform              : RyzenAI-npu4\n    Power Mode            : Default\n-------------------------------------------------------------------------------\nTest 1 [0000:c6:00.1]     : gemm \n\u001b[?25l\u001b[39m[\u001b[38;5;111m                    \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\r\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m<->                 \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\r\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m <->                \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\r\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m  <->               \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\r\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m   <->              \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\r\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m    <->             \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\r\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m     <->            \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\r\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m      <->           \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\r\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m       <->          \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n\r\u001b[1A\u001b[?25l\u001b[39m[\u001b[38;5;111m        <->         \u001b[39m]\u001b[38;5;111m\u001b[39m: Running Test... < 0s >\n",
+    "timeout_s": 1
+  }
+}

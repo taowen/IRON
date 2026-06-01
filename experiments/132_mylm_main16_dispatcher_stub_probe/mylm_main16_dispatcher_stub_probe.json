@@ -1,0 +1,305 @@
+{
+  "records": 1,
+  "runtime_timeout_s": 8,
+  "source": {
+    "harness": "experiments/130_mylm_main16_record_observable_harness/run.py",
+    "raw": "experiments/129_mylm_main16_standalone_raw_kernel/mylm_c2r2_program.bin",
+    "static_73c80": "experiments/129_mylm_main16_standalone_raw_kernel/mylm_static_73c80.bin",
+    "static_73d00": "experiments/129_mylm_main16_standalone_raw_kernel/mylm_static_73d00.bin"
+  },
+  "status": "completed",
+  "stopped_early": false,
+  "variants": [
+    {
+      "artifacts": {
+        "elf": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_0/mylm_c2r2_dispatcher_stub_probe.elf",
+        "insts": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_0/design.bin",
+        "mlir": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_0/design.mlir",
+        "txn": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_0/design.txn.mlir",
+        "xclbin": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_0/design.xclbin"
+      },
+      "build_dir": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_0",
+      "control_value": 0,
+      "name": "dispatcher_stub_control_0",
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0006029605865478516\nresult_type=XRTKernelResult\nnpu_time=556938\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.3285140991210938,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "stub_bytes": 160,
+      "stub_disasm": "/var/home/taowen/projects/IRON/experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_0/mylm_c2r2_dispatcher_stub_probe.elf:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <.text>:\n       0: 44 00 e0 09 07 00    \tmovxm\tsp, #0x70000\n       6: c4 01 00 00 10 00    \tpaddxm\t [sp], #0x80\n       c: 44 00 24 88 07 00    \tmovxm\tr16, #0x78200\n      12: 98 15 fe 0f  \tst\t r16, [sp, #-4]\n      16: f8 20 68 18  \tmov\tp0, r16\n      1a: 18 88 00 00  \tmova\tr17, #0x0\n      1e: 98 31 06 08  \tst\t r17, [p0, #0]\n      22: 44 00 38 36 07 00    \tmovxm\tr12, #0x73c00\n      28: 44 00 20 85 07 00    \tmovxm\tr10, #0x78000\n      2e: 44 00 a8 54 07 00    \tmovxm\tr9, #0x75400\n      34: 44 00 24 84 07 00    \tmovxm\tr8, #0x78200\n      3a: 44 00 d0 22 07 00    \tmovxm\tp1, #0x72800\n      40: 44 00 c0 4e 07 00    \tmovxm\tp7, #0x74000\n      46: 44 00 c0 cc 07 00    \tmovxm\tp6, #0x7c000\n      4c: f8 20 66 18  \tmov\tp0, r12\n      50: f8 20 65 1a  \tmov\tp2, r10\n      54: f8 a0 64 1b  \tmov\tp3, r9\n      58: f8 c0 6e 1c  \tmov\tp4, p7\n      5c: f8 c0 6c 1d  \tmov\tp5, p6\n      60: 18 68 00 00  \tmova\tr13, #0x0\n      64: 18 70 00 00  \tmova\tr14, #0x0\n      68: 18 f9 de 17  \tmovx\tr15, #-0x2\n      6c: 18 58 00 00  \tmova\tr11, #0x0\n      70: f8 20 17 18  \tmov\tr0, r14\n      74: f8 a0 57 18  \tmov\tr1, r15\n      78: 04 01 00 68 1b 00    \tjl\t#0x36d0\n\t\t...\n      86: 00 00        \tnop\t\n      88: 18 00 08 10  \tdone\t\n      8c: 84 00 00 46 00 00    \tj\t#0x8c\n\t\t...\n      9a: 00 00        \tnop\t\n      9c: 18 00 00 10  \tnopx\t\n      a0: e1 00 00 78 a5 01 00 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopx\t;\t\tnopm\t;\t\tnopv\t\n\t\t...\n      bc: 18 00 08 10  \tdone",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_1/mylm_c2r2_dispatcher_stub_probe.elf",
+        "insts": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_1/design.bin",
+        "mlir": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_1/design.mlir",
+        "txn": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_1/design.txn.mlir",
+        "xclbin": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_1/design.xclbin"
+      },
+      "build_dir": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_1",
+      "control_value": 1,
+      "name": "dispatcher_stub_control_1",
+      "record_headers": [
+        "0x1"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0005826950073242188\nresult_type=XRTKernelResult\nnpu_time=535688\nrecord=0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.327758550643921,
+        "record_words": [
+          "0x1",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "stub_bytes": 160,
+      "stub_disasm": "/var/home/taowen/projects/IRON/experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_1/mylm_c2r2_dispatcher_stub_probe.elf:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <.text>:\n       0: 44 00 e0 09 07 00    \tmovxm\tsp, #0x70000\n       6: c4 01 00 00 10 00    \tpaddxm\t [sp], #0x80\n       c: 44 00 24 88 07 00    \tmovxm\tr16, #0x78200\n      12: 98 15 fe 0f  \tst\t r16, [sp, #-4]\n      16: f8 20 68 18  \tmov\tp0, r16\n      1a: 18 88 01 00  \tmova\tr17, #0x1\n      1e: 98 31 06 08  \tst\t r17, [p0, #0]\n      22: 44 00 38 36 07 00    \tmovxm\tr12, #0x73c00\n      28: 44 00 20 85 07 00    \tmovxm\tr10, #0x78000\n      2e: 44 00 a8 54 07 00    \tmovxm\tr9, #0x75400\n      34: 44 00 24 84 07 00    \tmovxm\tr8, #0x78200\n      3a: 44 00 d0 22 07 00    \tmovxm\tp1, #0x72800\n      40: 44 00 c0 4e 07 00    \tmovxm\tp7, #0x74000\n      46: 44 00 c0 cc 07 00    \tmovxm\tp6, #0x7c000\n      4c: f8 20 66 18  \tmov\tp0, r12\n      50: f8 20 65 1a  \tmov\tp2, r10\n      54: f8 a0 64 1b  \tmov\tp3, r9\n      58: f8 c0 6e 1c  \tmov\tp4, p7\n      5c: f8 c0 6c 1d  \tmov\tp5, p6\n      60: 18 68 00 00  \tmova\tr13, #0x0\n      64: 18 70 00 00  \tmova\tr14, #0x0\n      68: 18 f9 de 17  \tmovx\tr15, #-0x2\n      6c: 18 58 00 00  \tmova\tr11, #0x0\n      70: f8 20 17 18  \tmov\tr0, r14\n      74: f8 a0 57 18  \tmov\tr1, r15\n      78: 04 01 00 68 1b 00    \tjl\t#0x36d0\n\t\t...\n      86: 00 00        \tnop\t\n      88: 18 00 08 10  \tdone\t\n      8c: 84 00 00 46 00 00    \tj\t#0x8c\n\t\t...\n      9a: 00 00        \tnop\t\n      9c: 18 00 00 10  \tnopx\t\n      a0: e1 00 00 78 a5 01 00 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopx\t;\t\tnopm\t;\t\tnopv\t\n\t\t...\n      bc: 18 00 08 10  \tdone",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x1"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_8/mylm_c2r2_dispatcher_stub_probe.elf",
+        "insts": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_8/design.bin",
+        "mlir": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_8/design.mlir",
+        "txn": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_8/design.txn.mlir",
+        "xclbin": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_8/design.xclbin"
+      },
+      "build_dir": "experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_8",
+      "control_value": 8,
+      "name": "dispatcher_stub_control_8",
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0005464553833007812\nresult_type=XRTKernelResult\nnpu_time=493299\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.3586201667785645,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "stub_bytes": 160,
+      "stub_disasm": "/var/home/taowen/projects/IRON/experiments/132_mylm_main16_dispatcher_stub_probe/build/dispatcher_stub_control_8/mylm_c2r2_dispatcher_stub_probe.elf:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <.text>:\n       0: 44 00 e0 09 07 00    \tmovxm\tsp, #0x70000\n       6: c4 01 00 00 10 00    \tpaddxm\t [sp], #0x80\n       c: 44 00 24 88 07 00    \tmovxm\tr16, #0x78200\n      12: 98 15 fe 0f  \tst\t r16, [sp, #-4]\n      16: f8 20 68 18  \tmov\tp0, r16\n      1a: 18 88 08 00  \tmova\tr17, #0x8\n      1e: 98 31 06 08  \tst\t r17, [p0, #0]\n      22: 44 00 38 36 07 00    \tmovxm\tr12, #0x73c00\n      28: 44 00 20 85 07 00    \tmovxm\tr10, #0x78000\n      2e: 44 00 a8 54 07 00    \tmovxm\tr9, #0x75400\n      34: 44 00 24 84 07 00    \tmovxm\tr8, #0x78200\n      3a: 44 00 d0 22 07 00    \tmovxm\tp1, #0x72800\n      40: 44 00 c0 4e 07 00    \tmovxm\tp7, #0x74000\n      46: 44 00 c0 cc 07 00    \tmovxm\tp6, #0x7c000\n      4c: f8 20 66 18  \tmov\tp0, r12\n      50: f8 20 65 1a  \tmov\tp2, r10\n      54: f8 a0 64 1b  \tmov\tp3, r9\n      58: f8 c0 6e 1c  \tmov\tp4, p7\n      5c: f8 c0 6c 1d  \tmov\tp5, p6\n      60: 18 68 00 00  \tmova\tr13, #0x0\n      64: 18 70 00 00  \tmova\tr14, #0x0\n      68: 18 f9 de 17  \tmovx\tr15, #-0x2\n      6c: 18 58 00 00  \tmova\tr11, #0x0\n      70: f8 20 17 18  \tmov\tr0, r14\n      74: f8 a0 57 18  \tmov\tr1, r15\n      78: 04 01 00 68 1b 00    \tjl\t#0x36d0\n\t\t...\n      86: 00 00        \tnop\t\n      88: 18 00 08 10  \tdone\t\n      8c: 84 00 00 46 00 00    \tj\t#0x8c\n\t\t...\n      9a: 00 00        \tnop\t\n      9c: 18 00 00 10  \tnopx\t\n      a0: e1 00 00 78 a5 01 00 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopx\t;\t\tnopm\t;\t\tnopv\t\n\t\t...\n      bc: 18 00 08 10  \tdone",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    }
+  ]
+}

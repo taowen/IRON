@@ -1,0 +1,86 @@
+{
+  "results": [
+    {
+      "dynamic": {
+        "record": [],
+        "runtime_output": "",
+        "status": "timeout"
+      },
+      "dynamic_artifacts": {
+        "asm": "main16-exps/016_q4nx_dynamic_tiny_arithmetic_gate/build/dynamic_dyn_q4word0_allnibbles/dynamic_tiny_q4nx.s",
+        "build_dir": "main16-exps/016_q4nx_dynamic_tiny_arithmetic_gate/build/dynamic_dyn_q4word0_allnibbles",
+        "disasm": "main16-exps/016_q4nx_dynamic_tiny_arithmetic_gate/build/dynamic_dyn_q4word0_allnibbles/dynamic_tiny_q4nx.disasm.s",
+        "disasm_counts": {
+          "acq": 33,
+          "and": 8,
+          "lda": 56,
+          "rel": 33,
+          "st": 17
+        },
+        "elf": "main16-exps/016_q4nx_dynamic_tiny_arithmetic_gate/build/dynamic_dyn_q4word0_allnibbles/dynamic_tiny_q4nx.elf",
+        "insts": "main16-exps/016_q4nx_dynamic_tiny_arithmetic_gate/build/dynamic_dyn_q4word0_allnibbles/design.bin",
+        "xclbin": "main16-exps/016_q4nx_dynamic_tiny_arithmetic_gate/build/dynamic_dyn_q4word0_allnibbles/design.xclbin"
+      },
+      "dynamic_matches_expected": false,
+      "dynamic_matches_mylm": false,
+      "expected_record": [
+        "0x1",
+        "0x3c803c80",
+        "0x3c803c80",
+        "0x3c803c80",
+        "0x3c803c80",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "formula_matches_mylm": true,
+      "mylm": {
+        "record": [
+          "0x1",
+          "0x3c803c80",
+          "0x3c803c80",
+          "0x3c803c80",
+          "0x3c803c80",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "runtime_output": "run_ok\nelapsed=0.0013301372528076172\nnpu_time=1281328\nrecord=0x1,0x3c803c80,0x3c803c80,0x3c803c80,0x3c803c80,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+        "status": "record_observed"
+      },
+      "name": "dyn_q4word0_allnibbles"
+    }
+  ],
+  "status": "failed",
+  "topology_after": {
+    "status": "ok",
+    "stderr": "",
+    "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+    "topology": "6x8"
+  },
+  "topology_before": {
+    "status": "ok",
+    "stderr": "",
+    "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+    "topology": "6x8"
+  }
+}

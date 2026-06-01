@@ -1,0 +1,181 @@
+{
+  "artifacts": {
+    "asm": "main16-exps/017_q4nx_dynamic_readback_probe/build/readback/q4nx_dynamic_readback.s",
+    "build_dir": "main16-exps/017_q4nx_dynamic_readback_probe/build/readback",
+    "disasm": "main16-exps/017_q4nx_dynamic_readback_probe/build/readback/q4nx_dynamic_readback.disasm.s",
+    "elf": "main16-exps/017_q4nx_dynamic_readback_probe/build/readback/q4nx_dynamic_readback.elf",
+    "insts": "main16-exps/017_q4nx_dynamic_readback_probe/build/readback/design.bin",
+    "xclbin": "main16-exps/017_q4nx_dynamic_readback_probe/build/readback/design.xclbin"
+  },
+  "interpretation": {
+    "full_activation_address_visible": true,
+    "full_weight_address_visible": true
+  },
+  "observations": [
+    {
+      "base": "0x72800",
+      "expected": "0x3c803c80",
+      "matches_expected": true,
+      "name": "full_weight_scale0",
+      "observed": "0x3c803c80",
+      "offset": "0x0"
+    },
+    {
+      "base": "0x72800",
+      "expected": "0x3c803c80",
+      "matches_expected": true,
+      "name": "full_weight_zero0",
+      "observed": "0x3c803c80",
+      "offset": "0x200"
+    },
+    {
+      "base": "0x72800",
+      "expected": "0x11111111",
+      "matches_expected": true,
+      "name": "full_weight_q4word0",
+      "observed": "0x11111111",
+      "offset": "0x400"
+    },
+    {
+      "base": "0x72800",
+      "expected": "0x11111111",
+      "matches_expected": true,
+      "name": "full_weight_q4word512",
+      "observed": "0x11111111",
+      "offset": "0xc00"
+    },
+    {
+      "base": "0x2800",
+      "expected": "0x3c803c80",
+      "matches_expected": false,
+      "name": "local_weight_scale0",
+      "observed": "0x140ad228",
+      "offset": "0x0"
+    },
+    {
+      "base": "0x2800",
+      "expected": "0x3c803c80",
+      "matches_expected": false,
+      "name": "local_weight_zero0",
+      "observed": "0x9dc5529b",
+      "offset": "0x200"
+    },
+    {
+      "base": "0x2800",
+      "expected": "0x11111111",
+      "matches_expected": false,
+      "name": "local_weight_q4word0",
+      "observed": "0x3c803c80",
+      "offset": "0x400"
+    },
+    {
+      "base": "0x2800",
+      "expected": "0x11111111",
+      "matches_expected": false,
+      "name": "local_weight_q4word512",
+      "observed": "0x3c803c80",
+      "offset": "0xc00"
+    },
+    {
+      "base": "0x78000",
+      "expected": "0x3f803f80",
+      "matches_expected": true,
+      "name": "full_activation_word0",
+      "observed": "0x3f803f80",
+      "offset": "0x0"
+    },
+    {
+      "base": "0x8000",
+      "expected": "0x3f803f80",
+      "matches_expected": false,
+      "name": "local_activation_word0",
+      "observed": "0x11111111",
+      "offset": "0x0"
+    },
+    {
+      "base": "0x73c1c",
+      "expected": "0x1",
+      "matches_expected": true,
+      "name": "full_record_header",
+      "observed": "0x1",
+      "offset": "0x0"
+    },
+    {
+      "base": "0x3c1c",
+      "expected": "0x1",
+      "matches_expected": false,
+      "name": "local_record_header",
+      "observed": "0xb468d0",
+      "offset": "0x0"
+    },
+    {
+      "base": "0x74000",
+      "expected": "0x0",
+      "matches_expected": true,
+      "name": "full_weight_pong_scale0",
+      "observed": "0x0",
+      "offset": "0x0"
+    },
+    {
+      "base": "0x7c000",
+      "expected": "0x0",
+      "matches_expected": true,
+      "name": "full_activation_pong_word0",
+      "observed": "0x0",
+      "offset": "0x0"
+    },
+    {
+      "base": "0x72800",
+      "expected": "0x3c803c80",
+      "matches_expected": true,
+      "name": "full_weight_scale1",
+      "observed": "0x3c803c80",
+      "offset": "0x4"
+    },
+    {
+      "base": "0x72800",
+      "expected": "0x0",
+      "matches_expected": true,
+      "name": "full_weight_q4word1",
+      "observed": "0x0",
+      "offset": "0x404"
+    }
+  ],
+  "runtime": {
+    "record": [
+      "0x1",
+      "0x3c803c80",
+      "0x3c803c80",
+      "0x11111111",
+      "0x11111111",
+      "0x140ad228",
+      "0x9dc5529b",
+      "0x3c803c80",
+      "0x3c803c80",
+      "0x3f803f80",
+      "0x11111111",
+      "0x1",
+      "0xb468d0",
+      "0x0",
+      "0x0",
+      "0x3c803c80",
+      "0x0"
+    ],
+    "returncode": 0,
+    "runtime_output": "run_ok\nelapsed=0.00055694580078125\nnpu_time=504360\nrecord=0x1,0x3c803c80,0x3c803c80,0x11111111,0x11111111,0x140ad228,0x9dc5529b,0x3c803c80,0x3c803c80,0x3f803f80,0x11111111,0x1,0xb468d0,0x0,0x0,0x3c803c80,0x0",
+    "status": "record_observed"
+  },
+  "status": "passed",
+  "topology_after": {
+    "status": "ok",
+    "stderr": "",
+    "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+    "topology": "6x8"
+  },
+  "topology_before": {
+    "status": "ok",
+    "stderr": "",
+    "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+    "topology": "6x8"
+  }
+}

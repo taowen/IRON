@@ -1,0 +1,233 @@
+{
+  "build": {
+    "artifacts": {
+      "elf": "main16-exps/011_q4nx_chunk_pair_matrix/build/qkv_nonzero_payload_direct/mylm_c2r2_dispatcher_stub_probe.elf",
+      "insts": "main16-exps/011_q4nx_chunk_pair_matrix/build/qkv_nonzero_payload_direct/design.bin",
+      "mlir": "main16-exps/011_q4nx_chunk_pair_matrix/build/qkv_nonzero_payload_direct/design.mlir",
+      "txn": "main16-exps/011_q4nx_chunk_pair_matrix/build/qkv_nonzero_payload_direct/design.txn.mlir",
+      "xclbin": "main16-exps/011_q4nx_chunk_pair_matrix/build/qkv_nonzero_payload_direct/design.xclbin"
+    },
+    "build_dir": "main16-exps/011_q4nx_chunk_pair_matrix/build/qkv_nonzero_payload_direct",
+    "source": {
+      "raw_bytes": 14868,
+      "raw_patches": [],
+      "static_segments": [
+        {
+          "addr": "0x73c80",
+          "bytes": 128,
+          "name": ".mylm_static_73c80"
+        },
+        {
+          "addr": "0x73d00",
+          "bytes": 32,
+          "name": ".mylm_static_73d00"
+        }
+      ]
+    },
+    "stub_bytes": 144,
+    "stub_disasm": "/var/home/taowen/projects/IRON/main16-exps/011_q4nx_chunk_pair_matrix/build/qkv_nonzero_payload_direct/mylm_c2r2_dispatcher_stub_probe.elf:\tfile format elf32-aie\n\nDisassembly of section .text:\n\n00000000 <.text>:\n       0: 44 00 e0 09 07 00    \tmovxm\tsp, #0x70000\n       6: c4 01 00 00 10 00    \tpaddxm\t [sp], #0x80\n       c: 44 00 24 88 07 00    \tmovxm\tr16, #0x78200\n      12: 98 15 fe 0f  \tst\t r16, [sp, #-4]\n      16: f8 20 68 18  \tmov\tp0, r16\n      1a: 18 88 01 00  \tmova\tr17, #0x1\n      1e: 98 31 06 08  \tst\t r17, [p0, #0]\n      22: 44 00 c0 80 07 00    \tmovxm\tp0, #0x78000\n      28: 44 00 c4 82 07 00    \tmovxm\tp1, #0x78200\n      2e: 44 00 d0 24 07 00    \tmovxm\tp2, #0x72800\n      34: 44 00 c8 56 07 00    \tmovxm\tp3, #0x75400\n      3a: 44 00 d8 38 07 00    \tmovxm\tp4, #0x73c00\n      40: 44 00 c8 5a 07 00    \tmovxm\tp5, #0x75400\n      46: 44 00 d8 3c 07 00    \tmovxm\tp6, #0x73c00\n      4c: 44 00 c8 5e 07 00    \tmovxm\tp7, #0x75400\n      52: 18 05 00 10  \tmovx\tr0, #0x1\n      56: 18 f9 c2 17  \tmovx\tr1, #-0x2\n      5a: 18 58 00 00  \tmova\tr11, #0x0\n      5e: 18 68 00 00  \tmova\tr13, #0x0\n      62: 18 70 00 00  \tmova\tr14, #0x0\n      66: 18 f9 de 17  \tmovx\tr15, #-0x2\n      6a: 04 01 00 38 0c 00    \tjl\t#0x1870\n\t\t...\n      78: 00 00        \tnop\t\n      7a: 18 00 08 10  \tdone\t\n      7e: 84 00 00 3f 00 00    \tj\t#0x7e\n\t\t...\n      90: 04 01 00 68 1c 00    \tjl\t#0x38d0\n      96: b8 00 60 18  \tmov\tp0, #0x0\n      9a: 00 00        \tnop\t\n      9c: 00 00        \tnop\t\n      9e: 00 00        \tnop\t\n      a0: e1 00 00 78 a5 01 00 00 00 5b 01 20 00 f0 2c 00      \tnopa\t;\t\tnopb\t;\t\tnops\t;\t\tnopx\t;\t\tnopm\t;\t\tnopv\t\n\t\t...\n      bc: 18 00 08 10  \tdone",
+    "transaction": {
+      "blockwrite_addresses": [
+        "0x4220000",
+        "0x4203c80",
+        "0x4203d00",
+        "0x421d000",
+        "0x421d040",
+        "0x421d080",
+        "0x421d0a0",
+        "0x421d060",
+        "0x421d020"
+      ],
+      "payload_bytes": [
+        14868,
+        128,
+        32,
+        24,
+        24,
+        24,
+        24,
+        24,
+        24
+      ]
+    }
+  },
+  "cells": [
+    {
+      "activation_chunk": 0,
+      "first_record_value": 4.0,
+      "first_record_word": "0x40804080",
+      "nonzero_records": [
+        0
+      ],
+      "npu_time": "989624",
+      "status": "record_observed",
+      "weight_chunk": 0
+    },
+    {
+      "activation_chunk": 0,
+      "first_record_value": 0.0,
+      "first_record_word": "0x0",
+      "nonzero_records": [],
+      "npu_time": "993141",
+      "status": "record_observed",
+      "weight_chunk": 1
+    },
+    {
+      "activation_chunk": 0,
+      "first_record_value": 0.0,
+      "first_record_word": "0x0",
+      "nonzero_records": [],
+      "npu_time": "1003711",
+      "status": "record_observed",
+      "weight_chunk": 2
+    },
+    {
+      "activation_chunk": 0,
+      "first_record_value": 0.0,
+      "first_record_word": "0x0",
+      "nonzero_records": [],
+      "npu_time": "967333",
+      "status": "record_observed",
+      "weight_chunk": 3
+    },
+    {
+      "activation_chunk": 1,
+      "first_record_value": 0.0,
+      "first_record_word": "0x0",
+      "nonzero_records": [],
+      "npu_time": "980877",
+      "status": "record_observed",
+      "weight_chunk": 0
+    },
+    {
+      "activation_chunk": 1,
+      "first_record_value": 0.0,
+      "first_record_word": "0x0",
+      "nonzero_records": [],
+      "npu_time": "940763",
+      "status": "record_observed",
+      "weight_chunk": 1
+    },
+    {
+      "activation_chunk": 1,
+      "first_record_value": 0.0,
+      "first_record_word": "0x0",
+      "nonzero_records": [],
+      "npu_time": "998952",
+      "status": "record_observed",
+      "weight_chunk": 2
+    },
+    {
+      "activation_chunk": 1,
+      "first_record_value": 0.0,
+      "first_record_word": "0x0",
+      "nonzero_records": [],
+      "npu_time": "993210",
+      "status": "record_observed",
+      "weight_chunk": 3
+    },
+    {
+      "activation_chunk": 2,
+      "first_record_value": 0.0,
+      "first_record_word": "0x0",
+      "nonzero_records": [],
+      "npu_time": "977101",
+      "status": "record_observed",
+      "weight_chunk": 0
+    },
+    {
+      "activation_chunk": 2,
+      "first_record_value": 0.0,
+      "first_record_word": "0x0",
+      "nonzero_records": [],
+      "npu_time": "1002338",
+      "status": "record_observed",
+      "weight_chunk": 1
+    },
+    {
+      "activation_chunk": 2,
+      "first_record_value": 4.0,
+      "first_record_word": "0x40804080",
+      "nonzero_records": [
+        0
+      ],
+      "npu_time": "943148",
+      "status": "record_observed",
+      "weight_chunk": 2
+    },
+    {
+      "activation_chunk": 2,
+      "first_record_value": 0.0,
+      "first_record_word": "0x0",
+      "nonzero_records": [],
+      "npu_time": "1340228",
+      "status": "record_observed",
+      "weight_chunk": 3
+    },
+    {
+      "activation_chunk": 3,
+      "first_record_value": 0.0,
+      "first_record_word": "0x0",
+      "nonzero_records": [],
+      "npu_time": "1016685",
+      "status": "record_observed",
+      "weight_chunk": 0
+    },
+    {
+      "activation_chunk": 3,
+      "first_record_value": 0.0,
+      "first_record_word": "0x0",
+      "nonzero_records": [],
+      "npu_time": "980687",
+      "status": "record_observed",
+      "weight_chunk": 1
+    },
+    {
+      "activation_chunk": 3,
+      "first_record_value": 0.0,
+      "first_record_word": "0x0",
+      "nonzero_records": [],
+      "npu_time": "1037313",
+      "status": "record_observed",
+      "weight_chunk": 2
+    },
+    {
+      "activation_chunk": 3,
+      "first_record_value": 0.0,
+      "first_record_word": "0x0",
+      "nonzero_records": [],
+      "npu_time": "1019259",
+      "status": "record_observed",
+      "weight_chunk": 3
+    }
+  ],
+  "chunks": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "nonzero_pairs": [
+    [
+      0,
+      0
+    ],
+    [
+      2,
+      2
+    ]
+  ],
+  "status": "passed",
+  "topology_after": {
+    "status": "ok",
+    "stderr": "",
+    "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+    "topology": "6x8"
+  },
+  "topology_before": {
+    "status": "ok",
+    "stderr": "",
+    "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+    "topology": "6x8"
+  }
+}

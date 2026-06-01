@@ -1,0 +1,2190 @@
+{
+  "first_group_flow": [
+    {
+      "address": "0x260",
+      "defs": [
+        "x8"
+      ],
+      "fragment": "vlda\t x8, [p0], #0x40",
+      "op": "vlda",
+      "uses": [
+        "p0"
+      ]
+    },
+    {
+      "address": "0x260",
+      "defs": [
+        "x11"
+      ],
+      "fragment": "vldb\t x11, [p1], #0x40",
+      "op": "vldb",
+      "uses": [
+        "p1"
+      ]
+    },
+    {
+      "address": "0x260",
+      "defs": [
+        "r18"
+      ],
+      "fragment": "lshl\t r18, r19, r2",
+      "op": "lshl",
+      "uses": [
+        "r19",
+        "r2"
+      ]
+    },
+    {
+      "address": "0x260",
+      "defs": [
+        "r16"
+      ],
+      "fragment": "add.nc\tr16, r17, r1",
+      "op": "add.nc",
+      "uses": [
+        "r17",
+        "r1"
+      ]
+    },
+    {
+      "address": "0x26c",
+      "defs": [
+        "x7"
+      ],
+      "fragment": "vlda\t x7, [p0], #0x40",
+      "op": "vlda",
+      "uses": [
+        "p0"
+      ]
+    },
+    {
+      "address": "0x26c",
+      "defs": [
+        "x9"
+      ],
+      "fragment": "vunpack\tx9, wl8, unpacksign0",
+      "op": "vunpack",
+      "uses": [
+        "wl8"
+      ]
+    },
+    {
+      "address": "0x26c",
+      "defs": [
+        "r20"
+      ],
+      "fragment": "lshl\t r20, r19, r3",
+      "op": "lshl",
+      "uses": [
+        "r19",
+        "r3"
+      ]
+    },
+    {
+      "address": "0x26c",
+      "defs": [
+        "p5"
+      ],
+      "fragment": "add.nc\tp5, r17, r18",
+      "op": "add.nc",
+      "uses": [
+        "r17",
+        "r18"
+      ]
+    },
+    {
+      "address": "0x278",
+      "defs": [
+        "x0"
+      ],
+      "fragment": "vlda\t x0, [p0], #0x40",
+      "op": "vlda",
+      "uses": [
+        "p0"
+      ]
+    },
+    {
+      "address": "0x278",
+      "defs": [
+        "x8"
+      ],
+      "fragment": "vunpack\tx8, wh8, unpacksign0",
+      "op": "vunpack",
+      "uses": [
+        "wh8"
+      ]
+    },
+    {
+      "address": "0x278",
+      "defs": [
+        "r19"
+      ],
+      "fragment": "movx\tr19, #0x10",
+      "op": "movx",
+      "uses": []
+    },
+    {
+      "address": "0x278",
+      "defs": [
+        "r20"
+      ],
+      "fragment": "mov\tdj0, r20",
+      "op": "mov",
+      "uses": []
+    },
+    {
+      "address": "0x284",
+      "defs": [
+        "p2"
+      ],
+      "fragment": "vlda\t lfh0, [p2, dj0]",
+      "op": "vlda",
+      "uses": []
+    },
+    {
+      "address": "0x284",
+      "defs": [
+        "x5"
+      ],
+      "fragment": "vunpack\tx5, wl7, unpacksign0",
+      "op": "vunpack",
+      "uses": [
+        "wl7"
+      ]
+    },
+    {
+      "address": "0x284",
+      "defs": [
+        "p4"
+      ],
+      "fragment": "add.nc\tp4, r18, r16",
+      "op": "add.nc",
+      "uses": [
+        "r18",
+        "r16"
+      ]
+    },
+    {
+      "address": "0x28e",
+      "defs": [
+        "r7"
+      ],
+      "fragment": "lda.s16\t r7, [p3], #0x2",
+      "op": "lda.s16",
+      "uses": [
+        "p3"
+      ]
+    },
+    {
+      "address": "0x28e",
+      "defs": [
+        "x10"
+      ],
+      "fragment": "vunpack\tx10, wh7, unpacksign0",
+      "op": "vunpack",
+      "uses": [
+        "wh7"
+      ]
+    },
+    {
+      "address": "0x294",
+      "defs": [
+        "x1"
+      ],
+      "fragment": "vunpack\tx1, wl0, unpacksign0",
+      "op": "vunpack",
+      "uses": [
+        "wl0"
+      ]
+    },
+    {
+      "address": "0x298",
+      "defs": [],
+      "fragment": "nop",
+      "op": "nop",
+      "uses": []
+    },
+    {
+      "address": "0x29a",
+      "defs": [
+        "x9"
+      ],
+      "fragment": "vextbcst.16\t x9, x11, #0x1",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x29e",
+      "defs": [
+        "dm2"
+      ],
+      "fragment": "vups.4x\tdm2, x9, s0, upssign0",
+      "op": "vups.4x",
+      "uses": [
+        "x9",
+        "s0"
+      ]
+    },
+    {
+      "address": "0x29e",
+      "defs": [
+        "dm1"
+      ],
+      "fragment": "vadd\tdm1, dm2, dm0, r0",
+      "op": "vadd",
+      "uses": [
+        "dm2",
+        "dm0",
+        "r0"
+      ]
+    },
+    {
+      "address": "0x2a6",
+      "defs": [
+        "dm2"
+      ],
+      "fragment": "vups.4x\tdm2, x8, s0, upssign0",
+      "op": "vups.4x",
+      "uses": [
+        "x8",
+        "s0"
+      ]
+    },
+    {
+      "address": "0x2a6",
+      "defs": [
+        "dm2"
+      ],
+      "fragment": "vadd\tdm2, dm2, dm0, r0",
+      "op": "vadd",
+      "uses": [
+        "dm2",
+        "dm0",
+        "r0"
+      ]
+    },
+    {
+      "address": "0x2ae",
+      "defs": [
+        "x7"
+      ],
+      "fragment": "vextbcst.16\t x7, x11, #0x0",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x2ae",
+      "defs": [
+        "dm1"
+      ],
+      "fragment": "vsub.f\tdm1, dm1, dm0, r5",
+      "op": "vsub.f",
+      "uses": [
+        "dm1",
+        "dm0",
+        "r5"
+      ]
+    },
+    {
+      "address": "0x2b6",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vsub.f\tdm3, dm2, dm0, r5",
+      "op": "vsub.f",
+      "uses": [
+        "dm2",
+        "dm0",
+        "r5"
+      ]
+    },
+    {
+      "address": "0x2c2",
+      "defs": [
+        "bmll2"
+      ],
+      "fragment": "vmov\tbmll2, bmll1",
+      "op": "vmov",
+      "uses": [
+        "bmll1"
+      ]
+    },
+    {
+      "address": "0x2c6",
+      "defs": [
+        "bmlh2"
+      ],
+      "fragment": "vmov\tbmlh2, bmlh1",
+      "op": "vmov",
+      "uses": [
+        "bmlh1"
+      ]
+    },
+    {
+      "address": "0x2ca",
+      "defs": [
+        "bmhl2"
+      ],
+      "fragment": "vmov\tbmhl2, bmhl1",
+      "op": "vmov",
+      "uses": [
+        "bmhl1"
+      ]
+    },
+    {
+      "address": "0x2ce",
+      "defs": [
+        "x5"
+      ],
+      "fragment": "vconv.bf16.fp32\t x5, cml2",
+      "op": "vconv.bf16.fp32",
+      "uses": [
+        "cml2"
+      ]
+    },
+    {
+      "address": "0x2ce",
+      "defs": [
+        "bmhh2"
+      ],
+      "fragment": "vmov\tbmhh2, bmhh1",
+      "op": "vmov",
+      "uses": [
+        "bmhh1"
+      ]
+    },
+    {
+      "address": "0x2d6",
+      "defs": [
+        "dm1"
+      ],
+      "fragment": "vups.4x\tdm1, x5, s0, upssign0",
+      "op": "vups.4x",
+      "uses": [
+        "x5",
+        "s0"
+      ]
+    },
+    {
+      "address": "0x2d6",
+      "defs": [
+        "dm4"
+      ],
+      "fragment": "vadd\tdm4, dm1, dm0, r0",
+      "op": "vadd",
+      "uses": [
+        "dm1",
+        "dm0",
+        "r0"
+      ]
+    },
+    {
+      "address": "0x2de",
+      "defs": [
+        "x3"
+      ],
+      "fragment": "vconv.bf16.fp32\t x3, cmh2",
+      "op": "vconv.bf16.fp32",
+      "uses": []
+    },
+    {
+      "address": "0x2de",
+      "defs": [
+        "wl6"
+      ],
+      "fragment": "vmov\twl6, wh5",
+      "op": "vmov",
+      "uses": [
+        "wh5"
+      ]
+    },
+    {
+      "address": "0x2e6",
+      "defs": [
+        "bmhl1"
+      ],
+      "fragment": "vmov\tbmhl1, bmhl3",
+      "op": "vmov",
+      "uses": [
+        "bmhl3"
+      ]
+    },
+    {
+      "address": "0x2e6",
+      "defs": [
+        "dm2"
+      ],
+      "fragment": "vsub.f\tdm2, dm4, dm0, r5",
+      "op": "vsub.f",
+      "uses": [
+        "dm4",
+        "dm0",
+        "r5"
+      ]
+    },
+    {
+      "address": "0x2ee",
+      "defs": [
+        "wl2"
+      ],
+      "fragment": "vmov\twl2, wh3",
+      "op": "vmov",
+      "uses": [
+        "wh3"
+      ]
+    },
+    {
+      "address": "0x2f2",
+      "defs": [
+        "bmhh1"
+      ],
+      "fragment": "vmov\tbmhh1, bmhh3",
+      "op": "vmov",
+      "uses": [
+        "bmhh3"
+      ]
+    },
+    {
+      "address": "0x2f6",
+      "defs": [
+        "x6"
+      ],
+      "fragment": "vldb\t x6, [p0], #0x40",
+      "op": "vldb",
+      "uses": [
+        "p0"
+      ]
+    },
+    {
+      "address": "0x2fa",
+      "defs": [
+        "x8"
+      ],
+      "fragment": "vconv.bf16.fp32\t x8, cmh1",
+      "op": "vconv.bf16.fp32",
+      "uses": []
+    },
+    {
+      "address": "0x2fa",
+      "defs": [
+        "bmll1"
+      ],
+      "fragment": "vmov\tbmll1, bmll3",
+      "op": "vmov",
+      "uses": [
+        "bmll3"
+      ]
+    },
+    {
+      "address": "0x302",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vups.4x\tdm3, x10, s0, upssign0",
+      "op": "vups.4x",
+      "uses": [
+        "x10",
+        "s0"
+      ]
+    },
+    {
+      "address": "0x302",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vadd\tdm3, dm3, dm0, r0",
+      "op": "vadd",
+      "uses": [
+        "dm3",
+        "dm0",
+        "r0"
+      ]
+    },
+    {
+      "address": "0x30a",
+      "defs": [
+        "x10"
+      ],
+      "fragment": "vextbcst.16\t x10, x11, #0x2",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x30a",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmul.f\tdm3, x5, x7, r4",
+      "op": "vmul.f",
+      "uses": [
+        "x5",
+        "x7",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x312",
+      "defs": [
+        "bmlh1"
+      ],
+      "fragment": "vmov\tbmlh1, bmlh3",
+      "op": "vmov",
+      "uses": [
+        "bmlh3"
+      ]
+    },
+    {
+      "address": "0x312",
+      "defs": [
+        "dm4"
+      ],
+      "fragment": "vsub.f\tdm4, dm3, dm0, r5",
+      "op": "vsub.f",
+      "uses": [
+        "dm3",
+        "dm0",
+        "r5"
+      ]
+    },
+    {
+      "address": "0x31a",
+      "defs": [
+        "x7"
+      ],
+      "fragment": "vextbcst.16\t x7, x11, #0x3",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x31e",
+      "defs": [
+        "x4"
+      ],
+      "fragment": "vconv.bf16.fp32\t x4, cml1",
+      "op": "vconv.bf16.fp32",
+      "uses": [
+        "cml1"
+      ]
+    },
+    {
+      "address": "0x31e",
+      "defs": [
+        "bmhh1"
+      ],
+      "fragment": "vmov\tbmhh1, bmhh2",
+      "op": "vmov",
+      "uses": [
+        "bmhh2"
+      ]
+    },
+    {
+      "address": "0x31e",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm3, x6, x9, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x6",
+        "x9",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x328",
+      "defs": [
+        "x9"
+      ],
+      "fragment": "vextbcst.16\t x9, x11, #0x8",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x32c",
+      "defs": [
+        "wl10"
+      ],
+      "fragment": "vmov\twl10, wh4",
+      "op": "vmov",
+      "uses": [
+        "wh4"
+      ]
+    },
+    {
+      "address": "0x330",
+      "defs": [
+        "bmll1"
+      ],
+      "fragment": "vmov\tbmll1, bmll2",
+      "op": "vmov",
+      "uses": [
+        "bmll2"
+      ]
+    },
+    {
+      "address": "0x330",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm3, x3, x10, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x3",
+        "x10",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x338",
+      "defs": [
+        "bmll2"
+      ],
+      "fragment": "vmov\tbmll2, bmll4",
+      "op": "vmov",
+      "uses": [
+        "bmll4"
+      ]
+    },
+    {
+      "address": "0x33c",
+      "defs": [
+        "x1"
+      ],
+      "fragment": "vunpack\tx1, wh0, unpacksign0",
+      "op": "vunpack",
+      "uses": [
+        "wh0"
+      ]
+    },
+    {
+      "address": "0x33c",
+      "defs": [
+        "x7"
+      ],
+      "fragment": "vextbcst.16\t x7, x11, #0x4",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x342",
+      "defs": [
+        "bmlh1"
+      ],
+      "fragment": "vmov\tbmlh1, bmlh2",
+      "op": "vmov",
+      "uses": [
+        "bmlh2"
+      ]
+    },
+    {
+      "address": "0x342",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm3, x2, x7, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x2",
+        "x7",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x34a",
+      "defs": [
+        "bmlh2"
+      ],
+      "fragment": "vmov\tbmlh2, bmlh4",
+      "op": "vmov",
+      "uses": [
+        "bmlh4"
+      ]
+    },
+    {
+      "address": "0x34e",
+      "defs": [
+        "x5"
+      ],
+      "fragment": "vconv.bf16.fp32\t x5, cml1",
+      "op": "vconv.bf16.fp32",
+      "uses": [
+        "cml1"
+      ]
+    },
+    {
+      "address": "0x34e",
+      "defs": [
+        "x4"
+      ],
+      "fragment": "vextbcst.16\t x4, x11, #0x5",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x356",
+      "defs": [
+        "bmhl1"
+      ],
+      "fragment": "vmov\tbmhl1, bmhl2",
+      "op": "vmov",
+      "uses": [
+        "bmhl2"
+      ]
+    },
+    {
+      "address": "0x356",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm3, x4, x7, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x4",
+        "x7",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x35e",
+      "defs": [
+        "bmhl2"
+      ],
+      "fragment": "vmov\tbmhl2, bmhl4",
+      "op": "vmov",
+      "uses": [
+        "bmhl4"
+      ]
+    },
+    {
+      "address": "0x362",
+      "defs": [
+        "x2"
+      ],
+      "fragment": "vconv.bf16.fp32\t x2, cmh1",
+      "op": "vconv.bf16.fp32",
+      "uses": []
+    },
+    {
+      "address": "0x362",
+      "defs": [
+        "dm4"
+      ],
+      "fragment": "vups.4x\tdm4, x1, s0, upssign0",
+      "op": "vups.4x",
+      "uses": [
+        "x1",
+        "s0"
+      ]
+    },
+    {
+      "address": "0x362",
+      "defs": [
+        "dm1"
+      ],
+      "fragment": "vadd\tdm1, dm4, dm0, r0",
+      "op": "vadd",
+      "uses": [
+        "dm4",
+        "dm0",
+        "r0"
+      ]
+    },
+    {
+      "address": "0x36c",
+      "defs": [
+        "x3"
+      ],
+      "fragment": "vextbcst.16\t x3, x11, #0x6",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x370",
+      "defs": [
+        "bmhh2"
+      ],
+      "fragment": "vmov\tbmhh2, bmhh4",
+      "op": "vmov",
+      "uses": [
+        "bmhh4"
+      ]
+    },
+    {
+      "address": "0x370",
+      "defs": [
+        "dm4"
+      ],
+      "fragment": "vsub.f\tdm4, dm1, dm0, r5",
+      "op": "vsub.f",
+      "uses": [
+        "dm1",
+        "dm0",
+        "r5"
+      ]
+    },
+    {
+      "address": "0x378",
+      "defs": [
+        "x0"
+      ],
+      "fragment": "vextbcst.16\t x0, x11, #0x7",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x378",
+      "defs": [
+        "dm4"
+      ],
+      "fragment": "vmac.f\tdm4, dm3, x10, x4, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x10",
+        "x4",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x380",
+      "defs": [
+        "x4"
+      ],
+      "fragment": "vextbcst.16\t x4, x11, #0x9",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x384",
+      "defs": [
+        "x8"
+      ],
+      "fragment": "vconv.bf16.fp32\t x8, cml2",
+      "op": "vconv.bf16.fp32",
+      "uses": [
+        "cml2"
+      ]
+    },
+    {
+      "address": "0x384",
+      "defs": [
+        "wl3"
+      ],
+      "fragment": "vmov\twl3, wh8",
+      "op": "vmov",
+      "uses": [
+        "wh8"
+      ]
+    },
+    {
+      "address": "0x384",
+      "defs": [
+        "dm1"
+      ],
+      "fragment": "vmov.d\tdm1, dm4",
+      "op": "vmov.d",
+      "uses": [
+        "dm4"
+      ]
+    },
+    {
+      "address": "0x38e",
+      "defs": [
+        "x7"
+      ],
+      "fragment": "vextbcst.16\t x7, x11, #0xa",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x38e",
+      "defs": [
+        "dm4"
+      ],
+      "fragment": "vmac.f\tdm4, dm4, x8, x3, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm4",
+        "x8",
+        "x3",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x396",
+      "defs": [
+        "x10"
+      ],
+      "fragment": "vextbcst.16\t x10, x11, #0xb",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x396",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmov.d\tdm3, dm1",
+      "op": "vmov.d",
+      "uses": [
+        "dm1"
+      ]
+    },
+    {
+      "address": "0x39e",
+      "defs": [
+        "wl3"
+      ],
+      "fragment": "vmov\twl3, wh2",
+      "op": "vmov",
+      "uses": [
+        "wh2"
+      ]
+    },
+    {
+      "address": "0x3a2",
+      "defs": [
+        "dm4"
+      ],
+      "fragment": "vmac.f\tdm4, dm4, x3, x0, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm4",
+        "x3",
+        "x0",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x3a6",
+      "defs": [],
+      "fragment": "nop",
+      "op": "nop",
+      "uses": []
+    },
+    {
+      "address": "0x3a8",
+      "defs": [
+        "wl5"
+      ],
+      "fragment": "vmov\twl5, wh5",
+      "op": "vmov",
+      "uses": [
+        "wh5"
+      ]
+    },
+    {
+      "address": "0x3ac",
+      "defs": [
+        "wl9"
+      ],
+      "fragment": "vmov\twl9, wh8",
+      "op": "vmov",
+      "uses": [
+        "wh8"
+      ]
+    },
+    {
+      "address": "0x3ac",
+      "defs": [
+        "dm4"
+      ],
+      "fragment": "vmac.f\tdm4, dm4, x5, x9, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm4",
+        "x5",
+        "x9",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x3b4",
+      "defs": [
+        "bmhl1"
+      ],
+      "fragment": "vmov\tbmhl1, bmhl3",
+      "op": "vmov",
+      "uses": [
+        "bmhl3"
+      ]
+    },
+    {
+      "address": "0x3b8",
+      "defs": [
+        "bmhh1"
+      ],
+      "fragment": "vmov\tbmhh1, bmhh3",
+      "op": "vmov",
+      "uses": [
+        "bmhh3"
+      ]
+    },
+    {
+      "address": "0x3bc",
+      "defs": [
+        "x1"
+      ],
+      "fragment": "vconv.bf16.fp32\t x1, cmh2",
+      "op": "vconv.bf16.fp32",
+      "uses": []
+    },
+    {
+      "address": "0x3bc",
+      "defs": [
+        "bmll1"
+      ],
+      "fragment": "vmov\tbmll1, bmll3",
+      "op": "vmov",
+      "uses": [
+        "bmll3"
+      ]
+    },
+    {
+      "address": "0x3bc",
+      "defs": [
+        "dm4"
+      ],
+      "fragment": "vmac.f\tdm4, dm4, x5, x4, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm4",
+        "x5",
+        "x4",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x3c6",
+      "defs": [
+        "x0"
+      ],
+      "fragment": "vconv.bf16.fp32\t x0, cmh1",
+      "op": "vconv.bf16.fp32",
+      "uses": []
+    },
+    {
+      "address": "0x3c6",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vups.4x\tdm3, x1, s0, upssign0",
+      "op": "vups.4x",
+      "uses": [
+        "x1",
+        "s0"
+      ]
+    },
+    {
+      "address": "0x3c6",
+      "defs": [
+        "dm2"
+      ],
+      "fragment": "vadd\tdm2, dm3, dm0, r0",
+      "op": "vadd",
+      "uses": [
+        "dm3",
+        "dm0",
+        "r0"
+      ]
+    },
+    {
+      "address": "0x3d0",
+      "defs": [
+        "x4"
+      ],
+      "fragment": "vextbcst.16\t x4, x11, #0xc",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x3d4",
+      "defs": [
+        "x4"
+      ],
+      "fragment": "vunpack\tx4, wl6, unpacksign0",
+      "op": "vunpack",
+      "uses": [
+        "wl6"
+      ]
+    },
+    {
+      "address": "0x3d4",
+      "defs": [
+        "bmlh1"
+      ],
+      "fragment": "vmov\tbmlh1, bmlh3",
+      "op": "vmov",
+      "uses": [
+        "bmlh3"
+      ]
+    },
+    {
+      "address": "0x3d4",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm4, x2, x7, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm4",
+        "x2",
+        "x7",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x3de",
+      "defs": [
+        "x6"
+      ],
+      "fragment": "vunpack\tx6, wh6, unpacksign0",
+      "op": "vunpack",
+      "uses": [
+        "wh6"
+      ]
+    },
+    {
+      "address": "0x3de",
+      "defs": [
+        "x5"
+      ],
+      "fragment": "vextbcst.16\t x5, x11, #0xd",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x3de",
+      "defs": [
+        "dm2"
+      ],
+      "fragment": "vsub.f\tdm2, dm2, dm0, r5",
+      "op": "vsub.f",
+      "uses": [
+        "dm2",
+        "dm0",
+        "r5"
+      ]
+    },
+    {
+      "address": "0x3e8",
+      "defs": [
+        "x2"
+      ],
+      "fragment": "vconv.bf16.fp32\t x2, cml1",
+      "op": "vconv.bf16.fp32",
+      "uses": [
+        "cml1"
+      ]
+    },
+    {
+      "address": "0x3e8",
+      "defs": [
+        "x10"
+      ],
+      "fragment": "vextbcst.16\t x10, x11, #0xe",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x3f0",
+      "defs": [
+        "x3"
+      ],
+      "fragment": "vextbcst.16\t x3, x11, #0xf",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x3f0",
+      "defs": [
+        "dm1"
+      ],
+      "fragment": "vmac.f\tdm1, dm3, x3, x10, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x3",
+        "x10",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x3f8",
+      "defs": [
+        "x7"
+      ],
+      "fragment": "vextbcst.16\t x7, x11, #0x10",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x3fc",
+      "defs": [
+        "wl8"
+      ],
+      "fragment": "vmov\twl8, wh1",
+      "op": "vmov",
+      "uses": [
+        "wh1"
+      ]
+    },
+    {
+      "address": "0x400",
+      "defs": [
+        "x4"
+      ],
+      "fragment": "vextbcst.16\t x4, x11, #0x15",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x400",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm1, x8, x4, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm1",
+        "x8",
+        "x4",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x408",
+      "defs": [
+        "dm4"
+      ],
+      "fragment": "vups.4x\tdm4, x4, s0, upssign0",
+      "op": "vups.4x",
+      "uses": [
+        "x4",
+        "s0"
+      ]
+    },
+    {
+      "address": "0x408",
+      "defs": [
+        "dm4"
+      ],
+      "fragment": "vadd\tdm4, dm4, dm0, r0",
+      "op": "vadd",
+      "uses": [
+        "dm4",
+        "dm0",
+        "r0"
+      ]
+    },
+    {
+      "address": "0x410",
+      "defs": [
+        "wl5"
+      ],
+      "fragment": "vmov\twl5, wh2",
+      "op": "vmov",
+      "uses": [
+        "wh2"
+      ]
+    },
+    {
+      "address": "0x414",
+      "defs": [
+        "x9"
+      ],
+      "fragment": "vextbcst.16\t x9, x11, #0x11",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x414",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm3, x9, x5, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x9",
+        "x5",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x41c",
+      "defs": [
+        "dm4"
+      ],
+      "fragment": "vsub.f\tdm4, dm4, dm0, r5",
+      "op": "vsub.f",
+      "uses": [
+        "dm4",
+        "dm0",
+        "r5"
+      ]
+    },
+    {
+      "address": "0x420",
+      "defs": [
+        "x1"
+      ],
+      "fragment": "vextbcst.16\t x1, x11, #0x12",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x424",
+      "defs": [
+        "bmll1"
+      ],
+      "fragment": "vmov\tbmll1, bmll2",
+      "op": "vmov",
+      "uses": [
+        "bmll2"
+      ]
+    },
+    {
+      "address": "0x424",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm3, x1, x10, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x1",
+        "x10",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x42c",
+      "defs": [
+        "x10"
+      ],
+      "fragment": "vextbcst.16\t x10, x11, #0x18",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x430",
+      "defs": [
+        "wl3"
+      ],
+      "fragment": "vmov\twl3, wh0",
+      "op": "vmov",
+      "uses": [
+        "wh0"
+      ]
+    },
+    {
+      "address": "0x434",
+      "defs": [
+        "x8"
+      ],
+      "fragment": "vextbcst.16\t x8, x11, #0x13",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x434",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm3, x8, x3, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x8",
+        "x3",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x43c",
+      "defs": [
+        "bmlh1"
+      ],
+      "fragment": "vmov\tbmlh1, bmlh2",
+      "op": "vmov",
+      "uses": [
+        "bmlh2"
+      ]
+    },
+    {
+      "address": "0x440",
+      "defs": [
+        "x7"
+      ],
+      "fragment": "vextbcst.16\t x7, x11, #0x14",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x444",
+      "defs": [
+        "x2"
+      ],
+      "fragment": "vconv.bf16.fp32\t x2, cml1",
+      "op": "vconv.bf16.fp32",
+      "uses": [
+        "cml1"
+      ]
+    },
+    {
+      "address": "0x444",
+      "defs": [
+        "bmhl1"
+      ],
+      "fragment": "vmov\tbmhl1, bmhl2",
+      "op": "vmov",
+      "uses": [
+        "bmhl2"
+      ]
+    },
+    {
+      "address": "0x444",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm3, x2, x7, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x2",
+        "x7",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x44e",
+      "defs": [
+        "bmhh1"
+      ],
+      "fragment": "vmov\tbmhh1, bmhh2",
+      "op": "vmov",
+      "uses": [
+        "bmhh2"
+      ]
+    },
+    {
+      "address": "0x452",
+      "defs": [
+        "dm1"
+      ],
+      "fragment": "vups.4x\tdm1, x6, s0, upssign0",
+      "op": "vups.4x",
+      "uses": [
+        "x6",
+        "s0"
+      ]
+    },
+    {
+      "address": "0x452",
+      "defs": [
+        "dm2"
+      ],
+      "fragment": "vadd\tdm2, dm1, dm0, r0",
+      "op": "vadd",
+      "uses": [
+        "dm1",
+        "dm0",
+        "r0"
+      ]
+    },
+    {
+      "address": "0x45a",
+      "defs": [
+        "x5"
+      ],
+      "fragment": "vconv.bf16.fp32\t x5, cmh1",
+      "op": "vconv.bf16.fp32",
+      "uses": []
+    },
+    {
+      "address": "0x45a",
+      "defs": [
+        "x6"
+      ],
+      "fragment": "vextbcst.16\t x6, x11, #0x16",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x45a",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm3, x5, x9, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x5",
+        "x9",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x464",
+      "defs": [
+        "x9"
+      ],
+      "fragment": "vextbcst.16\t x9, x11, #0x17",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x464",
+      "defs": [
+        "dm2"
+      ],
+      "fragment": "vsub.f\tdm2, dm2, dm0, r5",
+      "op": "vsub.f",
+      "uses": [
+        "dm2",
+        "dm0",
+        "r5"
+      ]
+    },
+    {
+      "address": "0x46c",
+      "defs": [
+        "x0"
+      ],
+      "fragment": "vextbcst.16\t x0, x11, #0x19",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x470",
+      "defs": [
+        "bmll1"
+      ],
+      "fragment": "vmov\tbmll1, bmll4",
+      "op": "vmov",
+      "uses": [
+        "bmll4"
+      ]
+    },
+    {
+      "address": "0x470",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm3, x0, x1, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x0",
+        "x1",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x478",
+      "defs": [
+        "bmll4"
+      ],
+      "fragment": "vmov\tbmll4, lfh0",
+      "op": "vmov",
+      "uses": []
+    },
+    {
+      "address": "0x47c",
+      "defs": [
+        "bmhh1"
+      ],
+      "fragment": "vmov\tbmhh1, bmhh4",
+      "op": "vmov",
+      "uses": [
+        "bmhh4"
+      ]
+    },
+    {
+      "address": "0x480",
+      "defs": [
+        "wl8"
+      ],
+      "fragment": "vmov\twl8, wh5",
+      "op": "vmov",
+      "uses": [
+        "wh5"
+      ]
+    },
+    {
+      "address": "0x480",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm3, x3, x8, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x3",
+        "x8",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x488",
+      "defs": [
+        "bmlh1"
+      ],
+      "fragment": "vmov\tbmlh1, bmlh4",
+      "op": "vmov",
+      "uses": [
+        "bmlh4"
+      ]
+    },
+    {
+      "address": "0x48c",
+      "defs": [
+        "wl2"
+      ],
+      "fragment": "vmov\twl2, wh2",
+      "op": "vmov",
+      "uses": [
+        "wh2"
+      ]
+    },
+    {
+      "address": "0x490",
+      "defs": [
+        "x3"
+      ],
+      "fragment": "vconv.bf16.fp32\t x3, cml1",
+      "op": "vconv.bf16.fp32",
+      "uses": [
+        "cml1"
+      ]
+    },
+    {
+      "address": "0x490",
+      "defs": [
+        "bmhl1"
+      ],
+      "fragment": "vmov\tbmhl1, bmhl4",
+      "op": "vmov",
+      "uses": [
+        "bmhl4"
+      ]
+    },
+    {
+      "address": "0x490",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm3, x2, x7, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x2",
+        "x7",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x49a",
+      "defs": [
+        "bmll1"
+      ],
+      "fragment": "vmov\tbmll1, bmll2",
+      "op": "vmov",
+      "uses": [
+        "bmll2"
+      ]
+    },
+    {
+      "address": "0x49e",
+      "defs": [
+        "x1"
+      ],
+      "fragment": "vconv.bf16.fp32\t x1, cmh1",
+      "op": "vconv.bf16.fp32",
+      "uses": []
+    },
+    {
+      "address": "0x49e",
+      "defs": [
+        "bmlh1"
+      ],
+      "fragment": "vmov\tbmlh1, bmlh2",
+      "op": "vmov",
+      "uses": [
+        "bmlh2"
+      ]
+    },
+    {
+      "address": "0x4a6",
+      "defs": [
+        "bmhl1"
+      ],
+      "fragment": "vmov\tbmhl1, bmhl2",
+      "op": "vmov",
+      "uses": [
+        "bmhl2"
+      ]
+    },
+    {
+      "address": "0x4a6",
+      "defs": [
+        "dm3"
+      ],
+      "fragment": "vmac.f\tdm3, dm3, x2, x4, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x2",
+        "x4",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x4ae",
+      "defs": [
+        "bmhh1"
+      ],
+      "fragment": "vmov\tbmhh1, bmhh2",
+      "op": "vmov",
+      "uses": [
+        "bmhh2"
+      ]
+    },
+    {
+      "address": "0x4b2",
+      "defs": [
+        "x5"
+      ],
+      "fragment": "vconv.bf16.fp32\t x5, cml1",
+      "op": "vconv.bf16.fp32",
+      "uses": [
+        "cml1"
+      ]
+    },
+    {
+      "address": "0x4b2",
+      "defs": [
+        "x2"
+      ],
+      "fragment": "vextbcst.16\t x2, x11, #0x1a",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x4ba",
+      "defs": [
+        "x4"
+      ],
+      "fragment": "vconv.bf16.fp32\t x4, cmh1",
+      "op": "vconv.bf16.fp32",
+      "uses": []
+    },
+    {
+      "address": "0x4ba",
+      "defs": [
+        "x6"
+      ],
+      "fragment": "vextbcst.16\t x6, x11, #0x1b",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x4ba",
+      "defs": [
+        "dm2"
+      ],
+      "fragment": "vmac.f\tdm2, dm3, x5, x6, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm3",
+        "x5",
+        "x6",
+        "r4"
+      ]
+    },
+    {
+      "address": "0x4c4",
+      "defs": [
+        "x7"
+      ],
+      "fragment": "vextbcst.16\t x7, x11, #0x1c",
+      "op": "vextbcst.16",
+      "uses": [
+        "x11"
+      ]
+    },
+    {
+      "address": "0x4c8",
+      "defs": [
+        "wl8"
+      ],
+      "fragment": "vmov\twl8, wh1",
+      "op": "vmov",
+      "uses": [
+        "wh1"
+      ]
+    },
+    {
+      "address": "0x4cc",
+      "defs": [
+        "wl9"
+      ],
+      "fragment": "vmov\twl9, wh5",
+      "op": "vmov",
+      "uses": [
+        "wh5"
+      ]
+    },
+    {
+      "address": "0x4cc",
+      "defs": [
+        "dm1"
+      ],
+      "fragment": "vmac.f\tdm1, dm2, x8, x9, r4",
+      "op": "vmac.f",
+      "uses": [
+        "dm2",
+        "x8",
+        "x9",
+        "r4"
+      ]
+    }
+  ],
+  "hot_instruction_lines": 963,
+  "hot_op_slots": 1532,
+  "inferred_register_roles": {
+    "p0": "selected Q4NX weight buffer at microkernel call",
+    "p1": "selected activation chunk buffer at microkernel call",
+    "p2": "fixed local scratch/accumulator base 0x73c80",
+    "p3": "phase-body group-sum scratch stream",
+    "r7": "current 16-bit activation group sum loaded from p3",
+    "x11": "32-lane activation vector whose lanes feed vextbcst.16"
+  },
+  "key_dynamic_counts": {
+    "lda.s16": 16,
+    "vbcst.16": 16,
+    "vconv.bf16.fp32": 272,
+    "vextbcst.16": 512,
+    "vldb": 92,
+    "vmac.f": 528,
+    "vst": 0,
+    "vst.conv.bf16.fp32": 0,
+    "vunpack": 128,
+    "vups.4x": 128
+  },
+  "key_static_counts": {
+    "lda.s16": 8,
+    "vbcst.16": 8,
+    "vconv.bf16.fp32": 136,
+    "vextbcst.16": 256,
+    "vldb": 46,
+    "vmac.f": 264,
+    "vst": 0,
+    "vst.conv.bf16.fp32": 0,
+    "vunpack": 64,
+    "vups.4x": 64
+  },
+  "lane_groups": [
+    {
+      "counts": {
+        "lda.s16": 2,
+        "vbcst.16": 1,
+        "vconv.bf16.fp32": 16,
+        "vextbcst.16": 32,
+        "vldb": 6,
+        "vmac.f": 28,
+        "vst": 0,
+        "vunpack": 12,
+        "vups.4x": 8
+      },
+      "end": "0x52a",
+      "first_lane": 0,
+      "index": 0,
+      "lane_count": 32,
+      "lanes_complete": true,
+      "last_lane": 31,
+      "start": "0x260"
+    },
+    {
+      "counts": {
+        "lda.s16": 1,
+        "vbcst.16": 1,
+        "vconv.bf16.fp32": 17,
+        "vextbcst.16": 32,
+        "vldb": 6,
+        "vmac.f": 33,
+        "vst": 0,
+        "vunpack": 8,
+        "vups.4x": 8
+      },
+      "end": "0x7de",
+      "first_lane": 0,
+      "index": 1,
+      "lane_count": 32,
+      "lanes_complete": true,
+      "last_lane": 31,
+      "start": "0x52a"
+    },
+    {
+      "counts": {
+        "lda.s16": 1,
+        "vbcst.16": 1,
+        "vconv.bf16.fp32": 17,
+        "vextbcst.16": 32,
+        "vldb": 6,
+        "vmac.f": 33,
+        "vst": 0,
+        "vunpack": 8,
+        "vups.4x": 8
+      },
+      "end": "0xa92",
+      "first_lane": 0,
+      "index": 2,
+      "lane_count": 32,
+      "lanes_complete": true,
+      "last_lane": 31,
+      "start": "0x7de"
+    },
+    {
+      "counts": {
+        "lda.s16": 1,
+        "vbcst.16": 1,
+        "vconv.bf16.fp32": 17,
+        "vextbcst.16": 32,
+        "vldb": 6,
+        "vmac.f": 33,
+        "vst": 0,
+        "vunpack": 8,
+        "vups.4x": 8
+      },
+      "end": "0xd46",
+      "first_lane": 0,
+      "index": 3,
+      "lane_count": 32,
+      "lanes_complete": true,
+      "last_lane": 31,
+      "start": "0xa92"
+    },
+    {
+      "counts": {
+        "lda.s16": 1,
+        "vbcst.16": 1,
+        "vconv.bf16.fp32": 17,
+        "vextbcst.16": 32,
+        "vldb": 6,
+        "vmac.f": 33,
+        "vst": 0,
+        "vunpack": 8,
+        "vups.4x": 8
+      },
+      "end": "0xffa",
+      "first_lane": 0,
+      "index": 4,
+      "lane_count": 32,
+      "lanes_complete": true,
+      "last_lane": 31,
+      "start": "0xd46"
+    },
+    {
+      "counts": {
+        "lda.s16": 1,
+        "vbcst.16": 1,
+        "vconv.bf16.fp32": 17,
+        "vextbcst.16": 32,
+        "vldb": 6,
+        "vmac.f": 33,
+        "vst": 0,
+        "vunpack": 8,
+        "vups.4x": 8
+      },
+      "end": "0x12ae",
+      "first_lane": 0,
+      "index": 5,
+      "lane_count": 32,
+      "lanes_complete": true,
+      "last_lane": 31,
+      "start": "0xffa"
+    },
+    {
+      "counts": {
+        "lda.s16": 1,
+        "vbcst.16": 1,
+        "vconv.bf16.fp32": 17,
+        "vextbcst.16": 32,
+        "vldb": 6,
+        "vmac.f": 33,
+        "vst": 0,
+        "vunpack": 8,
+        "vups.4x": 8
+      },
+      "end": "0x1566",
+      "first_lane": 0,
+      "index": 6,
+      "lane_count": 32,
+      "lanes_complete": true,
+      "last_lane": 31,
+      "start": "0x12ae"
+    },
+    {
+      "counts": {
+        "lda.s16": 0,
+        "vbcst.16": 1,
+        "vconv.bf16.fp32": 18,
+        "vextbcst.16": 32,
+        "vldb": 4,
+        "vmac.f": 38,
+        "vst": 0,
+        "vunpack": 4,
+        "vups.4x": 8
+      },
+      "end": "0x1850",
+      "first_lane": 0,
+      "index": 7,
+      "lane_count": 32,
+      "lanes_complete": true,
+      "last_lane": 31,
+      "start": "0x1566"
+    }
+  ],
+  "loop_count": 2,
+  "phase_group_sum": {
+    "activation_vector_loads": 8,
+    "op_counts": {
+      "acq": 3,
+      "add.nc": 6,
+      "ashl": 1,
+      "geu": 1,
+      "jl": 1,
+      "jnz": 2,
+      "jnzd": 2,
+      "lda": 19,
+      "lda.s8": 2,
+      "lda.u8": 2,
+      "ltu": 1,
+      "mov": 11,
+      "mova": 4,
+      "movs": 6,
+      "movx": 9,
+      "movxm": 12,
+      "nop": 44,
+      "nopa": 9,
+      "nopb": 9,
+      "nopm": 6,
+      "nops": 7,
+      "nopv": 8,
+      "nopx": 6,
+      "paddb": 2,
+      "paddxm": 3,
+      "rel": 3,
+      "ret": 1,
+      "sel.eqz": 4,
+      "st": 20,
+      "st.s16": 8,
+      "st.s8": 2,
+      "sub": 1,
+      "vadd.f": 40,
+      "vbcst.32": 1,
+      "vconv.bf16.fp32": 8,
+      "vextract.16": 8,
+      "vlda": 3,
+      "vlda.conv.fp32.bf16": 8,
+      "vmov": 72,
+      "vshift": 32,
+      "vst": 2,
+      "vst.conv.bf16.fp32": 2,
+      "xor": 2
+    },
+    "scalar_extracts": 8,
+    "scratch_stores": 8
+  },
+  "ranges": {
+    "hot_loop": [
+      "0x260",
+      "0x1850"
+    ],
+    "microkernel": [
+      "0x1f0",
+      "0x1850"
+    ],
+    "qkv_body": [
+      "0x1870",
+      "0x1e80"
+    ]
+  },
+  "scratch_load_addresses": [
+    "0x28e",
+    "0x4d6",
+    "0x78a",
+    "0xa3e",
+    "0xcf2",
+    "0xfa6",
+    "0x125a",
+    "0x150e"
+  ],
+  "scratch_rewind_addresses": [
+    "0x153a"
+  ],
+  "source_elf": "experiments/130_mylm_main16_record_observable_harness/mylm_c2r2_main16_record_exec.elf",
+  "status": "passed"
+}

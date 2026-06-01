@@ -1,0 +1,102 @@
+{
+  "artifacts": {
+    "asm": "main16-exps/019_source_asm_branch_semantics_probe/build/branch_semantics/source_asm_branch_semantics.s",
+    "disasm": "main16-exps/019_source_asm_branch_semantics_probe/build/branch_semantics/source_asm_branch_semantics.disasm.s",
+    "elf": "main16-exps/019_source_asm_branch_semantics_probe/build/branch_semantics/source_asm_branch_semantics.elf",
+    "insts": "main16-exps/019_source_asm_branch_semantics_probe/build/branch_semantics/design.bin",
+    "xclbin": "main16-exps/019_source_asm_branch_semantics_probe/build/branch_semantics/design.xclbin"
+  },
+  "markers": {
+    "branch_taken": "0x11110001",
+    "fallthrough": "0x22220002"
+  },
+  "payload": [
+    {
+      "meaning": "value_1",
+      "name": "eq_equal",
+      "observed": "0x1"
+    },
+    {
+      "meaning": "value_0",
+      "name": "eq_notequal",
+      "observed": "0x0"
+    },
+    {
+      "meaning": "branch_taken",
+      "name": "jz_zero",
+      "observed": "0x11110001"
+    },
+    {
+      "meaning": "fallthrough",
+      "name": "jz_one",
+      "observed": "0x22220002"
+    },
+    {
+      "meaning": "fallthrough",
+      "name": "jnz_zero",
+      "observed": "0x22220002"
+    },
+    {
+      "meaning": "fallthrough",
+      "name": "jnz_one",
+      "observed": "0x22220002"
+    },
+    {
+      "meaning": "fallthrough",
+      "name": "eq_equal_jz",
+      "observed": "0x22220002"
+    },
+    {
+      "meaning": "branch_taken",
+      "name": "eq_notequal_jz",
+      "observed": "0x11110001"
+    },
+    {
+      "meaning": "fallthrough",
+      "name": "eq_equal_jnz",
+      "observed": "0x22220002"
+    },
+    {
+      "meaning": "fallthrough",
+      "name": "eq_notequal_jnz",
+      "observed": "0x22220002"
+    }
+  ],
+  "runtime": {
+    "record": [
+      "0x1",
+      "0x1",
+      "0x0",
+      "0x11110001",
+      "0x22220002",
+      "0x22220002",
+      "0x22220002",
+      "0x22220002",
+      "0x11110001",
+      "0x22220002",
+      "0x22220002",
+      "0x11110001",
+      "0x11110001",
+      "0x22220002",
+      "0x22220002",
+      "0x0",
+      "0x0"
+    ],
+    "returncode": 0,
+    "runtime_output": "run_ok\nelapsed=0.0005533695220947266\nnpu_time=500573\nrecord=0x1,0x1,0x0,0x11110001,0x22220002,0x22220002,0x22220002,0x22220002,0x11110001,0x22220002,0x22220002,0x11110001,0x11110001,0x22220002,0x22220002,0x0,0x0",
+    "status": "record_observed"
+  },
+  "status": "passed",
+  "topology_after": {
+    "status": "ok",
+    "stderr": "",
+    "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+    "topology": "6x8"
+  },
+  "topology_before": {
+    "status": "ok",
+    "stderr": "",
+    "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+    "topology": "6x8"
+  }
+}

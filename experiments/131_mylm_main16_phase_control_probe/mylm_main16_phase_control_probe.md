@@ -1,0 +1,215 @@
+# MyLM Main16 Phase-Control Probe
+
+- Status: `completed`
+- Records per variant: `1`
+- Variants attempted: `14`
+
+## Results
+
+| variant | status | unique headers | topology after |
+| --- | --- | --- | --- |
+| `baseline_73d00_3820` | `record_observed` | `['0x4']` | `6x8` |
+| `patch_73d00_0_1870` | `record_observed` | `['0x4']` | `6x8` |
+| `patch_73d00_0_1e80` | `record_observed` | `['0x4']` | `6x8` |
+| `patch_73d00_0_2490` | `record_observed` | `['0x4']` | `6x8` |
+| `patch_73d00_0_2aa0` | `record_observed` | `['0x4']` | `6x8` |
+| `patch_73d00_0_30c0` | `record_observed` | `['0x4']` | `6x8` |
+| `patch_73d00_0_36d0` | `record_observed` | `['0x4']` | `6x8` |
+| `patch_73c80_0_1870` | `record_observed` | `['0x4']` | `6x8` |
+| `patch_73c80_0_1e80` | `record_observed` | `['0x4']` | `6x8` |
+| `patch_73c80_0_2490` | `record_observed` | `['0x4']` | `6x8` |
+| `patch_73c80_0_2aa0` | `record_observed` | `['0x4']` | `6x8` |
+| `patch_73c80_0_30c0` | `record_observed` | `['0x4']` | `6x8` |
+| `patch_73c80_0_36d0` | `record_observed` | `['0x4']` | `6x8` |
+| `patch_73c80_0_3820` | `record_observed` | `['0x4']` | `6x8` |
+
+## Interpretation
+
+Every observed variant still emitted `0x4`. That rules out a simple model where
+`73d00[0]` or `73c80[0]` directly selects the phase body/header under this
+standalone harness.
+
+Follow-up disassembly of the baseline ELF shows the relevant control is more
+likely in the entry/dispatcher path:
+
+- entry at `0x0` initializes the stack, sets tile-local pointers, then calls
+  dispatcher `0x36d0`;
+- dispatcher text hardcodes the phase headers with `r0 = 0x1`, `r0 = 0x4`,
+  and `r0 = 0x8` before phase-body calls;
+- the first branch condition in dispatcher reads a caller stack/control slot,
+  not the first dword of `0x73c80` or `0x73d00`.
+
+So the next useful control experiment is not more static-data first-dword
+patching. It should either patch the entry/dispatcher control slot setup, or
+build a tiny raw caller/stub that enters a chosen phase body with the expected
+`p0..p7` and `r0` state.
+
+## Runtime Output Preview
+
+### baseline_73d00_3820
+
+```text
+load_begin
+load_ok
+run_ok
+elapsed=0.0005972385406494141
+result_type=XRTKernelResult
+npu_time=549824
+record=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+```
+
+### patch_73d00_0_1870
+
+```text
+load_begin
+load_ok
+run_ok
+elapsed=0.0006411075592041016
+result_type=XRTKernelResult
+npu_time=597143
+record=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+```
+
+### patch_73d00_0_1e80
+
+```text
+load_begin
+load_ok
+run_ok
+elapsed=0.0005698204040527344
+result_type=XRTKernelResult
+npu_time=521021
+record=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+```
+
+### patch_73d00_0_2490
+
+```text
+load_begin
+load_ok
+run_ok
+elapsed=0.0005888938903808594
+result_type=XRTKernelResult
+npu_time=542271
+record=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+```
+
+### patch_73d00_0_2aa0
+
+```text
+load_begin
+load_ok
+run_ok
+elapsed=0.0005829334259033203
+result_type=XRTKernelResult
+npu_time=536961
+record=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+```
+
+### patch_73d00_0_30c0
+
+```text
+load_begin
+load_ok
+run_ok
+elapsed=0.00063323974609375
+result_type=XRTKernelResult
+npu_time=586012
+record=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+```
+
+### patch_73d00_0_36d0
+
+```text
+load_begin
+load_ok
+run_ok
+elapsed=0.0006434917449951172
+result_type=XRTKernelResult
+npu_time=583328
+record=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+```
+
+### patch_73c80_0_1870
+
+```text
+load_begin
+load_ok
+run_ok
+elapsed=0.0006537437438964844
+result_type=XRTKernelResult
+npu_time=610948
+record=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+```
+
+### patch_73c80_0_1e80
+
+```text
+load_begin
+load_ok
+run_ok
+elapsed=0.0006093978881835938
+result_type=XRTKernelResult
+npu_time=562609
+record=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+```
+
+### patch_73c80_0_2490
+
+```text
+load_begin
+load_ok
+run_ok
+elapsed=0.0005321502685546875
+result_type=XRTKernelResult
+npu_time=485344
+record=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+```
+
+### patch_73c80_0_2aa0
+
+```text
+load_begin
+load_ok
+run_ok
+elapsed=0.0006322860717773438
+result_type=XRTKernelResult
+npu_time=585912
+record=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+```
+
+### patch_73c80_0_30c0
+
+```text
+load_begin
+load_ok
+run_ok
+elapsed=0.0005548000335693359
+result_type=XRTKernelResult
+npu_time=507165
+record=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+```
+
+### patch_73c80_0_36d0
+
+```text
+load_begin
+load_ok
+run_ok
+elapsed=0.0005936622619628906
+result_type=XRTKernelResult
+npu_time=547010
+record=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+```
+
+### patch_73c80_0_3820
+
+```text
+load_begin
+load_ok
+run_ok
+elapsed=0.0005669593811035156
+result_type=XRTKernelResult
+npu_time=520129
+record=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+```

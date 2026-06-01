@@ -1,0 +1,1431 @@
+{
+  "candidate_phase_addresses": [
+    "0x1870",
+    "0x1e80",
+    "0x2490",
+    "0x2aa0",
+    "0x30c0",
+    "0x36d0",
+    "0x3820"
+  ],
+  "records": 1,
+  "runtime_timeout_s": 8,
+  "source": {
+    "harness": "experiments/130_mylm_main16_record_observable_harness/run.py",
+    "raw": "experiments/129_mylm_main16_standalone_raw_kernel/mylm_c2r2_program.bin",
+    "static_73c80": "experiments/129_mylm_main16_standalone_raw_kernel/mylm_static_73c80.bin",
+    "static_73d00": "experiments/129_mylm_main16_standalone_raw_kernel/mylm_static_73d00.bin"
+  },
+  "status": "completed",
+  "stopped_early": false,
+  "variants": [
+    {
+      "artifacts": {
+        "elf": "experiments/131_mylm_main16_phase_control_probe/build/baseline_73d00_3820/mylm_c2r2_main16_phase_probe.elf",
+        "insts": "experiments/131_mylm_main16_phase_control_probe/build/baseline_73d00_3820/design.bin",
+        "mlir": "experiments/131_mylm_main16_phase_control_probe/build/baseline_73d00_3820/design.mlir",
+        "txn": "experiments/131_mylm_main16_phase_control_probe/build/baseline_73d00_3820/design.txn.mlir",
+        "xclbin": "experiments/131_mylm_main16_phase_control_probe/build/baseline_73d00_3820/design.xclbin"
+      },
+      "build_dir": "experiments/131_mylm_main16_phase_control_probe/build/baseline_73d00_3820",
+      "name": "baseline_73d00_3820",
+      "patches": [],
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0005972385406494141\nresult_type=XRTKernelResult\nnpu_time=549824\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.301738739013672,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_1870/mylm_c2r2_main16_phase_probe.elf",
+        "insts": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_1870/design.bin",
+        "mlir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_1870/design.mlir",
+        "txn": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_1870/design.txn.mlir",
+        "xclbin": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_1870/design.xclbin"
+      },
+      "build_dir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_1870",
+      "name": "patch_73d00_0_1870",
+      "patches": [
+        {
+          "dword": 0,
+          "segment": "73d00",
+          "value": 6256
+        }
+      ],
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0006411075592041016\nresult_type=XRTKernelResult\nnpu_time=597143\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.220093011856079,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_1e80/mylm_c2r2_main16_phase_probe.elf",
+        "insts": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_1e80/design.bin",
+        "mlir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_1e80/design.mlir",
+        "txn": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_1e80/design.txn.mlir",
+        "xclbin": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_1e80/design.xclbin"
+      },
+      "build_dir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_1e80",
+      "name": "patch_73d00_0_1e80",
+      "patches": [
+        {
+          "dword": 0,
+          "segment": "73d00",
+          "value": 7808
+        }
+      ],
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0005698204040527344\nresult_type=XRTKernelResult\nnpu_time=521021\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.278917074203491,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_2490/mylm_c2r2_main16_phase_probe.elf",
+        "insts": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_2490/design.bin",
+        "mlir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_2490/design.mlir",
+        "txn": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_2490/design.txn.mlir",
+        "xclbin": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_2490/design.xclbin"
+      },
+      "build_dir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_2490",
+      "name": "patch_73d00_0_2490",
+      "patches": [
+        {
+          "dword": 0,
+          "segment": "73d00",
+          "value": 9360
+        }
+      ],
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0005888938903808594\nresult_type=XRTKernelResult\nnpu_time=542271\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.219055414199829,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_2aa0/mylm_c2r2_main16_phase_probe.elf",
+        "insts": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_2aa0/design.bin",
+        "mlir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_2aa0/design.mlir",
+        "txn": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_2aa0/design.txn.mlir",
+        "xclbin": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_2aa0/design.xclbin"
+      },
+      "build_dir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_2aa0",
+      "name": "patch_73d00_0_2aa0",
+      "patches": [
+        {
+          "dword": 0,
+          "segment": "73d00",
+          "value": 10912
+        }
+      ],
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0005829334259033203\nresult_type=XRTKernelResult\nnpu_time=536961\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.3853724002838135,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_30c0/mylm_c2r2_main16_phase_probe.elf",
+        "insts": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_30c0/design.bin",
+        "mlir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_30c0/design.mlir",
+        "txn": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_30c0/design.txn.mlir",
+        "xclbin": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_30c0/design.xclbin"
+      },
+      "build_dir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_30c0",
+      "name": "patch_73d00_0_30c0",
+      "patches": [
+        {
+          "dword": 0,
+          "segment": "73d00",
+          "value": 12480
+        }
+      ],
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.00063323974609375\nresult_type=XRTKernelResult\nnpu_time=586012\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.3125486373901367,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_36d0/mylm_c2r2_main16_phase_probe.elf",
+        "insts": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_36d0/design.bin",
+        "mlir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_36d0/design.mlir",
+        "txn": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_36d0/design.txn.mlir",
+        "xclbin": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_36d0/design.xclbin"
+      },
+      "build_dir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73d00_0_36d0",
+      "name": "patch_73d00_0_36d0",
+      "patches": [
+        {
+          "dword": 0,
+          "segment": "73d00",
+          "value": 14032
+        }
+      ],
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0006434917449951172\nresult_type=XRTKernelResult\nnpu_time=583328\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.312269449234009,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_1870/mylm_c2r2_main16_phase_probe.elf",
+        "insts": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_1870/design.bin",
+        "mlir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_1870/design.mlir",
+        "txn": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_1870/design.txn.mlir",
+        "xclbin": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_1870/design.xclbin"
+      },
+      "build_dir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_1870",
+      "name": "patch_73c80_0_1870",
+      "patches": [
+        {
+          "dword": 0,
+          "segment": "73c80",
+          "value": 6256
+        }
+      ],
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0006537437438964844\nresult_type=XRTKernelResult\nnpu_time=610948\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.329141616821289,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_1e80/mylm_c2r2_main16_phase_probe.elf",
+        "insts": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_1e80/design.bin",
+        "mlir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_1e80/design.mlir",
+        "txn": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_1e80/design.txn.mlir",
+        "xclbin": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_1e80/design.xclbin"
+      },
+      "build_dir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_1e80",
+      "name": "patch_73c80_0_1e80",
+      "patches": [
+        {
+          "dword": 0,
+          "segment": "73c80",
+          "value": 7808
+        }
+      ],
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0006093978881835938\nresult_type=XRTKernelResult\nnpu_time=562609\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.3010988235473633,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_2490/mylm_c2r2_main16_phase_probe.elf",
+        "insts": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_2490/design.bin",
+        "mlir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_2490/design.mlir",
+        "txn": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_2490/design.txn.mlir",
+        "xclbin": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_2490/design.xclbin"
+      },
+      "build_dir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_2490",
+      "name": "patch_73c80_0_2490",
+      "patches": [
+        {
+          "dword": 0,
+          "segment": "73c80",
+          "value": 9360
+        }
+      ],
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0005321502685546875\nresult_type=XRTKernelResult\nnpu_time=485344\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.434033155441284,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_2aa0/mylm_c2r2_main16_phase_probe.elf",
+        "insts": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_2aa0/design.bin",
+        "mlir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_2aa0/design.mlir",
+        "txn": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_2aa0/design.txn.mlir",
+        "xclbin": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_2aa0/design.xclbin"
+      },
+      "build_dir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_2aa0",
+      "name": "patch_73c80_0_2aa0",
+      "patches": [
+        {
+          "dword": 0,
+          "segment": "73c80",
+          "value": 10912
+        }
+      ],
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0006322860717773438\nresult_type=XRTKernelResult\nnpu_time=585912\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.3400397300720215,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_30c0/mylm_c2r2_main16_phase_probe.elf",
+        "insts": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_30c0/design.bin",
+        "mlir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_30c0/design.mlir",
+        "txn": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_30c0/design.txn.mlir",
+        "xclbin": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_30c0/design.xclbin"
+      },
+      "build_dir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_30c0",
+      "name": "patch_73c80_0_30c0",
+      "patches": [
+        {
+          "dword": 0,
+          "segment": "73c80",
+          "value": 12480
+        }
+      ],
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0005548000335693359\nresult_type=XRTKernelResult\nnpu_time=507165\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.289790630340576,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_36d0/mylm_c2r2_main16_phase_probe.elf",
+        "insts": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_36d0/design.bin",
+        "mlir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_36d0/design.mlir",
+        "txn": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_36d0/design.txn.mlir",
+        "xclbin": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_36d0/design.xclbin"
+      },
+      "build_dir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_36d0",
+      "name": "patch_73c80_0_36d0",
+      "patches": [
+        {
+          "dword": 0,
+          "segment": "73c80",
+          "value": 14032
+        }
+      ],
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0005936622619628906\nresult_type=XRTKernelResult\nnpu_time=547010\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.366316080093384,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    },
+    {
+      "artifacts": {
+        "elf": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_3820/mylm_c2r2_main16_phase_probe.elf",
+        "insts": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_3820/design.bin",
+        "mlir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_3820/design.mlir",
+        "txn": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_3820/design.txn.mlir",
+        "xclbin": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_3820/design.xclbin"
+      },
+      "build_dir": "experiments/131_mylm_main16_phase_control_probe/build/patch_73c80_0_3820",
+      "name": "patch_73c80_0_3820",
+      "patches": [
+        {
+          "dword": 0,
+          "segment": "73c80",
+          "value": 14368
+        }
+      ],
+      "record_headers": [
+        "0x4"
+      ],
+      "runtime_output": "load_begin\nload_ok\nrun_ok\nelapsed=0.0005669593811035156\nresult_type=XRTKernelResult\nnpu_time=520129\nrecord=0x4,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0",
+      "runtime_probe": {
+        "elapsed_s": 2.2995388507843018,
+        "record_words": [
+          "0x4",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0",
+          "0x0"
+        ],
+        "returncode": 0,
+        "status": "record_observed"
+      },
+      "source": {
+        "raw_bytes": 14868,
+        "static_segments": [
+          {
+            "addr": "0x73c80",
+            "bytes": 128,
+            "name": ".mylm_static_73c80"
+          },
+          {
+            "addr": "0x73d00",
+            "bytes": 32,
+            "name": ".mylm_static_73d00"
+          }
+        ]
+      },
+      "status": "record_observed",
+      "topology_after": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "topology_before": {
+        "status": "ok",
+        "stderr": "",
+        "stdout": "System Configuration\n  OS Name              : Linux\n  Release              : 6.17.7-ba29.fc43.x86_64\n  Machine              : x86_64\n  CPU Cores            : 12\n  Memory               : 47769 MB\n  Distribution         : Bazzite\n  GLIBC                : 2.42\n  Model                : ONEXPLAYER G1 A\n  BIOS Vendor          : American Megatrends International, LLC.\n  BIOS Version         : 1.01\n  Processor            : AMD Ryzen AI 9 HX 370 w/ Radeon 890M\n\nXRT\n  Version              : 2.23.0\n  Branch               : HEAD\n  Hash                 : ab1b64649ba115aa8c56a99312e7a7f4e925071f\n  Hash Date            : Tue, 10 Mar 2026 15:15:53 -0700\n  amdxdna Version      : 0.1\n  virtio-pci Version   : 6.17.7-ba29.fc43.x86_64\n  NPU Firmware Version : 255.0.11.69\n\nDevice(s) Present\n|BDF             |Name          |Architecture  |Topology  |\n|----------------|--------------|--------------|----------|\n|[0000:c6:00.1]  |RyzenAI-npu4  |aie2p         |6x8       |\n\n\n",
+        "topology": "6x8"
+      },
+      "transaction": {
+        "blockwrite_addresses": [
+          "0x4220000",
+          "0x4203c80",
+          "0x4203d00",
+          "0x421d000",
+          "0x421d040",
+          "0x421d080",
+          "0x421d0a0",
+          "0x421d060",
+          "0x421d020"
+        ],
+        "payload_bytes": [
+          14868,
+          128,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ]
+      },
+      "unique_record_headers": [
+        "0x4"
+      ]
+    }
+  ]
+}

@@ -426,7 +426,7 @@
     "has_q4": true,
     "has_layer_scheduler": true,
     "has_rejected_nocall": false,
-    "static_helper_relocations": 7,
+    "static_helper_relocations": 1,
     "q4_counts": {
       "vmac.f": 64,
       "vextbcst.16": 64,

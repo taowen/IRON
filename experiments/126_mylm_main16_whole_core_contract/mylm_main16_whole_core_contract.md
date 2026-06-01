@@ -9,7 +9,7 @@ not another temporary scheduler variant.
 - Has active Q4 asm body `q4nx_chunk_accum_asm_zol`: `True`
 - Has active layer scheduler `q4nx_main16_layer_scheduler`: `True`
 - Contains rejected nocall symbol: `False`
-- Static helper-call relocations to `q4nx_chunk_accum_asm_zol`: `7`
+- Static helper-call relocations to `q4nx_chunk_accum_asm_zol`: `1`
 
 | Active Q4 op | Count |
 | --- | ---: |
@@ -125,3 +125,4 @@ one shared Q4 body and phase bodies that own the lock, record, and
 phase-order protocol. A QKV-only linked asm scheduler is too small a
 slice: it changes the call boundary without giving the code generator
 the fixed register/control plan that makes MyLM fast.
+
